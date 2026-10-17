@@ -1,0 +1,81 @@
+# guards/docker/docker-compose.yml
+#
+# One set of services for secret-guard, pii-guard, and injection-guard —
+# replaces the old uv-tool-install + systemd/launchd self-heal path
+# (still kept as a non-Docker fallback, see guards-selfheal.sh) with a
+# single `docker compose up -d`.
+#
+# LOOPBACK-ONLY BY DESIGN — not a config choice to revisit casually.
+# secret-guard and pii-guard's own READMEs are explicit: neither tool
+# may ever be reachable over the network, even inside our own boundary
+# — see ../SERVER-SIDE.md before changing any of the port-publish lines
+# below. injection-guard's classify-only hosted tier is architecturally
+# allowed by its own README, but is NOT enabled by this file either;
+# turning it on is also covered in SERVER-SIDE.md, deliberately kept
+# out of the default path here.
+#
+# Every port-publish below is "127.0.0.1:PORT:PORT", never a bare
+# "PORT:PORT" (which Docker publishes on 0.0.0.0) — this is the one
+# line in this file that must never be "simplified."
+
+services:
+  secret-guard:
+    build:
+      context: ../vendor/secret-guard-core
+    image: gramatr-guards/secret-guard:local
+    ports:
+      - "127.0.0.1:8732:8732"
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  pii-guard:
+    build:
+      context: https://github.com/gramatr/pii-guard.git
+      dockerfile: docker/Dockerfile
+    image: gramatr-guards/pii-guard:local
+    ports:
+      - "127.0.0.1:8731:8731"
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8731/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+
+  injection-guard:
+    # Lean CPU-only tag — the right default for a synchronous hook on a
+    # local machine (see injection-guard's own README: ~5x latency
+    # penalty vs GPU is imperceptible for a single-request hook call,
+    # and this avoids a ~4.7GB pull of unused CUDA runtime). Swap to
+    # `:gpu` only if this host has a GPU AND you've actually measured a
+    # need for it — not by default.
+    image: ghcr.io/gramatr/injection-guard:cpu
+    ports:
+      - "127.0.0.1:8730:8730"
+    env_file:
+      # Must contain HF_TOKEN=<token with the Llama Prompt Guard 2 gated
+      # license accepted> — see ../../README.md "The HF_TOKEN problem".
+      # Not committed; guards-selfheal.sh checks for this file and warns
+      # if it's missing rather than starting a daemon that can't load
+      # its model.
+      - ${HOME}/.config/gramatr-guards/injection-guard.env
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  default:
+    name: gramatr-guards
+    driver: bridge

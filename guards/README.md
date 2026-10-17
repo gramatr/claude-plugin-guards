@@ -43,29 +43,50 @@ non-Bash tool, rather than guess at Read/Grep/WebFetch's exact shapes
 and ship something that silently no-ops the same way. See "Known
 limitations."
 
+### One Docker Compose stack, not three manual installs
+
+`docker/docker-compose.yml` runs all three guards as containers —
+`secret-guard` now ships a thin HTTP wrapper (`vendor/secret-guard-core/
+server.py` + `Dockerfile`) around its own `scan.sh` purely for interface
+consistency with its siblings (no model to keep resident, so no
+performance reason to containerize it — this is about one stack, one
+shape, not three different setups). `pii-guard` and `injection-guard`
+already shipped their own Dockerfiles; `injection-guard`'s lean `:cpu`
+ghcr.io image is the default here (see that repo's README — the ~5x
+GPU latency win doesn't matter for a synchronous hook, and it avoids a
+~4.7GB pull of unused CUDA runtime).
+
+**Every port-publish in that compose file is `127.0.0.1:PORT:PORT`,
+never bare `PORT:PORT`** — this is the one line that must never be
+"simplified" without reading `docker/SERVER-SIDE.md` first; secret-guard
+and pii-guard's own READMEs are explicit that neither may ever be
+network-reachable, even inside our own boundary.
+
 ### Self-heal, not a one-shot installer
 
 `bin/guards-selfheal.sh` runs on every `SessionStart` — same idempotent
 "check state, fix if needed" pattern as grāmatr's own
-`statusline-selfheal.js`. It checks whether `injection-guard-daemon` and
-`pii-guard-daemon` are installed (`uv tool install`) and running
-(`systemctl --user` on Linux), and fixes anything missing — rather than
-a setup step the user has to remember to run once and never revisit.
+`statusline-selfheal.js`. Docker-first: if `docker` + `docker compose`
+are usable, it builds/starts the Compose stack above and verifies each
+service answers its own `/health` on `127.0.0.1`, not just that the
+container is "Up" — found by testing, not assumed: a container can be
+reported running with its port-publish silently missing if it was
+created during an earlier failed bind (see the migration note below).
 
-**Linux**: fully implemented and verified end to end this session —
-real `uv tool install git+https://...`, real `systemd --user` unit
-registration and startup, confirmed via `systemctl status` and a real
-`curl` to each daemon's `/health` endpoint.
+**Migrating off the old bare-metal daemons**: if this machine previously
+ran `injection-guard-daemon`/`pii-guard-daemon` via `uv tool install` +
+`systemd --user` (the old v1 install path), the self-heal script
+disables those units before starting the Docker stack — both bind the
+same ports the containers publish, so leaving them running makes the
+`docker compose up` bind fail. This migration runs once; once the
+systemd units are disabled they stay disabled.
 
-**macOS**: launchd plist templates exist in `launchd/`, but
-`guards-selfheal.sh`'s macOS branch is **not yet implemented** — it
-logs a message pointing at the templates for manual install. This
-session had no Mac to test launchd behavior on; the plists are
-syntax-valid XML (verified with Python's `plistlib`) but otherwise
-unverified. See "Known limitations."
-
-**Windows**: explicitly out of scope for v1. The self-heal script logs
-why and exits 0 rather than failing the session.
+**Non-Docker fallback**: if Docker isn't usable on this machine, the
+original `uv tool install` + `systemd --user` (Linux) / launchd (macOS,
+templates only, self-heal not implemented) path is still there and
+still works, unchanged from v1. Windows remains explicitly out of scope
+for any daemon self-heal — the script logs why and exits 0 rather than
+failing the session.
 
 ### The HF_TOKEN problem
 
@@ -87,9 +108,23 @@ claude plugin install guards
 Then start (or restart) a Claude Code session — the `SessionStart` hook
 runs the self-heal automatically.
 
+## Server-side / hosted deployment
+
+**Not enabled by anything in this repo.** If you're considering running
+any of these guards reachable over a network — even inside our own
+infrastructure boundary — read `docker/SERVER-SIDE.md` first. The short
+version: it's architecturally fine for `injection-guard`, and explicitly
+not fine for `secret-guard`/`pii-guard` per their own READMEs, for
+reasons that don't go away just because the network boundary is ours.
+
 ## Known limitations
 
-- **macOS self-heal not implemented** — manual launchd install only, see `launchd/`.
+- **Docker is now the primary deployment path**; its only hard
+  requirement is a working `docker` + `docker compose` on the host.
+  Without it, self-heal falls back to the original bare-metal path
+  below, unchanged.
+- **macOS self-heal not implemented** for either path — manual launchd
+  install only, see `launchd/`.
 - **Windows not supported at all for the daemon services** — secret-guard's hook stage still works there (no daemon needed), injection-guard/pii-guard stages fail open.
 - **Only Bash tool calls are guarded** — Read/Grep/WebFetch's `updatedToolOutput` shapes aren't confirmed from the docs; rather than guess, those tool calls pass through unguarded for v1.
 - **Vendored hook scripts** (`hooks/*.sh`, `vendor/secret-guard-core/scan.sh`) must be manually synced if their source repos change — no automated sync exists yet.
