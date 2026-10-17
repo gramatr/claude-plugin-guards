@@ -4,11 +4,12 @@ Wires [secret-guard](https://github.com/gramatr/secret-guard),
 [injection-guard](https://github.com/gramatr/injection-guard), and
 [pii-guard](https://github.com/gramatr/pii-guard) into Claude Code's
 `PostToolUse` hook for Bash, plus a self-healing `SessionStart` hook
-that keeps the two daemons installed and running — **and** an MCP
-server (`mcp/server.py`) exposing the same three daemons as explicit,
-independently-callable tools for any MCP-capable caller.
+that keeps the backend running — **and** an MCP server (`mcp/server.py`)
+exposing one `scan` tool, backed by
+[guards-unified](https://github.com/gramatr/guards-unified), for any
+MCP-capable caller.
 
-## Three independent axes, not a pipeline
+## Three independent axes, one call
 
 secret-guard, pii-guard, and injection-guard protect against three
 unrelated things — credential leaks, personal-data leaks, and
@@ -20,22 +21,29 @@ parallel with *undefined* resolution order when more than one tries to
 rewrite the same output — see that script's own comments), not a
 statement that the three guards are coupled.
 
-The MCP server (`mcp/server.py`) makes that independence explicit:
-`scan_secrets`, `scan_pii`, and `classify_injection` are three separate
-tools, each a standalone HTTP call to its own daemon. Call one, two,
-or all three, in any order — there's no shared pipeline here, because
-an explicit tool call has none of the parallel-hook-ordering problem
-the Bash hook has to work around. This also closes out
-injection-guard's own README roadmap item, "MCP server front-end for
-explicit tool-call access (vs. automatic hook-based gating only)."
+The MCP server (`mcp/server.py`) exposes exactly **one** tool, `scan`,
+backed by `guards-unified`'s single `POST /v1/scan` endpoint — which
+already runs all three detectors unconditionally on the same text and
+returns a per-finding result for each, in one response. An earlier
+version of this file exposed `scan_secrets`/`scan_pii`/
+`classify_injection` as three separate tools against three separate
+daemons; that made sense when the backend *was* three separate
+daemons, and stopped making sense once the backend became one call
+that already answers all three questions at once — splitting it back
+into three client-side calls would only add round trips a caller never
+wanted (a caller asking about injection risk also wants to know about
+leaked secrets in the same content; there's no real use case for only
+checking one axis). This also closes out injection-guard's own README
+roadmap item, "MCP server front-end for explicit tool-call access (vs.
+automatic hook-based gating only)."
 
-Same scope caveats apply as the hook path: `classify_injection` is
+Same scope caveats apply as the hook path: the injection finding is
 jailbreak/override detection, not a reliable control for indirect
 injection (6% recall on real tool-output injections — see
-injection-guard's `RESEARCH-SPIKE-classification.md`). `scan_pii`
-covers Presidio's entity set only, not all PII. Both tools return an
-explicit `{"error": ...}` rather than a false "clean" result if their
-daemon is unreachable — unlike the hooks, which fail open by design,
+injection-guard's `RESEARCH-SPIKE-classification.md`). The PII finding
+covers Presidio's entity set only, not all PII. The tool returns an
+explicit `{"error": ...}` rather than a false "clean" result if the
+backend is unreachable — unlike the hooks, which fail open by design,
 a caller that explicitly asked for a scan result should not be told
 something is clean when it was never actually checked.
 
