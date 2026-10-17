@@ -1,2 +1,3 @@
 .gramatr/
 *.log
+__pycache__/
