@@ -33,6 +33,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
 SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
 
+# Docker-stack default. SECRET_GUARD_ENDPOINT tried first (consistent
+# HTTP shape with the other two stages, now that secret-guard runs as a
+# container too — see guards/docker/docker-compose.yml). Falls back to
+# invoking $SECRET_SCAN directly if the endpoint is unreachable, so a
+# bare-metal/non-Docker install (guards-selfheal.sh's non-Docker
+# fallback path) still works unmodified — that script has no daemon
+# dependency, same as always.
+SECRET_GUARD_ENDPOINT="${SECRET_GUARD_ENDPOINT:-http://127.0.0.1:8732}"
 PII_GUARD_ENDPOINT="${PII_GUARD_ENDPOINT:-http://127.0.0.1:8731}"
 INJECTION_GUARD_ENDPOINT="${INJECTION_GUARD_ENDPOINT:-http://127.0.0.1:8730}"
 INJECTION_GUARD_AUTH_TOKEN="${INJECTION_GUARD_AUTH_TOKEN:-}"
@@ -58,14 +66,29 @@ CHANGED=0
 
 # --- Stage 1: secret-guard (redact, highest priority — runs first so
 # later stages never see a raw secret value at all) ---
-if [ -x "$SECRET_SCAN" ]; then
+SECRET_RESPONSE="$(jq -n --arg text "$CURRENT" '{text: $text}' 2>/dev/null \
+  | curl -sS -m 10 -X POST "${SECRET_GUARD_ENDPOINT}/scan" \
+      -H "Content-Type: application/json" -d @- 2>/dev/null)"
+if [ -n "$SECRET_RESPONSE" ]; then
+  SECRET_FOUND="$(echo "$SECRET_RESPONSE" | jq -r '.found // false' 2>/dev/null)"
+  if [ "$SECRET_FOUND" = "true" ]; then
+    SECRET_REDACTED="$(echo "$SECRET_RESPONSE" | jq -r '.redacted_text' 2>/dev/null)"
+    if [ -n "$SECRET_REDACTED" ]; then
+      CURRENT="$SECRET_REDACTED"
+      CHANGED=1
+    fi
+  fi
+elif [ -x "$SECRET_SCAN" ]; then
+  # Container unreachable — fall back to the vendored script directly
+  # (bare-metal path, or the container is simply down).
+  echo "combined-hook: secret-guard-server unreachable at ${SECRET_GUARD_ENDPOINT}, falling back to local scan.sh" >&2
   REDACTED="$(printf '%s' "$CURRENT" | "$SECRET_SCAN" 2>/dev/null)"
   if [ -n "$REDACTED" ] && [ "$REDACTED" != "$CURRENT" ]; then
     CURRENT="$REDACTED"
     CHANGED=1
   fi
 else
-  echo "combined-hook: secret-guard scan.sh not found/executable, skipping (fail-open)" >&2
+  echo "combined-hook: secret-guard-server unreachable and no local scan.sh found, skipping (fail-open)" >&2
 fi
 
 # --- Stage 2: pii-guard (redact) ---
