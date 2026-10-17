@@ -1,0 +1,22 @@
+[Unit]
+Description=injection-guard-daemon (gramatr guards plugin)
+After=network.target
+
+[Service]
+Type=simple
+# EnvironmentFile must supply HF_TOKEN — a Hugging Face token that has
+# accepted Llama Prompt Guard 2's gated license. This cannot be
+# automated: accepting someone else's license is inherently a manual,
+# per-user step. guards-selfheal.sh checks for this file and warns
+# clearly if it's missing, rather than let this service silently
+# crash-loop with no explanation.
+EnvironmentFile=-%h/.config/gramatr-guards/injection-guard.env
+ExecStart=%h/.local/bin/injection-guard-daemon
+Restart=on-failure
+RestartSec=5
+Environment=INJECTION_GUARD_HOST=127.0.0.1
+Environment=INJECTION_GUARD_PORT=8730
+Environment=INJECTION_GUARD_DEVICE=auto
+
+[Install]
+WantedBy=default.target

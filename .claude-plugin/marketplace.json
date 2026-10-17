@@ -1,0 +1,16 @@
+{
+  "name": "gramatr-guards",
+  "description": "Secret, prompt-injection, and PII detection for Claude Code tool output — secret-guard, injection-guard, and pii-guard wired into PostToolUse hooks.",
+  "owner": {
+    "name": "gramatr",
+    "email": "support@gramatr.com",
+    "url": "https://gramatr.com"
+  },
+  "plugins": [
+    {
+      "name": "guards",
+      "source": "./guards",
+      "description": "Secret/injection/PII guards for Claude Code — see guards/README.md."
+    }
+  ]
+}

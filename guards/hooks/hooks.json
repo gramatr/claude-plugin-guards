@@ -1,0 +1,31 @@
+{
+  "description": "gramatr guards: secret-guard + injection-guard + pii-guard, wired as one combined PostToolUse hook on Bash (see combined-hook.sh for why ONE hook, not three — Claude Code's own docs say multiple hooks returning updatedToolOutput for the same call have undefined resolution order). SessionStart runs a self-heal script (same idempotent-check pattern as grāmatr's own statusline-selfheal.js) that installs/starts the injection-guard and pii-guard daemons if they're not already running.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/guards-selfheal.sh"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/combined-hook.sh"],
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

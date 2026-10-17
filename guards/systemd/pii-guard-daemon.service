@@ -1,0 +1,14 @@
+[Unit]
+Description=pii-guard-daemon (gramatr guards plugin)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pii-guard-daemon
+Restart=on-failure
+RestartSec=5
+Environment=PII_GUARD_HOST=127.0.0.1
+Environment=PII_GUARD_PORT=8731
+
+[Install]
+WantedBy=default.target
