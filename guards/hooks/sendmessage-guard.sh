@@ -6,9 +6,19 @@
 # (exact-span redaction, not a whole-call denial), now that
 # guards-unified's redacted_text gives us the same exact-span
 # information for an outgoing message that it already gives for
-# incoming tool output. Only the fail-closed backend-unreachable case
-# still denies outright — there's nothing to redact against if the
-# scan itself couldn't run.
+# incoming tool output.
+#
+# BACKEND-UNREACHABLE CASE: degrades, does not block outright. Used to
+# deny every message outright when guards-unified was unreachable —
+# changed after that fail-closed-on-outage behavior was blocking
+# ordinary cross-agent coordination entirely on a single downstream
+# dependency being down, with no way to route around it. Now falls
+# back to the same vendored gitleaks secret-only scan combined-hook.sh
+# already uses for its own backend-unreachable case: secrets still get
+# real local coverage (no network dependency), and the message is
+# allowed through with a clear warning that PII scanning couldn't run
+# (no local equivalent to gitleaks exists for PII) — degraded and
+# disclosed, not silently unsafe, and not a blanket block either.
 #
 # MUST remain the ONLY PreToolUse hook matched on SendMessage (or on a
 # broad "*" that also matches it). Confirmed by actually testing, not
@@ -41,6 +51,9 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
+SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
 GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 
 RAW="$(cat)"
@@ -54,12 +67,38 @@ if [ -z "$MESSAGE" ]; then
   exit 0
 fi
 
+ORIGINAL_INPUT="$(printf '%s' "$RAW" | jq -c '.tool_input')"
+
 RESPONSE="$(jq -n --arg text "$MESSAGE" '{text: $text}' 2>/dev/null \
   | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
 if [ -z "$RESPONSE" ]; then
-  jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "sendmessage-guard: guards-unified backend unreachable, denying by default (fail-closed — nothing can be safely redacted without a scan result, and an unsent message is recoverable while a sent one is not)"}}'
+  SENT_TEXT="$MESSAGE"
+  SECRET_NOTE="no secret found by local scan"
+  if [ -x "$SECRET_SCAN" ]; then
+    LOCAL_REDACTED="$(printf '%s' "$MESSAGE" | "$SECRET_SCAN" 2>/dev/null)"
+    if [ -n "$LOCAL_REDACTED" ] && [ "$LOCAL_REDACTED" != "$MESSAGE" ]; then
+      SENT_TEXT="$LOCAL_REDACTED"
+      SECRET_NOTE="a secret was found and redacted by the local-only scan"
+    fi
+  else
+    SECRET_NOTE="local secret scan unavailable too (gitleaks/jq missing) — sent with NO secret coverage"
+  fi
+  jq -n \
+    --argjson orig "$ORIGINAL_INPUT" \
+    --arg text "$SENT_TEXT" \
+    --arg reason "sendmessage-guard: guards-unified backend unreachable — sent via local-only secret scan (${SECRET_NOTE}); PII scan unavailable until backend is back" \
+    --arg ctx "sendmessage-guard: guards-unified is unreachable right now. This message was checked for secrets via a local-only scan (${SECRET_NOTE}), but PII scanning could not run — review it yourself if it might contain PII, before assuming it's clean." \
+    '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        permissionDecisionReason: $reason,
+        updatedInput: ($orig + {message: $text, summary: $text, content: $text}),
+        additionalContext: $ctx
+      }
+    }'
   exit 0
 fi
 
@@ -72,7 +111,6 @@ fi
 
 REDACTED_TEXT="$(echo "$RESPONSE" | jq -r '.redacted_text')"
 REASON_CODES="$(echo "$RESPONSE" | jq -r '[.findings[] | select(.type=="secret" or .type=="pii") | select(.verdict=="found") | .type] | join(", ")' 2>/dev/null)"
-ORIGINAL_INPUT="$(printf '%s' "$RAW" | jq -c '.tool_input')"
 
 # additionalContext is written as a plain factual statement, not an
 # imperative instruction, per Claude Code's own hooks docs: imperative
