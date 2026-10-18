@@ -47,6 +47,40 @@ backend is unreachable — unlike the hooks, which fail open by design,
 a caller that explicitly asked for a scan result should not be told
 something is clean when it was never actually checked.
 
+## Outbound protection: blocking agent-to-agent message leaks
+
+`hooks/sendmessage-guard.sh` is a `PreToolUse` hook matched on
+`SendMessage` — it scans an outgoing agent-to-agent message **before**
+it's sent and denies the call if it contains a secret or PII finding.
+This is a different trust boundary than the `PostToolUse` hooks above:
+those protect content coming *into* this session's context; this one
+protects content this session is about to send *out*, to a different
+agent, possibly a different user, possibly logged or relayed
+elsewhere.
+
+- Scans `tool_input.message` — confirmed by actually harvesting a real
+  `SendMessage` `PreToolUse` payload, not assumed. `tool_input` also
+  carries a `content` field that looks like the same thing but is a
+  **truncated preview** (cut off with `…`); scanning that instead would
+  silently miss content past the truncation point.
+- Both the `secret` and `pii` findings gate the call here — unlike the
+  `UserPromptSubmit` guard (not yet built) or the general case, where
+  PII isn't blocked because it's the user's own data in their own
+  conversation. A message to another agent is a different story: the
+  recipient may be a different party entirely.
+- The `injection` finding is deliberately ignored for this decision —
+  the message is authored by the sending agent itself, not forwarded
+  untrusted content, so "is this an injection attempt" isn't the
+  relevant question for an outbound send.
+- **Fails CLOSED, not open** — the one deliberate inversion from every
+  other hook in this stack. `combined-hook.sh` fails open because a
+  missed detection on incoming content is recoverable; here, the
+  backend being unreachable would otherwise silently bypass the only
+  control this hook provides on an action that can't be undone once
+  sent. Denying by default when `guards-unified` is unreachable is the
+  correct default for this one case specifically — not a pattern to
+  copy onto the other hooks.
+
 ## Architecture
 
 ### One combined hook, not three
