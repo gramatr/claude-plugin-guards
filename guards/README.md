@@ -105,6 +105,38 @@ possibly a different user, possibly logged or relayed elsewhere.
   stack, which fails open. This is the only remaining deny path; a
   detected secret/PII no longer denies, it redacts.
 
+## Inbound protection: blocking a secret in your own prompt
+
+`hooks/userpromptsubmit-guard.sh` is a `UserPromptSubmit` hook — it
+scans the user's own prompt before it reaches the model and **blocks**
+it (not redacts) if it contains a secret.
+
+- **Secret findings only.** PII is explicitly out of scope — it's the
+  user's own data in their own conversation, so blocking on it would
+  be noise, not protection. The injection finding is out of scope too:
+  this is the user's own direct instruction to their own agent, not
+  forwarded untrusted content, so "is this an injection attempt" isn't
+  a meaningful question here.
+- **Block, not redact — this is a protocol limit, not a policy
+  choice.** Confirmed directly against Claude Code's own hooks docs:
+  `UserPromptSubmit`'s `decision` field only ever takes `"block"` —
+  there's no `updatedInput`-style rewrite for this event the way
+  `PreToolUse` gives `sendmessage-guard.sh`. Blocking is the only
+  control available for a detected secret here.
+- **Blocking is NOT a complete secrecy guarantee — stated plainly, not
+  glossed over.** Even with `suppressOriginalPrompt: true` (set on
+  every block), the docs are explicit that the blocked text can still
+  appear in the local session transcript and prompt history on disk.
+  This hook keeps a detected secret out of the model/API call, which
+  is real and worth having — it does not promise the secret never
+  touches local disk.
+- **Fails OPEN on backend-unreachable — the opposite of
+  `sendmessage-guard.sh`'s fail-closed stance, deliberately.**
+  Fail-closed there costs one occasional agent-to-agent send during an
+  outage. Fail-closed here would block every single prompt the user
+  types for as long as `guards-unified` is down, turning a safety net
+  into a single point of failure for using Claude Code at all.
+
 ## Architecture
 
 ### One combined hook, not three
