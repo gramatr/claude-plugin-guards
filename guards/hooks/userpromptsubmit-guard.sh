@@ -46,7 +46,13 @@ RESPONSE="$(jq -n --arg text "$PROMPT" '{text: $text}' 2>/dev/null \
   | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
-if [ -z "$RESPONSE" ]; then
+# A non-empty RESPONSE isn't enough on its own -- a truncated body or
+# a well-formed error JSON missing "findings" would otherwise make the
+# jq extraction below silently return "", indistinguishable from
+# "scanned, nothing found." This hook already fails open on empty
+# response (advisory-only, no local fallback exists); malformed gets
+# the same treatment, not a silent false-clean.
+if [ -z "$RESPONSE" ] || ! echo "$RESPONSE" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
   exit 0
 fi
 
