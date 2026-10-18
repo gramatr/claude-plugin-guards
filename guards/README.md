@@ -117,10 +117,20 @@ parallel**, each receiving the same original (unmodified) tool output,
 and the resolution order when more than one hook returns
 `updatedToolOutput` for the same call is **explicitly undefined** by
 the docs ("it doesn't say which one wins"). The docs' own
-recommendation: "use one hook that performs the rewrite." So this
-script runs secret-guard → pii-guard → injection-guard in sequence,
-each stage operating on the previous stage's already-redacted text, and
-emits exactly one final result.
+recommendation: "use one hook that performs the rewrite." Confirmed
+this same constraint applies to `PreToolUse`'s `updatedInput` too, not
+just `PostToolUse` — see `sendmessage-guard.sh`'s own comments for how
+that was found.
+
+This script makes **one** call to `guards-unified`'s single
+`POST /v1/scan` — which already runs secret, PII, and injection
+detection unconditionally on the same original text and returns all
+three results in one response — applies the redaction, prepends the
+injection warning banner if flagged, and emits exactly one final
+result. It used to make three separate sequential calls to three
+separate daemons; that collapsed into one call once `guards-unified`
+shipped (see
+`docs/scope/ship-private-marketplace-plugin-2026-10-18.md`, Unit U1).
 
 ### Bash-only for v1
 
@@ -172,30 +182,42 @@ container is "Up" — found by testing, not assumed: a container can be
 reported running with its port-publish silently missing if it was
 created during an earlier failed bind (see the migration note below).
 
-**Migrating off the old bare-metal daemons**: if this machine previously
-ran `injection-guard-daemon`/`pii-guard-daemon` via `uv tool install` +
-`systemd --user` (the old v1 install path), the self-heal script
-disables those units before starting the Docker stack — both bind the
-same ports the containers publish, so leaving them running makes the
-`docker compose up` bind fail. This migration runs once; once the
-systemd units are disabled they stay disabled.
+**Migrating off previous architectures**: the self-heal script does a
+one-time migration from either state a machine could be in before this
+consolidation — the original `uv tool install` + `systemd --user`
+bare-metal daemons (disabled, same as before), and now also the old
+three-container Docker stack (`secret-guard`/`pii-guard`/
+`injection-guard` on `8732`/`8731`/`8730`), torn down in favor of the
+single `guards-unified` container on `:8700`. Found by testing, not
+assumed: the old stack's ports don't conflict with `:8700`, so without
+this migration a machine that already ran it would end up with four
+containers across two architectures, not a clean upgrade.
 
-**Non-Docker fallback**: if Docker isn't usable on this machine, the
-original `uv tool install` + `systemd --user` (Linux) / launchd (macOS,
-templates only, self-heal not implemented) path is still there and
-still works, unchanged from v1. Windows remains explicitly out of scope
-for any daemon self-heal — the script logs why and exits 0 rather than
-failing the session.
+**Non-Docker fallback is now secret-detection only.** The old bare-metal
+path ran `injection-guard-daemon`/`pii-guard-daemon` as standalone
+`systemd --user` services so combined-hook.sh could still reach them on
+a non-Docker machine. That path is retired: combined-hook.sh now talks
+to `guards-unified` as one service, which has no non-Docker equivalent
+(it's one process bundling all three models/tools, not three
+independently-installable daemons). On a machine without Docker, secret
+detection still works via combined-hook.sh's own local `scan.sh`
+fallback (no daemon, no network dependency); PII and injection detection
+require Docker. See `docs/scope/ship-private-marketplace-plugin-2026-10-18.md`,
+Units U1/U2, for why PII/injection don't get an equivalent fallback —
+both need actual loaded models to produce a result, so there's no cheap
+local path for them the way gitleaks gives secrets.
 
 ### The HF_TOKEN problem
 
-`injection-guard-daemon` needs a Hugging Face token that has accepted
-Llama Prompt Guard 2's gated license. This **cannot be automated** —
-accepting someone else's license is inherently a manual, per-user step.
-`guards-selfheal.sh` checks for `~/.config/gramatr-guards/injection-guard.env`
-(must contain `HF_TOKEN=...`) and warns clearly if it's missing, rather
-than silently installing a daemon that will never successfully load the
-model.
+`guards-unified`'s injection finding needs a Hugging Face token that has
+accepted Llama Prompt Guard 2's gated license. This **cannot be
+automated** — accepting someone else's license is inherently a manual,
+per-user step. `guards-selfheal.sh` checks for
+`~/.config/gramatr-guards/injection-guard.env` (must contain
+`HF_TOKEN=...`) and warns clearly if it's missing, rather than silently
+starting a container whose injection finding will never successfully
+load the model (the secret and PII findings don't need it and work
+regardless).
 
 ## Install
 
@@ -218,13 +240,13 @@ reasons that don't go away just because the network boundary is ours.
 
 ## Known limitations
 
-- **Docker is now the primary deployment path**; its only hard
-  requirement is a working `docker` + `docker compose` on the host.
-  Without it, self-heal falls back to the original bare-metal path
-  below, unchanged.
-- **macOS self-heal not implemented** for either path — manual launchd
-  install only, see `launchd/`.
-- **Windows not supported at all for the daemon services** — secret-guard's hook stage still works there (no daemon needed), injection-guard/pii-guard stages fail open.
+- **Docker is the only path to PII/injection detection now.** Its only
+  hard requirement is a working `docker` + `docker compose` on the
+  host. Without it, only secret detection works (via combined-hook.sh's
+  local `scan.sh` fallback) — see "Non-Docker fallback" above.
+- **Windows not supported at all for `guards-unified`** — secret
+  detection still works there (no daemon needed), PII/injection stages
+  fail open.
 - **Only Bash tool calls are guarded** — Read/Grep/WebFetch's `updatedToolOutput` shapes aren't confirmed from the docs; rather than guess, those tool calls pass through unguarded for v1.
 - **Vendored hook scripts** (`hooks/*.sh`, `vendor/secret-guard-core/scan.sh`) must be manually synced if their source repos change — no automated sync exists yet.
 - **secret-guard's `gitleaks`/`jq` dependencies are checked, never auto-installed** — a system package manager assumption felt too risky to make silently; the self-heal script warns and fails open instead.
