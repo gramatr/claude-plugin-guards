@@ -130,6 +130,20 @@ ensure_docker_stack() {
 
   migrate_from_previous_architecture
 
+  # `docker compose up -d` alone never checks the registry for a newer
+  # image -- it just reuses whatever's cached locally under this tag,
+  # silently, forever. Confirmed by testing this gap directly: a
+  # machine's guards-unified could be several fixes behind what's
+  # actually published and this script would never know, since `up`
+  # was never telling it to look. `timeout` bounds this so a slow or
+  # unreachable registry can't hang SessionStart -- failure here is
+  # non-fatal, same fail-open posture as everything else that isn't
+  # the detection result itself: proceed with whatever's cached rather
+  # than block the session.
+  if ! timeout 15 docker compose -f "$COMPOSE_FILE" pull 2>&1 | while read -r line; do log "$line"; done; then
+    log "WARNING: docker compose pull failed or timed out — proceeding with whatever image is already cached locally (may be stale)."
+  fi
+
   log "Ensuring guards-unified is up ($COMPOSE_FILE)..."
   if ! docker compose -f "$COMPOSE_FILE" up -d 2>&1 | while read -r line; do log "$line"; done; then
     log "WARNING: docker compose up failed — guard stages will fail open until this is fixed manually (try: docker compose -f $COMPOSE_FILE up -d)."
