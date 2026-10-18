@@ -31,12 +31,84 @@ METRICS_DIR="$HOME/.local/share/gramatr-guards/metrics"
 # docs/scope/ship-private-marketplace-plugin-2026-10-18.md, Unit U1).
 # PII and injection detection have no equivalent fallback: both need
 # their actual loaded models to produce a result at all, so there's no
-# cheap local path for them the way gitleaks gives secrets. ---
-for bin in gitleaks jq; do
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    log "WARNING: $bin not found on PATH — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install $bin."
+# cheap local path for them the way gitleaks gives secrets.
+#
+# gitleaks gets an actual auto-install attempt, not just a warning —
+# this was leaving the secret-axis fallback silently unavailable on a
+# machine that never happened to have gitleaks already (confirmed on
+# dgx-spark-01). jq is left warn-only: it's a hard dependency of THIS
+# script too (every call below pipes through jq), so a machine
+# actually missing it would already be failing loudly elsewhere, not
+# just in the fallback path. ---
+GITLEAKS_VERSION="8.30.1"
+
+ensure_gitleaks() {
+  if command -v gitleaks >/dev/null 2>&1; then
+    return 0
   fi
-done
+
+  local os arch
+  case "$(uname -s)" in
+    Linux) os="linux" ;;
+    Darwin) os="darwin" ;;
+    *) log "WARNING: gitleaks not found on PATH and auto-install isn't supported on $(uname -s) — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install manually: https://github.com/gitleaks/gitleaks#installing"; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) log "WARNING: gitleaks not found on PATH and auto-install doesn't recognize this machine's arch ($(uname -m)) — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install manually: https://github.com/gitleaks/gitleaks#installing"; return 1 ;;
+  esac
+
+  local install_dir="$HOME/.local/bin"
+  local base="gitleaks_${GITLEAKS_VERSION}_${os}_${arch}"
+  local tmp
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  local release_url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+  if ! curl -sSL -m 30 -o "$tmp/${base}.tar.gz" "${release_url}/${base}.tar.gz" 2>/dev/null \
+    || ! curl -sSL -m 30 -o "$tmp/checksums.txt" "${release_url}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" 2>/dev/null; then
+    log "WARNING: failed to download gitleaks v${GITLEAKS_VERSION} — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install manually: https://github.com/gitleaks/gitleaks#installing"
+    return 1
+  fi
+
+  # Verify against the release's own published checksums before
+  # extracting anything — this is a binary we're about to put on PATH
+  # and execute, not just data.
+  local expected actual
+  expected="$(grep " ${base}.tar.gz\$" "$tmp/checksums.txt" | awk '{print $1}')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp/${base}.tar.gz" 2>/dev/null | awk '{print $1}')"
+  else
+    # macOS has no sha256sum by default.
+    actual="$(shasum -a 256 "$tmp/${base}.tar.gz" 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    log "WARNING: gitleaks v${GITLEAKS_VERSION} download failed checksum verification (expected '${expected:-none found}', got '$actual') — not installing it. Install manually: https://github.com/gitleaks/gitleaks#installing"
+    return 1
+  fi
+
+  if ! tar -xzf "$tmp/${base}.tar.gz" -C "$tmp" gitleaks 2>/dev/null; then
+    log "WARNING: gitleaks v${GITLEAKS_VERSION} archive failed to extract — install manually: https://github.com/gitleaks/gitleaks#installing"
+    return 1
+  fi
+
+  mkdir -p "$install_dir"
+  mv "$tmp/gitleaks" "$install_dir/gitleaks"
+  chmod +x "$install_dir/gitleaks"
+
+  if command -v gitleaks >/dev/null 2>&1; then
+    log "Installed gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks."
+  else
+    log "Installed gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks, but $install_dir isn't on this shell's PATH yet — add it (e.g. export PATH=\"\$HOME/.local/bin:\$PATH\" in your shell profile) for combined-hook.sh's fallback scan to actually find it."
+  fi
+}
+
+ensure_gitleaks
+
+if ! command -v jq >/dev/null 2>&1; then
+  log "WARNING: jq not found on PATH — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install jq."
+fi
 
 docker_usable() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
