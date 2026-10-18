@@ -26,6 +26,19 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/sendmessage-guard.sh"],
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }
