@@ -69,6 +69,10 @@ SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
 GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 SUMMARY_MAX=200
 PII_GUARD_MODE="${PII_GUARD_MODE:-flag}"
+SCAN_MAX_BYTES="${SCAN_MAX_BYTES:-24576}"
+
+TMP_FILES=()
+trap 'rm -f "${TMP_FILES[@]}"' EXIT
 
 RAW="$(cat)"
 TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)"
@@ -78,6 +82,14 @@ fi
 
 MESSAGE="$(printf '%s' "$RAW" | jq -r '.tool_input.message // ""' 2>/dev/null)"
 ORIGINAL_INPUT="$(printf '%s' "$RAW" | jq -c '.tool_input')"
+# ORIGINAL_INPUT embeds the full, pre-redaction message/summary/content
+# verbatim -- passing it via --argjson (argv) has the exact same
+# MAX_ARG_STRLEN crash risk as the individual fields below. Written to
+# a file once, read back via --rawfile + fromjson in both jq calls
+# that need it.
+ORIGINAL_INPUT_FILE="$(mktemp)"
+TMP_FILES+=("$ORIGINAL_INPUT_FILE")
+printf '%s' "$ORIGINAL_INPUT" > "$ORIGINAL_INPUT_FILE"
 HAS_SUMMARY="$(printf '%s' "$RAW" | jq -r '.tool_input | has("summary")' 2>/dev/null)"
 HAS_CONTENT="$(printf '%s' "$RAW" | jq -r '.tool_input | has("content")' 2>/dev/null)"
 SUMMARY="$(printf '%s' "$RAW" | jq -r '.tool_input.summary // ""' 2>/dev/null)"
@@ -102,6 +114,26 @@ truncate_summary() {
   jq -nr --arg t "$1" --argjson n "$SUMMARY_MAX" '$t[0:$n]'
 }
 
+# add_rawfile_arg NAME VALUE -- appends --rawfile NAME <tmpfile> to the
+# JQ_ARGS array (tmpfile holding VALUE), tracked in TMP_FILES for
+# cleanup on exit. Used instead of --arg for every field going into
+# the FINAL updatedInput jq call below -- a field value (message,
+# summary, or content) large enough to exceed Linux's per-argument
+# MAX_ARG_STRLEN (~128KB) would otherwise crash that jq call with
+# E2BIG, silently dropping whatever redaction was about to ship
+# (Claude Code falls back to the ORIGINAL unredacted input when a
+# PreToolUse hook fails). --rawfile reads from a file, bypassing argv
+# entirely -- no size ceiling on what this hook can safely send back.
+# (TMP_FILES array + its cleanup trap are declared once, near the top
+# of this script, since ORIGINAL_INPUT_FILE above needs them too.)
+add_rawfile_arg() {
+  local name="$1" value="$2" f
+  f="$(mktemp)"
+  printf '%s' "$value" > "$f"
+  TMP_FILES+=("$f")
+  JQ_ARGS+=(--rawfile "$name" "$f")
+}
+
 # scan_remote TEXT -- sets, as side effects:
 #   SCAN_OUT             text with ONLY secret redaction applied (PII left intact)
 #   SCAN_SECRET_FOUND    1 if a secret was found in this text, else 0
@@ -110,13 +142,48 @@ truncate_summary() {
 # Returns 1 if guards-unified itself didn't answer at all.
 scan_remote() {
   local text="$1" resp
+  local full_len scan_text remainder="" req_file
   SCAN_OUT="$text"
   SCAN_SECRET_FOUND=0
   SCAN_PII_TYPES=""
   SCAN_COMBINED_OUT="$text"
-  resp="$(jq -n --arg text "$text" '{text: $text}' 2>/dev/null \
+  SCAN_TRUNCATED=0
+
+  # SCAN_MAX_BYTES caps what gets SENT TO THE SCANNER, not what comes
+  # back out -- measured directly this session: a 20KB /v1/scan
+  # request never completed (>60s) at guards-unified's original
+  # cpus:1.0 limit, confirmed CPU-bound. Raising cpus to 16 (see
+  # docker-compose.yml) fixed that specific case, but size still scales
+  # worse than linear regardless of core count (100KB still ~40s even
+  # at cpus:16), so this cap still matters -- just at a size actually
+  # fast at cpus:16 (24KB default, comfortably under this function's
+  # own 10s curl timeout) rather than a number picked before any of
+  # this was measured. The untouched remainder is always reattached
+  # below and disclosed by the caller -- never silently dropped, never
+  # silently assumed clean.
+  full_len="$(printf '%s' "$text" | wc -c)"
+  if [ "$full_len" -gt "$SCAN_MAX_BYTES" ]; then
+    scan_text="$(printf '%s' "$text" | head -c "$SCAN_MAX_BYTES")"
+    remainder="$(printf '%s' "$text" | tail -c "+$((SCAN_MAX_BYTES + 1))")"
+    SCAN_TRUNCATED=1
+  else
+    scan_text="$text"
+  fi
+
+  # --rawfile instead of --arg, here and for the final updatedInput
+  # jq call below -- a text value large enough to exceed Linux's
+  # per-argument MAX_ARG_STRLEN (~128KB) would otherwise crash the jq
+  # call with E2BIG, silently dropping whatever redaction was about to
+  # happen (Claude Code falls back to the ORIGINAL unredacted input
+  # when a PreToolUse hook fails). --rawfile reads from a file,
+  # bypassing argv entirely.
+  req_file="$(mktemp)"
+  printf '%s' "$scan_text" > "$req_file"
+  resp="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
     | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
+  rm -f "$req_file"
+
   # A non-empty resp isn't enough on its own -- a truncated body or a
   # well-formed error JSON missing "findings" would otherwise make the
   # jq extraction below silently return "", indistinguishable from
@@ -128,11 +195,19 @@ scan_remote() {
   if [ "$(echo "$resp" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)" = "found" ]; then
     SCAN_SECRET_FOUND=1
     SCAN_OUT="$(echo "$resp" | jq -r '.findings[] | select(.type=="secret") | .detail.redacted_text // empty' 2>/dev/null)"
-    [ -z "$SCAN_OUT" ] && SCAN_OUT="$text"
+    [ -z "$SCAN_OUT" ] && SCAN_OUT="$scan_text"
+  else
+    SCAN_OUT="$scan_text"
   fi
   SCAN_PII_TYPES="$(echo "$resp" | jq -r '[.findings[] | select(.type=="pii") | .detail.entities[]?.entity_type] | unique | join(", ")' 2>/dev/null)"
   SCAN_COMBINED_OUT="$(echo "$resp" | jq -r '.redacted_text // empty' 2>/dev/null)"
-  [ -z "$SCAN_COMBINED_OUT" ] && SCAN_COMBINED_OUT="$text"
+  [ -z "$SCAN_COMBINED_OUT" ] && SCAN_COMBINED_OUT="$scan_text"
+
+  # Reattach the untouched remainder (empty string when not truncated)
+  # to BOTH output variants -- never to the caller's $text, which would
+  # double it.
+  SCAN_OUT="${SCAN_OUT}${remainder}"
+  SCAN_COMBINED_OUT="${SCAN_COMBINED_OUT}${remainder}"
   return 0
 }
 
@@ -172,19 +247,20 @@ if ! scan_remote "$MESSAGE"; then
     ANY_LOCAL_SECRET=1
   fi
   MERGE='{message: $msg}'
-  JQ_ARGS=(--arg msg "$MSG_OUT")
+  JQ_ARGS=()
+  add_rawfile_arg msg "$MSG_OUT"
   if [ "$HAS_SUMMARY" = "true" ]; then
     scan_local_secret_only "$SUMMARY"
     [ "$SCAN_FOUND" -eq 1 ] && ANY_LOCAL_SECRET=1
     SUM_OUT="$(truncate_summary "$SCAN_OUT")"
     MERGE="$MERGE + {summary: \$sum}"
-    JQ_ARGS+=(--arg sum "$SUM_OUT")
+    add_rawfile_arg sum "$SUM_OUT"
   fi
   if [ "$HAS_CONTENT" = "true" ]; then
     scan_local_secret_only "$CONTENT"
     [ "$SCAN_FOUND" -eq 1 ] && ANY_LOCAL_SECRET=1
     MERGE="$MERGE + {content: \$con}"
-    JQ_ARGS+=(--arg con "$SCAN_OUT")
+    add_rawfile_arg con "$SCAN_OUT"
   fi
   if [ "$ANY_LOCAL_SECRET" -eq 1 ]; then
     SECRET_NOTE="a secret was found and redacted by the local-only scan"
@@ -192,7 +268,7 @@ if ! scan_remote "$MESSAGE"; then
     SECRET_NOTE="no secret found by local scan"
   fi
   jq -n \
-    --argjson orig "$ORIGINAL_INPUT" \
+    --rawfile orig_raw "$ORIGINAL_INPUT_FILE" \
     --arg reason "sendmessage-guard: guards-unified backend unreachable — sent via local-only secret scan (${SECRET_NOTE}); PII scan unavailable until backend is back" \
     --arg ctx "sendmessage-guard: guards-unified is unreachable right now. This message was checked for secrets via a local-only scan (${SECRET_NOTE}), but PII scanning could not run — review it yourself if it might contain PII, before assuming it's clean." \
     "${JQ_ARGS[@]}" \
@@ -201,7 +277,7 @@ if ! scan_remote "$MESSAGE"; then
         hookEventName: \"PreToolUse\",
         permissionDecision: \"allow\",
         permissionDecisionReason: \$reason,
-        updatedInput: (\$orig + $MERGE),
+        updatedInput: ((\$orig_raw | fromjson) + $MERGE),
         additionalContext: \$ctx
       }
     }"
@@ -219,9 +295,11 @@ MSG_SECRET_OUT="$SCAN_OUT"
 MSG_SECRET_FOUND="$SCAN_SECRET_FOUND"
 MSG_PII_TYPES="$SCAN_PII_TYPES"
 MSG_COMBINED_OUT="$SCAN_COMBINED_OUT"
+MSG_TRUNCATED="$SCAN_TRUNCATED"
 
 ANY_SECRET=0
 ALL_PII_TYPES=""
+ANY_TRUNCATED=0
 MERGE='{message: $msg}'
 
 if [ "$PII_GUARD_MODE" = "redact" ]; then
@@ -231,16 +309,18 @@ else
 fi
 [ "$MSG_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
 [ -n "$MSG_PII_TYPES" ] && ALL_PII_TYPES="$MSG_PII_TYPES"
-JQ_ARGS=(--arg msg "$MSG_FIELD_OUT")
+[ "$MSG_TRUNCATED" -eq 1 ] && ANY_TRUNCATED=1
+JQ_ARGS=()
+add_rawfile_arg msg "$MSG_FIELD_OUT"
 
 if [ "$HAS_SUMMARY" = "true" ]; then
   if [ "$SUMMARY" = "$MESSAGE" ]; then
     SUM_SECRET_OUT="$MSG_SECRET_OUT"; SUM_SECRET_FOUND="$MSG_SECRET_FOUND"
-    SUM_PII_TYPES="$MSG_PII_TYPES"; SUM_COMBINED_OUT="$MSG_COMBINED_OUT"
+    SUM_PII_TYPES="$MSG_PII_TYPES"; SUM_COMBINED_OUT="$MSG_COMBINED_OUT"; SUM_TRUNCATED="$MSG_TRUNCATED"
   else
     scan_remote "$SUMMARY"
     SUM_SECRET_OUT="$SCAN_OUT"; SUM_SECRET_FOUND="$SCAN_SECRET_FOUND"
-    SUM_PII_TYPES="$SCAN_PII_TYPES"; SUM_COMBINED_OUT="$SCAN_COMBINED_OUT"
+    SUM_PII_TYPES="$SCAN_PII_TYPES"; SUM_COMBINED_OUT="$SCAN_COMBINED_OUT"; SUM_TRUNCATED="$SCAN_TRUNCATED"
   fi
   if [ "$PII_GUARD_MODE" = "redact" ]; then
     SUM_FIELD_OUT="$SUM_COMBINED_OUT"
@@ -250,18 +330,19 @@ if [ "$HAS_SUMMARY" = "true" ]; then
   SUM_FIELD_OUT="$(truncate_summary "$SUM_FIELD_OUT")"
   [ "$SUM_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
   [ -n "$SUM_PII_TYPES" ] && ALL_PII_TYPES="${ALL_PII_TYPES:+$ALL_PII_TYPES, }$SUM_PII_TYPES"
+  [ "$SUM_TRUNCATED" -eq 1 ] && ANY_TRUNCATED=1
   MERGE="$MERGE + {summary: \$sum}"
-  JQ_ARGS+=(--arg sum "$SUM_FIELD_OUT")
+  add_rawfile_arg sum "$SUM_FIELD_OUT"
 fi
 
 if [ "$HAS_CONTENT" = "true" ]; then
   if [ "$CONTENT" = "$MESSAGE" ]; then
     CON_SECRET_OUT="$MSG_SECRET_OUT"; CON_SECRET_FOUND="$MSG_SECRET_FOUND"
-    CON_PII_TYPES="$MSG_PII_TYPES"; CON_COMBINED_OUT="$MSG_COMBINED_OUT"
+    CON_PII_TYPES="$MSG_PII_TYPES"; CON_COMBINED_OUT="$MSG_COMBINED_OUT"; CON_TRUNCATED="$MSG_TRUNCATED"
   else
     scan_remote "$CONTENT"
     CON_SECRET_OUT="$SCAN_OUT"; CON_SECRET_FOUND="$SCAN_SECRET_FOUND"
-    CON_PII_TYPES="$SCAN_PII_TYPES"; CON_COMBINED_OUT="$SCAN_COMBINED_OUT"
+    CON_PII_TYPES="$SCAN_PII_TYPES"; CON_COMBINED_OUT="$SCAN_COMBINED_OUT"; CON_TRUNCATED="$SCAN_TRUNCATED"
   fi
   if [ "$PII_GUARD_MODE" = "redact" ]; then
     CON_FIELD_OUT="$CON_COMBINED_OUT"
@@ -270,11 +351,12 @@ if [ "$HAS_CONTENT" = "true" ]; then
   fi
   [ "$CON_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
   [ -n "$CON_PII_TYPES" ] && ALL_PII_TYPES="${ALL_PII_TYPES:+$ALL_PII_TYPES, }$CON_PII_TYPES"
+  [ "$CON_TRUNCATED" -eq 1 ] && ANY_TRUNCATED=1
   MERGE="$MERGE + {content: \$con}"
-  JQ_ARGS+=(--arg con "$CON_FIELD_OUT")
+  add_rawfile_arg con "$CON_FIELD_OUT"
 fi
 
-if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ]; then
+if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ]; then
   exit 0
 fi
 
@@ -299,6 +381,10 @@ if [ -n "$ALL_PII_TYPES" ]; then
     CTX_PARTS+=("sendmessage-guard flagged possible PII (${ALL_PII_TYPES}) in this message — values left intact, not redacted. Verify this is appropriate for the recipient before relying on it being clean.")
   fi
 fi
+if [ "$ANY_TRUNCATED" -eq 1 ]; then
+  REASON_PARTS+=("one or more fields exceeded ${SCAN_MAX_BYTES} bytes, only the first ${SCAN_MAX_BYTES} bytes of each were scanned")
+  CTX_PARTS+=("One or more fields were larger than the ${SCAN_MAX_BYTES}-byte scan limit -- only the first ${SCAN_MAX_BYTES} bytes of each were checked for secrets/PII. The rest was sent as-is, unscanned. Review it yourself before assuming it's clean.")
+fi
 REASON="sendmessage-guard: $(printf '%s; ' "${REASON_PARTS[@]}")"
 CTX="$(printf '%s ' "${CTX_PARTS[@]}")"
 
@@ -308,7 +394,7 @@ CTX="$(printf '%s ' "${CTX_PARTS[@]}")"
 # is exactly the shape a prompt-injection defense watches for, and
 # this hook has no business tripping that itself.
 jq -n \
-  --argjson orig "$ORIGINAL_INPUT" \
+  --rawfile orig_raw "$ORIGINAL_INPUT_FILE" \
   --arg reason "$REASON" \
   --arg ctx "$CTX" \
   "${JQ_ARGS[@]}" \
@@ -317,7 +403,7 @@ jq -n \
       hookEventName: \"PreToolUse\",
       permissionDecision: \"allow\",
       permissionDecisionReason: \$reason,
-      updatedInput: (\$orig + $MERGE),
+      updatedInput: ((\$orig_raw | fromjson) + $MERGE),
       additionalContext: \$ctx
     }
   }"

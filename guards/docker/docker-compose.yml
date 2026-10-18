@@ -52,7 +52,23 @@ services:
     # unreachability rather than a crash loop. 4g observed comfortably
     # covering both models loaded with normal request traffic.
     mem_limit: 4g
-    cpus: 1.0
+    # 1.0 was the real bottleneck behind what looked like a payload-SIZE
+    # scaling cliff: a 20KB /v1/scan request measured as never completing
+    # (>60s) at cpus:1.0, confirmed CPU-bound (pinned at 100%+ of the
+    # single-core cap throughout, memory never close to its own limit).
+    # The work is genuinely parallel -- CPU usage during a request scales
+    # with the allocation (measured ~400% at cpus:4, ~800% at cpus:8,
+    # consistent with the model using all visible cores) -- so raising
+    # this is a real fix, not a band-aid: the same 20KB request measured
+    # at 24-44s at cpus:4, 13s at cpus:8, and 5.8-6.4s (consistently) at
+    # cpus:16, comfortably inside the hooks' 10s curl timeout. 100KB
+    # still takes ~40s even at cpus:16 -- size scales worse than linear,
+    # so this does NOT remove the need for SCAN_MAX_BYTES (see
+    # combined-hook.sh/sendmessage-guard.sh), it just moves where that
+    # cap can safely sit. 16 is a ceiling (CFS quota), not a reservation
+    # -- it only competes with this host's other ~32 cores while a scan
+    # is actually in flight.
+    cpus: 16
     security_opt:
       - no-new-privileges:true
     healthcheck:
