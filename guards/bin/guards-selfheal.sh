@@ -326,7 +326,37 @@ fallback_non_docker() {
 }
 
 if docker_usable; then
+  # ensure_docker_stack has no mutual-exclusion primitive of its own
+  # (migrate_from_previous_architecture + reconcile_port_8700 + docker
+  # compose up all act on shared Docker state), and this script runs
+  # unconditionally on every SessionStart -- two Claude Code windows
+  # starting at the same moment can both decide :8700 needs
+  # reconciling and both act on it concurrently. This is the exact
+  # mechanism behind a real incident this session (a deliberate
+  # concurrency test raced this function against itself); it's
+  # reachable from ordinary concurrent use too, not just a test.
+  #
+  # flock around the whole call: a second concurrent session start
+  # waits for the first to finish instead of racing it. Bounded wait
+  # (60s, generous relative to a normal run's few seconds) rather than
+  # unbounded, consistent with this script's own fail-open posture
+  # elsewhere -- a stuck lock-holder must not be able to block every
+  # future session start forever.
+  if command -v flock >/dev/null 2>&1; then
+    GUARDS_SELFHEAL_LOCK="$HOME/.local/share/gramatr-guards/selfheal.lock"
+    mkdir -p "$(dirname "$GUARDS_SELFHEAL_LOCK")" 2>/dev/null
+    exec 9>"$GUARDS_SELFHEAL_LOCK"
+    if ! flock -w 60 9; then
+      log "WARNING: couldn't acquire the self-heal lock within 60s (another session-start may be running long, or stuck) -- proceeding without it rather than blocking this session indefinitely. If guards-unified ends up in a bad state, re-run this script."
+    fi
+  else
+    # flock is util-linux, not available on macOS by default -- fail
+    # open on locking the same way the rest of this script fails open
+    # on everything else that isn't the detection result itself.
+    log "WARNING: flock not found on PATH -- running without the concurrency lock. Install util-linux's flock for protection against concurrent SessionStart races."
+  fi
   ensure_docker_stack
+  command -v flock >/dev/null 2>&1 && flock -u 9 2>/dev/null
 else
   fallback_non_docker
 fi
