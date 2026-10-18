@@ -34,6 +34,14 @@ services:
       # whole stack over one optional capability — the secret/PII
       # findings don't need it, only the injection finding does.
       - ${HOME}/.config/gramatr-guards/injection-guard.env
+    volumes:
+      # Local-only metrics — one JSON line per finding (timestamp,
+      # type, verdict, reason_code), never the scanned text, never
+      # transmitted anywhere — see guards-unified's own README,
+      # "Local metrics." Mounting this is what makes it survive a
+      # container restart instead of vanishing with the ephemeral
+      # container filesystem.
+      - ${HOME}/.local/share/gramatr-guards/metrics:/app/metrics
     restart: unless-stopped
     mem_limit: 2g
     cpus: 1.0
