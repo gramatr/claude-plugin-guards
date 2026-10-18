@@ -108,10 +108,54 @@ scan_and_redact() {
   local current="$1" changed=0 response
   local secret_verdict secret_redacted pii_verdict pii_types combined_redacted note
   local ig_verdict ig_score warning
+  local full_len scan_text remainder truncated=0 req_file
 
-  response="$(jq -n --arg text "$current" '{text: $text}' 2>/dev/null \
+  # SCAN_MAX_BYTES caps what gets SENT TO THE SCANNER, not what comes
+  # back out -- a different limit for a different reason than the
+  # --rawfile change below. Measured directly, not guessed: on an
+  # idle, otherwise-unloaded backend, a 20KB /v1/scan request never
+  # completed (>60s) at the container's original cpus:1.0 limit --
+  # confirmed CPU-bound (pinned at 100%+ the whole time, memory nowhere
+  # near its own limit). Raising cpus to 16 (see docker-compose.yml)
+  # fixed that specific case (20KB -> consistently 5.8-6.4s), but
+  # scaling with payload SIZE is worse than linear regardless of core
+  # count -- 100KB still took ~40s even at cpus:16. So this cap still
+  # matters after the CPU fix, just at a size proportioned to what's
+  # actually fast at cpus:16 (24KB default, comfortably under the
+  # hooks' 10s curl timeout based on the 20KB measurement) rather than
+  # the originally-proposed 1MB, which was picked before any of this
+  # was measured. The full original text is NEVER truncated in what
+  # this hook actually returns -- only the portion sent for scanning
+  # is capped, and that's disclosed below, never silently assumed
+  # clean.
+  full_len="$(printf '%s' "$current" | wc -c)"
+  if [ "$full_len" -gt "$SCAN_MAX_BYTES" ]; then
+    scan_text="$(printf '%s' "$current" | head -c "$SCAN_MAX_BYTES")"
+    remainder="$(printf '%s' "$current" | tail -c "+$((SCAN_MAX_BYTES + 1))")"
+    truncated=1
+  else
+    scan_text="$current"
+  fi
+
+  # --rawfile instead of --arg for the scan request body too, not just
+  # the final output below -- consistent with the final output (which
+  # is NEVER size-capped), this path stays argv-free too rather than
+  # relying on SCAN_MAX_BYTES happening to stay under the ~128KB
+  # per-argument MAX_ARG_STRLEN; if that default is ever raised past
+  # this session's measured safe range, it shouldn't reintroduce the
+  # crash this fix exists to close.
+  req_file="$(mktemp)"
+  printf '%s' "$scan_text" > "$req_file"
+  response="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
     | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
+  rm -f "$req_file"
+
+  # Everything below operates on $current as before -- reassigning it
+  # to the (possibly truncated) scan_text keeps every existing
+  # redaction/flag branch unchanged. The untouched remainder (if any)
+  # is reattached, with disclosure, right before this function returns.
+  current="$scan_text"
 
   # A non-empty response isn't enough on its own -- a truncated body
   # or a well-formed error JSON missing the "findings" key would
@@ -215,11 +259,22 @@ scan_and_redact() {
     fi
   fi
 
+  if [ "$truncated" -eq 1 ]; then
+    local trunc_note
+    trunc_note="⚠️  Only the first ${SCAN_MAX_BYTES} bytes of this output were scanned for secrets/PII/injection (it's $(( full_len )) bytes total) -- the remainder was NOT scanned. Review it yourself before assuming it's clean.
+
+---
+"
+    current="${trunc_note}${current}${remainder}"
+    changed=1
+  fi
+
   SCAN_RESULT_TEXT="$current"
   SCAN_RESULT_CHANGED="$changed"
 }
 
 INJECTION_MIN_SCORE="${INJECTION_MIN_SCORE:-0.95}"
+SCAN_MAX_BYTES="${SCAN_MAX_BYTES:-24576}"
 
 CHANGED=0
 NEW_STDOUT="$STDOUT"
@@ -241,9 +296,22 @@ if [ "$CHANGED" -eq 0 ]; then
   exit 0
 fi
 
+# --rawfile instead of --arg: an output value large enough to exceed
+# Linux's per-argument MAX_ARG_STRLEN (~128KB) would otherwise crash
+# this final jq call with E2BIG -- silently losing whatever redaction
+# just happened above, since Claude Code falls back to the ORIGINAL
+# unredacted output when a hook fails. --rawfile reads the value from
+# a file, bypassing argv entirely; no size ceiling on what this hook
+# can safely return.
+STDOUT_OUT_FILE="$(mktemp)"
+STDERR_OUT_FILE="$(mktemp)"
+trap 'rm -f "$STDOUT_OUT_FILE" "$STDERR_OUT_FILE"' EXIT
+printf '%s' "$NEW_STDOUT" > "$STDOUT_OUT_FILE"
+printf '%s' "$NEW_STDERR" > "$STDERR_OUT_FILE"
+
 jq -n \
-  --arg stdout "$NEW_STDOUT" \
-  --arg stderr "$NEW_STDERR" \
+  --rawfile stdout "$STDOUT_OUT_FILE" \
+  --rawfile stderr "$STDERR_OUT_FILE" \
   --argjson interrupted "$INTERRUPTED" \
   --argjson isImage "$IS_IMAGE" \
   '{hookSpecificOutput: {hookEventName: "PostToolUse", updatedToolOutput: {stdout: $stdout, stderr: $stderr, interrupted: $interrupted, isImage: $isImage}}}'
