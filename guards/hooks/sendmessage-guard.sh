@@ -110,7 +110,14 @@ scan_remote() {
   resp="$(jq -n --arg text "$text" '{text: $text}' 2>/dev/null \
     | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
-  [ -z "$resp" ] && return 1
+  # A non-empty resp isn't enough on its own -- a truncated body or a
+  # well-formed error JSON missing "findings" would otherwise make the
+  # jq extraction below silently return "", indistinguishable from
+  # "scanned, nothing found." Require the actual shape a real scan
+  # result has.
+  if [ -z "$resp" ] || ! echo "$resp" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
+    return 1
+  fi
   if [ "$(echo "$resp" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)" = "found" ]; then
     SCAN_SECRET_FOUND=1
     SCAN_OUT="$(echo "$resp" | jq -r '.findings[] | select(.type=="secret") | .detail.redacted_text // empty' 2>/dev/null)"

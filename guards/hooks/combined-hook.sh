@@ -96,6 +96,18 @@ RESPONSE="$(jq -n --arg text "$CURRENT" '{text: $text}' 2>/dev/null \
   | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
+# A non-empty RESPONSE isn't enough on its own -- a truncated body or a
+# well-formed error JSON missing the "findings" key would otherwise
+# make every downstream `jq` extraction below silently return "",
+# indistinguishable from "scanned, nothing found." Require the actual
+# shape a real scan result has before trusting it; anything else falls
+# through to the same disclosed fallback path as a fully unreachable
+# backend.
+if [ -n "$RESPONSE" ] && ! echo "$RESPONSE" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
+  echo "combined-hook: guards-unified returned a malformed/unexpected response shape, treating as unreachable (fail-open to local secret-scan fallback)" >&2
+  RESPONSE=""
+fi
+
 if [ -n "$RESPONSE" ]; then
   # Secret finding: always hard-redact.
   SECRET_VERDICT="$(echo "$RESPONSE" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)"
