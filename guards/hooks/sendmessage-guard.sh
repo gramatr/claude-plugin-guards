@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 # guards/hooks/sendmessage-guard.sh — PreToolUse hook on SendMessage.
 #
-# REDACTS and informs, rather than blocking outright — matching
-# secret-guard/pii-guard's own posture everywhere else in this stack
-# (exact-span redaction, not a whole-call denial), now that
-# guards-unified's redacted_text gives us the same exact-span
-# information for an outgoing message that it already gives for
-# incoming tool output.
+# REDACTS secrets, FLAGS PII, informs either way — matching
+# combined-hook.sh's own posture now (#20): a leaked key is binary and
+# costly regardless of context, so secrets stay hard-redacted
+# unconditionally. PII is different — these messages travel between
+# the operator's own agent fleet, not unknown third parties, and
+# hard-redacting PII here was actively destroying real operational
+# content (confirmed live: a peer-session coordination message
+# containing a human reviewer's name came back with the name replaced
+# by a placeholder tag, which is worse than useless for a message
+# whose entire point was identifying who made a ruling). Default
+# PII_GUARD_MODE=flag surfaces what was detected via additionalContext
+# without touching the message/summary/content values at all.
+# PII_GUARD_MODE=redact restores the old wholesale-replace behavior for
+# a context where that's actually the right tradeoff (e.g. a channel
+# with recipients outside the operator's own fleet).
 #
 # BACKEND-UNREACHABLE CASE: degrades, does not block outright. Used to
 # deny every message outright when guards-unified was unreachable —
 # changed after that fail-closed-on-outage behavior was blocking
 # ordinary cross-agent coordination entirely on a single downstream
-# dependency being down, with no way to route around it. Now falls
-# back to the same vendored gitleaks secret-only scan combined-hook.sh
-# already uses for its own backend-unreachable case: secrets still get
-# real local coverage (no network dependency), and the message is
-# allowed through with a clear warning that PII scanning couldn't run
-# (no local equivalent to gitleaks exists for PII) — degraded and
-# disclosed, not silently unsafe, and not a blanket block either.
+# dependency being down, with no way to route around it. Falls back to
+# the same vendored gitleaks secret-only scan combined-hook.sh already
+# uses for its own backend-unreachable case: secrets still get real
+# local coverage (no network dependency); PII has no local equivalent
+# to gitleaks, so PII coverage is just disclosed as unavailable in this
+# case regardless of PII_GUARD_MODE — degraded and disclosed, never
+# silently unsafe, never a blanket block.
 #
 # MUST remain the ONLY PreToolUse hook matched on SendMessage (or on a
 # broad "*" that also matches it). Confirmed by actually testing, not
@@ -44,17 +53,13 @@
 # redacted text into `summary` blew past its own schema's `maximum:
 # 200` and failed validation outright, blocking every cross-session
 # send that hit the redaction path. `summary` is STILL always
-# hard-truncated to 200 chars after its own redaction, defensively —
+# hard-truncated to 200 chars after secret redaction, defensively —
 # never trust a redaction step to respect a downstream schema's limit
 # just because it shouldn't normally lengthen text much.
 #
-# Both secret and PII findings get redacted here — a different policy
-# than a user's own prompt to their own agent (where PII isn't acted
-# on, because it's the user's own data in their own conversation): the
-# recipient of a SendMessage call is a different agent, possibly a
-# different party entirely. The injection finding is ignored for this
-# decision — the message is authored by the sending agent itself, not
-# forwarded untrusted content.
+# The injection finding is out of scope for this decision either way —
+# the message is authored by the sending agent itself, not forwarded
+# untrusted content.
 
 set -uo pipefail
 
@@ -63,6 +68,7 @@ GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
 SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
 GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 SUMMARY_MAX=200
+PII_GUARD_MODE="${PII_GUARD_MODE:-flag}"
 
 RAW="$(cat)"
 TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)"
@@ -89,21 +95,30 @@ truncate_summary() {
   jq -nr --arg t "$1" --argjson n "$SUMMARY_MAX" '$t[0:$n]'
 }
 
-# scan_remote TEXT -- sets SCAN_OUT (redacted text) and SCAN_TYPES
-# (comma-joined finding types, empty if clean) as a side effect.
+# scan_remote TEXT -- sets, as side effects:
+#   SCAN_OUT             text with ONLY secret redaction applied (PII left intact)
+#   SCAN_SECRET_FOUND    1 if a secret was found in this text, else 0
+#   SCAN_PII_TYPES       comma-joined PII entity types found, empty if none
+#   SCAN_COMBINED_OUT    text with BOTH secret and PII redacted (legacy wholesale), for PII_GUARD_MODE=redact
 # Returns 1 if guards-unified itself didn't answer at all.
 scan_remote() {
   local text="$1" resp
   SCAN_OUT="$text"
-  SCAN_TYPES=""
+  SCAN_SECRET_FOUND=0
+  SCAN_PII_TYPES=""
+  SCAN_COMBINED_OUT="$text"
   resp="$(jq -n --arg text "$text" '{text: $text}' 2>/dev/null \
     | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
   [ -z "$resp" ] && return 1
-  SCAN_TYPES="$(echo "$resp" | jq -r '[.findings[] | select(.type=="secret" or .type=="pii") | select(.verdict=="found") | .type] | unique | join(", ")' 2>/dev/null)"
-  if [ -n "$SCAN_TYPES" ]; then
-    SCAN_OUT="$(echo "$resp" | jq -r '.redacted_text' 2>/dev/null)"
+  if [ "$(echo "$resp" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)" = "found" ]; then
+    SCAN_SECRET_FOUND=1
+    SCAN_OUT="$(echo "$resp" | jq -r '.findings[] | select(.type=="secret") | .detail.redacted_text // empty' 2>/dev/null)"
+    [ -z "$SCAN_OUT" ] && SCAN_OUT="$text"
   fi
+  SCAN_PII_TYPES="$(echo "$resp" | jq -r '[.findings[] | select(.type=="pii") | .detail.entities[]?.entity_type] | unique | join(", ")' 2>/dev/null)"
+  SCAN_COMBINED_OUT="$(echo "$resp" | jq -r '.redacted_text // empty' 2>/dev/null)"
+  [ -z "$SCAN_COMBINED_OUT" ] && SCAN_COMBINED_OUT="$text"
   return 0
 }
 
@@ -164,56 +179,99 @@ if ! scan_remote "$MESSAGE"; then
   exit 0
 fi
 
-# Snapshot message's own result immediately — scan_remote's SCAN_OUT/
-# SCAN_TYPES are reused below for summary/content, and get overwritten
-# by their own scan_remote calls, so anything that needs MESSAGE's
-# result later must read it from these snapshots, never the live
-# globals (confirmed by hitting exactly this: content's "reuse
-# message's result" branch read the globals AFTER summary's own scan
-# had already clobbered them, silently sending summary's redacted text
-# in the content field instead of message's).
-MSG_OUT="$SCAN_OUT"
-MSG_TYPES="$SCAN_TYPES"
-ALL_TYPES="$MSG_TYPES"
+# Snapshot message's own result immediately — scan_remote's globals
+# are reused below for summary/content, and get overwritten by their
+# own scan_remote calls, so anything that needs MESSAGE's result later
+# must read it from these snapshots, never the live globals (confirmed
+# by hitting exactly this once already: content's "reuse message's
+# result" branch read the globals AFTER summary's own scan had already
+# clobbered them).
+MSG_SECRET_OUT="$SCAN_OUT"
+MSG_SECRET_FOUND="$SCAN_SECRET_FOUND"
+MSG_PII_TYPES="$SCAN_PII_TYPES"
+MSG_COMBINED_OUT="$SCAN_COMBINED_OUT"
+
+ANY_SECRET=0
+ALL_PII_TYPES=""
 MERGE='{message: $msg}'
-JQ_ARGS=(--arg msg "$MSG_OUT")
+
+if [ "$PII_GUARD_MODE" = "redact" ]; then
+  MSG_FIELD_OUT="$MSG_COMBINED_OUT"
+else
+  MSG_FIELD_OUT="$MSG_SECRET_OUT"
+fi
+[ "$MSG_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
+[ -n "$MSG_PII_TYPES" ] && ALL_PII_TYPES="$MSG_PII_TYPES"
+JQ_ARGS=(--arg msg "$MSG_FIELD_OUT")
 
 if [ "$HAS_SUMMARY" = "true" ]; then
   if [ "$SUMMARY" = "$MESSAGE" ]; then
-    SUM_OUT="$MSG_OUT"
-    SUM_TYPES="$MSG_TYPES"
+    SUM_SECRET_OUT="$MSG_SECRET_OUT"; SUM_SECRET_FOUND="$MSG_SECRET_FOUND"
+    SUM_PII_TYPES="$MSG_PII_TYPES"; SUM_COMBINED_OUT="$MSG_COMBINED_OUT"
   else
     scan_remote "$SUMMARY"
-    SUM_OUT="$SCAN_OUT"
-    SUM_TYPES="$SCAN_TYPES"
+    SUM_SECRET_OUT="$SCAN_OUT"; SUM_SECRET_FOUND="$SCAN_SECRET_FOUND"
+    SUM_PII_TYPES="$SCAN_PII_TYPES"; SUM_COMBINED_OUT="$SCAN_COMBINED_OUT"
   fi
-  SUM_OUT="$(truncate_summary "$SUM_OUT")"
-  [ -n "$SUM_TYPES" ] && ALL_TYPES="${ALL_TYPES:+$ALL_TYPES, }$SUM_TYPES"
+  if [ "$PII_GUARD_MODE" = "redact" ]; then
+    SUM_FIELD_OUT="$SUM_COMBINED_OUT"
+  else
+    SUM_FIELD_OUT="$SUM_SECRET_OUT"
+  fi
+  SUM_FIELD_OUT="$(truncate_summary "$SUM_FIELD_OUT")"
+  [ "$SUM_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
+  [ -n "$SUM_PII_TYPES" ] && ALL_PII_TYPES="${ALL_PII_TYPES:+$ALL_PII_TYPES, }$SUM_PII_TYPES"
   MERGE="$MERGE + {summary: \$sum}"
-  JQ_ARGS+=(--arg sum "$SUM_OUT")
+  JQ_ARGS+=(--arg sum "$SUM_FIELD_OUT")
 fi
 
 if [ "$HAS_CONTENT" = "true" ]; then
   if [ "$CONTENT" = "$MESSAGE" ]; then
-    CON_OUT="$MSG_OUT"
-    CON_TYPES="$MSG_TYPES"
+    CON_SECRET_OUT="$MSG_SECRET_OUT"; CON_SECRET_FOUND="$MSG_SECRET_FOUND"
+    CON_PII_TYPES="$MSG_PII_TYPES"; CON_COMBINED_OUT="$MSG_COMBINED_OUT"
   else
     scan_remote "$CONTENT"
-    CON_OUT="$SCAN_OUT"
-    CON_TYPES="$SCAN_TYPES"
+    CON_SECRET_OUT="$SCAN_OUT"; CON_SECRET_FOUND="$SCAN_SECRET_FOUND"
+    CON_PII_TYPES="$SCAN_PII_TYPES"; CON_COMBINED_OUT="$SCAN_COMBINED_OUT"
   fi
-  [ -n "$CON_TYPES" ] && ALL_TYPES="${ALL_TYPES:+$ALL_TYPES, }$CON_TYPES"
+  if [ "$PII_GUARD_MODE" = "redact" ]; then
+    CON_FIELD_OUT="$CON_COMBINED_OUT"
+  else
+    CON_FIELD_OUT="$CON_SECRET_OUT"
+  fi
+  [ "$CON_SECRET_FOUND" -eq 1 ] && ANY_SECRET=1
+  [ -n "$CON_PII_TYPES" ] && ALL_PII_TYPES="${ALL_PII_TYPES:+$ALL_PII_TYPES, }$CON_PII_TYPES"
   MERGE="$MERGE + {content: \$con}"
-  JQ_ARGS+=(--arg con "$CON_OUT")
+  JQ_ARGS+=(--arg con "$CON_FIELD_OUT")
 fi
 
-if [ -z "$ALL_TYPES" ]; then
+if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ]; then
   exit 0
 fi
 
-# De-dupe the type list (message/summary/content can each surface the
-# same type independently).
-ALL_TYPES="$(printf '%s' "$ALL_TYPES" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | sort -u | paste -sd, - | sed 's/,/, /g')"
+# De-dupe the PII type list (message/summary/content can each surface
+# the same type independently).
+if [ -n "$ALL_PII_TYPES" ]; then
+  ALL_PII_TYPES="$(printf '%s' "$ALL_PII_TYPES" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | sort -u | paste -sd, - | sed 's/,/, /g')"
+fi
+
+REASON_PARTS=()
+CTX_PARTS=()
+if [ "$ANY_SECRET" -eq 1 ]; then
+  REASON_PARTS+=("redacted secret")
+  CTX_PARTS+=("A secret was found and redacted before send.")
+fi
+if [ -n "$ALL_PII_TYPES" ]; then
+  if [ "$PII_GUARD_MODE" = "redact" ]; then
+    REASON_PARTS+=("redacted pii (${ALL_PII_TYPES})")
+    CTX_PARTS+=("PII (${ALL_PII_TYPES}) was found and redacted before send.")
+  else
+    REASON_PARTS+=("flagged pii (${ALL_PII_TYPES}), not redacted")
+    CTX_PARTS+=("sendmessage-guard flagged possible PII (${ALL_PII_TYPES}) in this message — values left intact, not redacted. Verify this is appropriate for the recipient before relying on it being clean.")
+  fi
+fi
+REASON="sendmessage-guard: $(printf '%s; ' "${REASON_PARTS[@]}")"
+CTX="$(printf '%s ' "${CTX_PARTS[@]}")"
 
 # additionalContext is written as a plain factual statement, not an
 # imperative instruction, per Claude Code's own hooks docs: imperative
@@ -222,8 +280,8 @@ ALL_TYPES="$(printf '%s' "$ALL_TYPES" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | so
 # this hook has no business tripping that itself.
 jq -n \
   --argjson orig "$ORIGINAL_INPUT" \
-  --arg reason "sendmessage-guard: redacted ${ALL_TYPES} from the outgoing message before send" \
-  --arg ctx "sendmessage-guard found and redacted ${ALL_TYPES} in this outgoing message before it was sent. The recipient will see the redacted version, not the original." \
+  --arg reason "$REASON" \
+  --arg ctx "$CTX" \
   "${JQ_ARGS[@]}" \
   "{
     hookSpecificOutput: {
