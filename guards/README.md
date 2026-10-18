@@ -340,3 +340,25 @@ secret-guard, injection-guard, and pii-guard are the dedicated,
 purpose-built versions of that same idea — redaction and
 classification, not just logging — bundled here so they're one
 plugin install away rather than three separate manual setups.
+
+## License
+
+MIT for this repository's own code — see `LICENSE`. This repo never
+bundles or ships model weights itself; it's a thin hook/MCP client
+that talks to `guards-unified`'s `:8700` API.
+
+**guards-unified** (the backend these hooks call) directly loads
+`meta-llama/Llama-Prompt-Guard-2-86M` for the injection-detection axis,
+which carries its own redistribution obligations under Meta's Llama 4
+Community License — "Built with Llama" attribution, a required NOTICE
+file, and a bundled copy of the license text. That obligation belongs
+to, and is satisfied in, `guards-unified`'s own repo (`LICENSE`,
+`NOTICE`, `THIRD_PARTY_LICENSES/`, and its runtime `GET /about`
+endpoint) and `injection-guard`'s (same pattern, original source) —
+not duplicated here, since this repo doesn't distribute the weights or
+the loading code, only an `HTTP` client to a service that does. If
+you're redistributing a build of this plugin together with a
+pre-pulled `guards-unified` image (rather than letting users `docker
+pull` it themselves per the install instructions above), you inherit
+that obligation directly — see `guards-unified`'s README for what's
+required.
