@@ -149,25 +149,40 @@ scan_local_secret_only() {
 # guards-unified is down for this call it's down for all three fields,
 # so there is no partial-reachable state to handle.
 if ! scan_remote "$MESSAGE"; then
+  # SECRET_NOTE must reflect whether a secret was found in ANY of the
+  # three fields, not just message -- confirmed live this was wrong:
+  # message clean + a real secret in content, backend down, came back
+  # with content correctly redacted while the disclosed reason said
+  # "no secret found by local scan," directly contradicting the
+  # redaction that had just happened. Aggregate across all three
+  # before composing the disclosed text, same as the reachable-backend
+  # path below already does via ANY_SECRET.
+  ANY_LOCAL_SECRET=0
   MSG_OUT="$MESSAGE"
-  SECRET_NOTE="no secret found by local scan"
   scan_local_secret_only "$MESSAGE"
   if [ "$SCAN_FOUND" -eq 1 ]; then
     MSG_OUT="$SCAN_OUT"
-    SECRET_NOTE="a secret was found and redacted by the local-only scan"
+    ANY_LOCAL_SECRET=1
   fi
   MERGE='{message: $msg}'
   JQ_ARGS=(--arg msg "$MSG_OUT")
   if [ "$HAS_SUMMARY" = "true" ]; then
     scan_local_secret_only "$SUMMARY"
+    [ "$SCAN_FOUND" -eq 1 ] && ANY_LOCAL_SECRET=1
     SUM_OUT="$(truncate_summary "$SCAN_OUT")"
     MERGE="$MERGE + {summary: \$sum}"
     JQ_ARGS+=(--arg sum "$SUM_OUT")
   fi
   if [ "$HAS_CONTENT" = "true" ]; then
     scan_local_secret_only "$CONTENT"
+    [ "$SCAN_FOUND" -eq 1 ] && ANY_LOCAL_SECRET=1
     MERGE="$MERGE + {content: \$con}"
     JQ_ARGS+=(--arg con "$SCAN_OUT")
+  fi
+  if [ "$ANY_LOCAL_SECRET" -eq 1 ]; then
+    SECRET_NOTE="a secret was found and redacted by the local-only scan"
+  else
+    SECRET_NOTE="no secret found by local scan"
   fi
   jq -n \
     --argjson orig "$ORIGINAL_INPUT" \
