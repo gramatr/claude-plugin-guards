@@ -84,6 +84,45 @@ migrate_from_previous_architecture() {
   fi
 }
 
+# Found by hitting this directly, not hypothetical: $COMPOSE_FILE's
+# path includes the plugin cache's commit hash
+# (.../guards/<commit>/docker/docker-compose.yml), which changes on
+# every `claude plugin update guards`. The compose project tied to the
+# PREVIOUS commit's cache path is invisible to a fresh
+# `docker compose -f $COMPOSE_FILE up -d` targeting the new one, so if
+# that old project's container (or any unmanaged container at all,
+# e.g. a bare `docker run`) is still holding :8700, the new `up -d`
+# fails to bind the port -- silently, from this script's perspective,
+# since that failure path already just logs a warning and returns 1.
+# Confirmed on dgx-spark-01: a bare `docker run --name guards-unified`
+# container (zero compose labels) held the port for hours while the
+# actually-current compose project sat in `Created` state, never
+# started, serving nothing.
+#
+# Reconcile unconditionally before every `up -d`: anything bound to
+# :8700 that isn't THIS exact compose file's own container gets
+# removed first, whether it's unmanaged or belongs to a stale prior
+# commit's project. This briefly takes the port down for whatever
+# moment it takes `up -d` to bring the current stack back -- expected
+# and acceptable (guard stages fail open/degrade during that gap, per
+# the sendmessage-guard and combined-hook.sh fallbacks), not something
+# to avoid at the cost of leaving a stale container in charge.
+reconcile_port_8700() {
+  local holders id name config_files
+  holders="$(docker ps -aq --filter "publish=8700" 2>/dev/null)"
+  [ -z "$holders" ] && return 0
+
+  for id in $holders; do
+    config_files="$(docker inspect "$id" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null)"
+    if [ "$config_files" = "$COMPOSE_FILE" ]; then
+      continue  # already this stack's own container -- `up -d` manages it normally
+    fi
+    name="$(docker inspect "$id" --format '{{.Name}}' 2>/dev/null | sed 's#^/##')"
+    log "Reconciling :8700 -- removing '${name:-$id}' (compose config_files='${config_files:-none, unmanaged}'), not this stack's current compose project ($COMPOSE_FILE). Port will be briefly down until the current stack starts."
+    docker rm -f "$id" >/dev/null 2>&1 || log "WARNING: failed to remove '${name:-$id}' -- the upcoming docker compose up -d may fail to bind :8700 because of it."
+  done
+}
+
 ensure_docker_stack() {
   # guards-unified runs as a non-root user (fixed UID/GID 1000) as of
   # that repo's own fix for this exact problem (see
@@ -129,6 +168,7 @@ ensure_docker_stack() {
   fi
 
   migrate_from_previous_architecture
+  reconcile_port_8700
 
   # `docker compose up -d` alone never checks the registry for a newer
   # image -- it just reuses whatever's cached locally under this tag,
