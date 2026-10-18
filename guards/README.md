@@ -229,6 +229,50 @@ claude plugin install guards
 Then start (or restart) a Claude Code session — the `SessionStart` hook
 runs the self-heal automatically.
 
+### Verified for real — this exact install flow, not just the scripts standalone
+
+This was never actually run end to end until it was — confirmed from
+real, literal output, not assumed to work because the pieces worked
+individually (see `docs/scope/ship-private-marketplace-plugin-2026-10-18.md`,
+Unit U3):
+
+```
+$ claude plugin marketplace add gramatr/claude-plugin-guards
+✔ Successfully added marketplace: gramatr-guards (declared in user settings)
+
+$ claude plugin install guards
+✔ Successfully installed plugin: guards@gramatr-guards (scope: user)
+```
+
+`${CLAUDE_PLUGIN_ROOT}` resolved to a real cache path in both the hook
+and the MCP server — confirmed from the session's own debug log, not a
+literal `${CLAUDE_PLUGIN_ROOT}` string surviving into what actually
+ran:
+
+```
+[DEBUG] Hooks: SessionStart:startup [bash /home/research3/.claude/plugins/cache/gramatr-guards/guards/90f9d4c0d597/bin/guards-selfheal.sh] (plugin guards@gramatr-guards) finished with status 0 (489ms)
+```
+
+`guards-selfheal.sh` ran successfully on `SessionStart` and auto-started
+`guards-unified` itself. The `scan` MCP tool, called from inside that
+real installed session (not a standalone `uv run`), against a crafted
+string containing both a secret and PII, returned:
+
+```json
+{
+  "findings": [
+    {"type": "secret", "verdict": "found", "reason_code": ["SECRET_GITHUB-PAT"], "...": "..."},
+    {"type": "pii", "verdict": "found", "reason_code": ["PII_EMAIL_ADDRESS"], "...": "..."},
+    {"type": "injection", "verdict": "clean", "reason_code": null, "...": "..."}
+  ],
+  "redacted_text": "contact <EMAIL_ADDRESS> and here is a token ***REDACTED:SECRET***"
+}
+```
+
+`combined-hook.sh` was also confirmed firing automatically in that same
+fresh session — a real `Bash` command containing a test secret came
+back redacted with no manual intervention.
+
 ## Server-side / hosted deployment
 
 **Not enabled by anything in this repo.** If you're considering running
