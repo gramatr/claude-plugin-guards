@@ -43,7 +43,15 @@ services:
       # container filesystem.
       - ${HOME}/.local/share/gramatr-guards/metrics:/app/metrics
     restart: unless-stopped
-    mem_limit: 2g
+    # 2g was getting cgroup-OOM-killed by the kernel shortly after
+    # startup (confirmed via dmesg: "Memory cgroup out of memory:
+    # Killed process ... (uvicorn)") — loading Presidio's spaCy model
+    # plus Prompt Guard 2 at startup, then running both per request,
+    # doesn't fit in 2g. `unless-stopped` silently restarts it each
+    # time, so from the outside this looked like intermittent
+    # unreachability rather than a crash loop. 4g observed comfortably
+    # covering both models loaded with normal request traffic.
+    mem_limit: 4g
     cpus: 1.0
     security_opt:
       - no-new-privileges:true
