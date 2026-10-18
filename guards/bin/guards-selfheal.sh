@@ -139,11 +139,18 @@ migrate_from_previous_architecture() {
     fi
   done
 
-  # Old three-container Docker stack — matched by container name, not
-  # by the new compose file (the old one no longer exists in this repo
-  # to -f against; match by name instead).
+  # Old three-container Docker stack — matched by the ports it
+  # publishes (8730-8732), not by container name. Matching by name
+  # assumed the old stack's compose project was always named
+  # "gramatr-guards" — confirmed wrong on a real machine (#9): a
+  # differently-named old deployment left those three containers
+  # running indefinitely, never migrated, because the name filter
+  # simply never matched. The ports are the durable signal: whatever
+  # else changed, the old stack is defined by binding exactly those
+  # three ports, regardless of what its compose project happened to be
+  # called when it was set up.
   local old_containers
-  old_containers="$(docker ps -aq --filter "name=^gramatr-guards-secret-guard-1$" --filter "name=^gramatr-guards-pii-guard-1$" --filter "name=^gramatr-guards-injection-guard-1$" 2>/dev/null)"
+  old_containers="$(docker ps -aq --filter "publish=8730" --filter "publish=8731" --filter "publish=8732" 2>/dev/null)"
   if [ -n "$old_containers" ]; then
     log "Migrating off the old three-container stack (secret-guard/pii-guard/injection-guard on 8732/8731/8730) in favor of guards-unified on :8700..."
     echo "$old_containers" | xargs -r docker rm -f 2>&1 | while read -r line; do log "$line"; done
