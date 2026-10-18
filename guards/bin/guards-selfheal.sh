@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$GUARDS_ROOT/docker/docker-compose.yml"
 ENV_FILE="$HOME/.config/gramatr-guards/injection-guard.env"
+METRICS_DIR="$HOME/.local/share/gramatr-guards/metrics"
 
 # --- gitleaks/jq still checked either way: combined-hook.sh's secret
 # axis keeps a local scan.sh fallback for when guards-unified itself is
@@ -84,6 +85,30 @@ migrate_from_previous_architecture() {
 }
 
 ensure_docker_stack() {
+  # guards-unified runs as a non-root user (fixed UID/GID 1000) as of
+  # that repo's own fix for this exact problem (see
+  # gramatr/guards-unified#4) -- a bind-mounted directory Docker
+  # auto-creates on first run comes back owned by root, which silently
+  # breaks every metrics write (confirmed by testing there: the scan
+  # itself still succeeds, fail-open, but zero lines land, no loud
+  # error). chmod 777 rather than trying to match the container's UID
+  # exactly -- host-portable, and costs nothing real since this
+  # directory only ever holds metrics with no scanned text.
+  # Confirmed by testing, not hypothetical: a machine that ran the OLD
+  # root-based guards-unified image before gramatr/guards-unified#4 has
+  # the WHOLE $GRAMATR_GUARDS_DIR chain owned by root, not just the
+  # metrics leaf -- Docker's own `mkdir -p` for the bind mount ran as
+  # root and created every missing path component as root. mkdir -p as
+  # the invoking (non-root) user then fails outright ("Permission
+  # denied") if even one ancestor is root-owned and not
+  # world-writable, silently with set -e off. One chown -R on the
+  # whole top-level directory fixes every level under it in one shot,
+  # so the guidance targets that, not just the leaf.
+  GRAMATR_GUARDS_DIR="$HOME/.local/share/gramatr-guards"
+  if ! mkdir -p "$METRICS_DIR" 2>/dev/null || ! chmod 777 "$METRICS_DIR" 2>/dev/null; then
+    log "WARNING: $GRAMATR_GUARDS_DIR (or a parent of it) isn't owned by this user — likely left over from an older guards-unified image that ran as root. Metrics will silently fail to write until you fix this. Run: sudo chown -R \$(whoami) $GRAMATR_GUARDS_DIR"
+  fi
+
   if [ ! -f "$ENV_FILE" ]; then
     # guards-unified's injection finding needs HF_TOKEN to load its
     # model; the secret/PII findings don't. Create the file empty
