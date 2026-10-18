@@ -1,38 +1,35 @@
 #!/usr/bin/env bash
 # guards/hooks/userpromptsubmit-guard.sh — UserPromptSubmit hook.
 #
-# Blocks a user's own prompt before it reaches the model if it
-# contains a secret. See docs/scope/ship-private-marketplace-plugin-2026-10-18.md,
-# Unit U4 for the full design discussion; summarized here:
+# ADVISORY ONLY — does NOT prevent a detected secret from reaching the
+# model/API. This was a deliberate change from the original design
+# (which blocked outright): confirmed directly against Claude Code's
+# own hooks docs that UserPromptSubmit has no way to rewrite or remove
+# part of the prompt — "can't replace the prompt; it only injects
+# additionalContext alongside it," unchanged. So the real choice for
+# this event is binary: block the WHOLE prompt, or let it through
+# unchanged with a note. This file does the latter, on purpose, not
+# because redaction was attempted and failed.
 #
-# SECRET FINDINGS ONLY — PII is explicitly out of scope. It's the
-# user's own data in their own conversation; blocking on PII here
-# would be noise, not protection. The injection finding is also out of
-# scope: this is the user's own direct instruction to their own
-# agent, not forwarded untrusted content, so "is this an injection
-# attempt" isn't a meaningful question for a user's own prompt.
+# Chosen explicitly over blocking, knowingly: a detected secret still
+# gets submitted and sent to the API exactly as typed. The
+# additionalContext note only makes the agent (and transitively, via
+# the agent's own response, the user) AWARE that a secret-shaped value
+# was present — it does not stop the exposure, which already happened
+# the moment the prompt was submitted. If the secret is real, treat it
+# as potentially logged by this point and rotate it; the hook
+# producing a note after the fact doesn't undo that.
 #
-# BLOCK, NOT REDACT. Unlike sendmessage-guard.sh's PreToolUse hook,
-# UserPromptSubmit's hook protocol is binary — confirmed directly
-# against Claude Code's own hooks docs before building this: the only
-# value for `decision` is "block"; there is no "ask"/"allow" and no
-# updatedInput-style rewrite for this event. Block is the only
-# available control for a detected secret here, not a softer policy
-# choice this project made on its own.
+# SECRET FINDINGS ONLY — PII is still explicitly out of scope: it's
+# the user's own data in their own conversation, so flagging it would
+# be noise, not protection. The injection finding is also out of
+# scope: this is the user's own direct instruction to their own agent,
+# not forwarded untrusted content.
 #
-# BLOCKING IS NOT A COMPLETE SECRECY GUARANTEE — confirmed from the
-# same docs: even with suppressOriginalPrompt:true (set below), the
-# blocked prompt's text can still land in the session transcript and
-# prompt history on disk. This hook prevents the secret from reaching
-# the model/API call, which is real and worth having; it does not
-# prevent local disk exposure, and must not be described as if it did.
-#
-# FAILS OPEN on backend-unreachable — resolved deliberately, the
-# opposite of sendmessage-guard.sh's fail-closed stance. Fail-closed
-# there costs one occasional agent-to-agent send during an outage.
-# Fail-closed here would block every single prompt the user types for
-# as long as guards-unified is down, turning a safety net into a
-# single point of failure for using Claude Code at all.
+# FAILS OPEN on backend-unreachable — same as before, now simpler to
+# reason about: this hook never blocks anything regardless of the
+# backend, so unreachable just means no note gets added. Nothing to
+# fail open FROM in the blocking sense anymore.
 
 set -uo pipefail
 
@@ -50,9 +47,6 @@ RESPONSE="$(jq -n --arg text "$PROMPT" '{text: $text}' 2>/dev/null \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
 if [ -z "$RESPONSE" ]; then
-  # Backend unreachable: fail OPEN, deliberately (see module comment
-  # above for why this is the one hook in this stack that doesn't
-  # fail closed on an unreachable backend).
   exit 0
 fi
 
@@ -62,12 +56,14 @@ if [ "$SECRET_FOUND" != "found" ]; then
   exit 0
 fi
 
+# Factual statement, not an imperative instruction — additionalContext
+# feeds back into the model's own context, and imperative phrasing
+# there is exactly the shape a prompt-injection defense watches for.
+# This hook has no business tripping that itself.
 jq -n '{
-  decision: "block",
-  reason: "userpromptsubmit-guard: this prompt contains what looks like a live secret. Remove it and resubmit, or confirm with a human if this is intentional. Note: blocking keeps this out of the model/API call, but the text may still be present in your local session transcript/prompt history on disk.",
   hookSpecificOutput: {
     hookEventName: "UserPromptSubmit",
-    suppressOriginalPrompt: true
+    additionalContext: "userpromptsubmit-guard detected a secret-shaped value in this prompt. The prompt was submitted unchanged -- this note does not prevent or undo that. If the value is a real, live credential, it should be treated as exposed and rotated."
   }
 }'
 exit 0
