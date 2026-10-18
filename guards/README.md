@@ -47,39 +47,63 @@ backend is unreachable — unlike the hooks, which fail open by design,
 a caller that explicitly asked for a scan result should not be told
 something is clean when it was never actually checked.
 
-## Outbound protection: blocking agent-to-agent message leaks
+## Outbound protection: redacting agent-to-agent message leaks
 
 `hooks/sendmessage-guard.sh` is a `PreToolUse` hook matched on
 `SendMessage` — it scans an outgoing agent-to-agent message **before**
-it's sent and denies the call if it contains a secret or PII finding.
-This is a different trust boundary than the `PostToolUse` hooks above:
-those protect content coming *into* this session's context; this one
-protects content this session is about to send *out*, to a different
-agent, possibly a different user, possibly logged or relayed
-elsewhere.
+it's sent and, if it contains a secret or PII finding, **redacts and
+allows** the call rather than blocking it outright — the same posture
+secret-guard/pii-guard already use for incoming content (exact-span
+redaction), now applied on the way out, because `guards-unified`'s
+`redacted_text` gives the same exact-span guarantee for an outgoing
+message that it already gives for tool output. This is a different
+trust boundary than the `PostToolUse` hooks above: those protect
+content coming *into* this session's context; this one protects
+content this session is about to send *out*, to a different agent,
+possibly a different user, possibly logged or relayed elsewhere.
 
-- Scans `tool_input.message` — confirmed by actually harvesting a real
-  `SendMessage` `PreToolUse` payload, not assumed. `tool_input` also
-  carries a `content` field that looks like the same thing but is a
-  **truncated preview** (cut off with `…`); scanning that instead would
-  silently miss content past the truncation point.
-- Both the `secret` and `pii` findings gate the call here — unlike the
-  `UserPromptSubmit` guard (not yet built) or the general case, where
-  PII isn't blocked because it's the user's own data in their own
-  conversation. A message to another agent is a different story: the
-  recipient may be a different party entirely.
+- Redacts **every** text-bearing copy of the message, not just the
+  field named `message` — confirmed by harvesting a real `SendMessage`
+  `PreToolUse` payload: `tool_input` also carries `summary` (documented
+  as "not transmitted" to the recipient, but it can still land in
+  local logs/transcripts) and `content` (an undocumented field that
+  turned out to be a **truncated preview** of the same text). Patching
+  only `message` while leaving a secret sitting in `content` would be
+  an incomplete fix with false confidence — worse than doing nothing,
+  because it would look safe. All three are overwritten with the same
+  redacted text.
+- Uses `hookSpecificOutput.updatedInput` + `permissionDecision: "allow"`
+  + `additionalContext` together — confirmed working by actually
+  triggering a real `SendMessage` call and checking the `PostToolUse`
+  capture of what was actually executed, not assumed from docs (this
+  exact combination was explicitly unconfirmed in Claude Code's own
+  hooks reference at the time of writing).
+- **Must remain the only `PreToolUse` hook matched on `SendMessage`
+  (or on a broad `*` that also matches it).** Confirmed by testing,
+  not assumed: with a second `PreToolUse` hook also registered on the
+  same event — even one that emitted no output at all — `updatedInput`
+  was silently dropped and the original, unredacted message went
+  through unchanged. Same "undefined resolution order across multiple
+  hooks on one event" problem Claude Code's docs already warn about
+  for `PostToolUse`'s `updatedToolOutput`, now confirmed to apply here
+  too. If this ever needs to coexist with another `PreToolUse` hook on
+  `SendMessage`, they must be combined into one script — the same
+  reason `combined-hook.sh` exists for the Bash `PostToolUse` case.
+- Both the `secret` and `pii` findings are redacted here — a different
+  policy than a user's own prompt to their own agent (where PII isn't
+  acted on, because it's the user's own data in their own
+  conversation). The recipient of a `SendMessage` call is a different
+  agent, possibly a different party entirely.
 - The `injection` finding is deliberately ignored for this decision —
   the message is authored by the sending agent itself, not forwarded
   untrusted content, so "is this an injection attempt" isn't the
   relevant question for an outbound send.
-- **Fails CLOSED, not open** — the one deliberate inversion from every
-  other hook in this stack. `combined-hook.sh` fails open because a
-  missed detection on incoming content is recoverable; here, the
-  backend being unreachable would otherwise silently bypass the only
-  control this hook provides on an action that can't be undone once
-  sent. Denying by default when `guards-unified` is unreachable is the
-  correct default for this one case specifically — not a pattern to
-  copy onto the other hooks.
+- **Still fails CLOSED on one case: the backend being unreachable.**
+  There's nothing to safely redact against without a scan result, and
+  an unsent message is recoverable while a sent one is not — so that
+  one path still denies outright, unlike every other hook in this
+  stack, which fails open. This is the only remaining deny path; a
+  detected secret/PII no longer denies, it redacts.
 
 ## Architecture
 
