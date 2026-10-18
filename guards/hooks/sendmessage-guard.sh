@@ -77,15 +77,22 @@ if [ "$TOOL_NAME" != "SendMessage" ]; then
 fi
 
 MESSAGE="$(printf '%s' "$RAW" | jq -r '.tool_input.message // ""' 2>/dev/null)"
-if [ -z "$MESSAGE" ]; then
-  exit 0
-fi
-
 ORIGINAL_INPUT="$(printf '%s' "$RAW" | jq -c '.tool_input')"
 HAS_SUMMARY="$(printf '%s' "$RAW" | jq -r '.tool_input | has("summary")' 2>/dev/null)"
 HAS_CONTENT="$(printf '%s' "$RAW" | jq -r '.tool_input | has("content")' 2>/dev/null)"
 SUMMARY="$(printf '%s' "$RAW" | jq -r '.tool_input.summary // ""' 2>/dev/null)"
 CONTENT="$(printf '%s' "$RAW" | jq -r '.tool_input.content // ""' 2>/dev/null)"
+
+# Gate on whether ANY of the three fields is non-empty, not just
+# message -- an earlier version exited here purely on `message` being
+# empty, before summary/content were ever read, even though both are
+# otherwise scanned completely independently once the hook does run.
+# Confirmed live: {"message":"","summary":"s","content":"<secret>"}
+# exited clean with zero output, the secret in content never looked
+# at.
+if [ -z "$MESSAGE" ] && [ -z "$SUMMARY" ] && [ -z "$CONTENT" ]; then
+  exit 0
+fi
 
 # truncate_summary TEXT -- hard cap at SUMMARY_MAX chars, defensively,
 # regardless of what redaction did to the text. jq's `.[0:N]` on a
