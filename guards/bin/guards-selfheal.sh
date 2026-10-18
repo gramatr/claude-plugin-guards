@@ -180,7 +180,7 @@ migrate_from_previous_architecture() {
 # the sendmessage-guard and combined-hook.sh fallbacks), not something
 # to avoid at the cost of leaving a stale container in charge.
 reconcile_port_8700() {
-  local holders id name config_files
+  local holders id name config_files image
   holders="$(docker ps -aq --filter "publish=8700" 2>/dev/null)"
   [ -z "$holders" ] && return 0
 
@@ -190,7 +190,44 @@ reconcile_port_8700() {
       continue  # already this stack's own container -- `up -d` manages it normally
     fi
     name="$(docker inspect "$id" --format '{{.Name}}' 2>/dev/null | sed 's#^/##')"
-    log "Reconciling :8700 -- removing '${name:-$id}' (compose config_files='${config_files:-none, unmanaged}'), not this stack's current compose project ($COMPOSE_FILE). Port will be briefly down until the current stack starts."
+
+    # Only remove a container we can PROVE is a stale prior-version
+    # instance of this same plugin -- not anything else that happens
+    # to be on :8700. Confirmed by hitting the alternative directly:
+    # an earlier version of this check removed ANYTHING not matching
+    # this exact compose file path, with no further check, and a
+    # concurrency test running this same script from an isolated /tmp
+    # sandbox copy removed the real production container as a side
+    # effect, because its compose path trivially never matches a
+    # sandbox's. Two conditions must BOTH hold: the image must be this
+    # plugin's own guards-unified image, and the compose config_files
+    # path must sit under THIS user's actual plugin cache root
+    # (~/.claude/plugins/cache/*/guards/*/docker/docker-compose.yml) --
+    # not just any path that happens to share the same relative shape.
+    # Anchoring to the real cache root specifically (not just the
+    # .../guards/<x>/docker/... shape alone) matters: a sandbox copy
+    # that preserves the same relative subdirectory layout under a
+    # different root (e.g. a /tmp copy of the whole cache tree, which
+    # is exactly what the incident's concurrency test did) would still
+    # match a shape-only check. A container failing either check is
+    # left alone, loudly.
+    image="$(docker inspect "$id" --format '{{.Config.Image}}' 2>/dev/null)"
+    case "$image" in
+      ghcr.io/gramatr/guards-unified:*) ;;
+      *)
+        log "WARNING: :8700 is held by '${name:-$id}' (image='${image:-unknown}'), which is NOT a guards-unified container -- leaving it alone. The upcoming docker compose up -d will likely fail to bind :8700 until this is resolved manually."
+        continue
+        ;;
+    esac
+    case "$config_files" in
+      "$HOME"/.claude/plugins/cache/*/guards/*/docker/docker-compose.yml) ;;
+      *)
+        log "WARNING: :8700 is held by '${name:-$id}' (guards-unified image, but compose config_files='${config_files:-none, unmanaged}' isn't under this user's own plugin cache root) -- leaving it alone rather than guessing it's safe to remove."
+        continue
+        ;;
+    esac
+
+    log "Reconciling :8700 -- removing '${name:-$id}' (stale prior-version guards-unified container, compose config_files='${config_files}', current stack is $COMPOSE_FILE). Port will be briefly down until the current stack starts."
     docker rm -f "$id" >/dev/null 2>&1 || log "WARNING: failed to remove '${name:-$id}' -- the upcoming docker compose up -d may fail to bind :8700 because of it."
   done
 }
