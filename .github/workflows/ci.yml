@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, independent of any code change — catches newly-disclosed
+    # CVEs in gitleaks / the vendored secret-guard-core image without
+    # anyone having to remember to re-run a scan by hand.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint hook + vendor scripts
+        run: |
+          shopt -s nullglob
+          files=(guards/hooks/*.sh guards/bin/*.sh guards/vendor/secret-guard-core/scan.sh)
+          echo "Linting: ${files[*]}"
+          # -S warning: info-level SC2016 fires on intentional single
+          # quotes around jq's own $vars (e.g. '{message: $msg}'), not
+          # a real shell-quoting bug — verified locally before adding
+          # this gate.
+          shellcheck -S warning "${files[@]}"
+
+  hadolint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint vendored Dockerfile
+        # failure-threshold error: fail the build on real errors, not
+        # DL30xx style nags (unpinned apt packages, ENV var naming) —
+        # verified locally that the current Dockerfile only trips
+        # warning-level rules, and a 100%-warnings gate that always
+        # fails is as ignorable as no gate at all.
+        run: docker run --rm -i hadolint/hadolint hadolint --failure-threshold error - < guards/vendor/secret-guard-core/Dockerfile
+
+  cve-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Build vendored secret-guard-core image
+        run: docker build -t secret-guard-core:ci guards/vendor/secret-guard-core
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: secret-guard-core:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  flag-scheduled-failure:
+    needs: [shellcheck, hadolint, cve-scan]
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an issue — don't rely on anyone noticing the red check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `CI: scheduled lint/CVE scan failed — ${new Date().toISOString().slice(0, 10)}`,
+              body: `The weekly scheduled run of [this workflow](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) failed on main with no associated code change — likely a newly-disclosed CVE or a Dockerfile/lint regression surfaced by an upstream base-image update. See the run for details.`,
+              labels: ["security", "ci-failure"],
+            });
