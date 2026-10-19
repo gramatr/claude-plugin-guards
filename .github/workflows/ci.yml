@@ -37,6 +37,9 @@ jobs:
       - name: mcp-output-guard tests
         # Fabricated values only.
         run: bash guards/tests/mcp-output-guard.test.sh
+      - name: fast secret-scan path tests
+        # Stub service; proves the fast path is used and every failure falls back.
+        run: bash guards/tests/fast-secret-scan.test.sh
       - name: publish-guard tests
         # Fabricated credential values only; nothing real is read.
         run: bash guards/tests/publish-guard.test.sh

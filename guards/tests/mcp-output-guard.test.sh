@@ -3,6 +3,8 @@
 # All credential-shaped values are fabricated. Needs bash, jq.
 
 set -uo pipefail
+# Hermetic: never talk to a real guards-unified service from a test.
+export GUARDS_ENDPOINT="http://127.0.0.1:1"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../hooks/mcp-output-guard.sh"
 PW="Tq7vN2xLm9Kd4RzP8wYb"

@@ -408,6 +408,18 @@ command text or issue/PR bodies. `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the
 environment Claude Code starts from bypasses the guard for a reviewed false
 positive. Limits: only commands that name a publish verb are inspected;
 it covers Claude Code sessions with the plugin, not the GitHub web UI.
+**Speed.** Both this hook and the MCP guard use `hooks/secret-scan-lib.sh`:
+they ask the warm guards-unified service for the secret-only answer
+(`POST /v1/scan/secret`, about 55 ms) and then run the vendored `scan.sh`
+with `SECRET_GUARD_SKIP_GITLEAKS=1` for the passes that need this process's
+environment (about 40 ms, no gitleaks start-up). If the service is down, too
+slow (2 s), too old to have the route, or answers an error, they run the full
+local `scan.sh` with gitleaks instead, so protection never depends on the
+service. Measured on a 2 KB command: 314 ms before, 95 ms with an instant
+stub service, 323 ms when the service is down. The PII and prompt-injection
+models are never involved: they cost about 0.25 s per KB, are flag-only, and
+secrets must not wait on them.
+
 Because this hook runs in the session's own environment, it also turns
 on `SECRET_GUARD_ENV_VALUES=1` for the scanner: the values of environment
 variables whose names look secret (`*TOKEN*`, `*PASSWORD*`, `*SECRET*`, ...)
