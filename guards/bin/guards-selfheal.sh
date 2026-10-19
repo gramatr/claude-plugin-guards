@@ -296,7 +296,20 @@ ensure_docker_stack() {
   # non-fatal, same fail-open posture as everything else that isn't
   # the detection result itself: proceed with whatever's cached rather
   # than block the session.
-  if ! timeout 15 docker compose -f "$COMPOSE_FILE" pull 2>&1 | while read -r line; do log "$line"; done; then
+  #
+  # 15s was never enough and this isn't theoretical: reproduced it
+  # directly (2026-10-19) against a real v0.1.1 publish -- guards-
+  # unified:cpu is 3.43GB, and a Dockerfile change early in the layer
+  # chain (e.g. an `apt-get upgrade`) invalidates the cache for every
+  # layer after it, turning what should be a small diff into a near-
+  # full re-pull. 15s killed the pull mid-download of a single ~700MB
+  # layer; the script logged its warning and silently kept serving a
+  # stale, vulnerable image. Raised to 240s -- still bounded (an
+  # unreachable registry fails in seconds either way, not minutes),
+  # but long enough for a real update on an ordinary connection. Keep
+  # this in sync with hooks.json's SessionStart timeout, which must
+  # stay ahead of this value plus `up -d` and the health curl below.
+  if ! timeout 240 docker compose -f "$COMPOSE_FILE" pull 2>&1 | while read -r line; do log "$line"; done; then
     log "WARNING: docker compose pull failed or timed out — proceeding with whatever image is already cached locally (may be stale)."
   fi
 
