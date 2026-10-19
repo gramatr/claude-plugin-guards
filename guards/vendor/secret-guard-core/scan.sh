@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, deterministic private-key and context passes (guards-unified, guards-coordination#1/#5/#9).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, deterministic private-key and context passes (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -79,6 +79,12 @@ fi
 # a quote; a quoted value containing the same quote unescaped is cut short.
 CTX_HITS=0
 CTX_TEXT="$PEM_TEXT"
+# A coloured key name (ESC[32mDB_PASSWORD ESC[0m=...) defeats every rule
+# below, and CLI tools colour output by default. Match on a copy with ANSI
+# colour/control sequences stripped; keep the original text unless
+# something was actually redacted.
+CTX_ORIG="$CTX_TEXT"
+CTX_TEXT="$(printf '%s' "$CTX_TEXT" | sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g')"
 
 # Values that are references or placeholders, not secrets.
 ctx_placeholder() {
@@ -121,20 +127,121 @@ ctx_redact() {
   CTX_TEXT="$out$rest"
 }
 
+# count_groups STR: number of capture groups in an ERE fragment.
+count_groups() {
+  local s="${1//\\(/}"
+  s="${s//[!(]/}"
+  printf '%s' "${#s}"
+}
+
+# ctx_rule RULE KEYRE DELIMRE VALRE [SUFRE]: a "key <delim> value" rule.
+# Builds ((KEYRE)DELIM)(VAL)[(SUF)] and works out the group indexes.
+ctx_rule() {
+  local rule="$1" keyre="$2" delim="$3" val="$4" suf="${5:-}" gk gd gv vi si=0 re
+  gk=$(count_groups "$keyre"); gd=$(count_groups "$delim"); gv=$(count_groups "$val")
+  vi=$((3 + gk + gd))
+  re="((${keyre})${delim})(${val})"
+  if [ -n "$suf" ]; then re+="(${suf})"; si=$((vi + 1 + gv)); fi
+  ctx_redact "$re" 1 "$vi" "$si" 2 "$rule"
+}
+
+# ctx_plain RULE PREFIXRE VALRE [SUFRE]: no key name, just context around a value.
+ctx_plain() {
+  local rule="$1" prefix="$2" val="$3" suf="${4:-}" gp gv vi si=0 re
+  gp=$(count_groups "$prefix"); gv=$(count_groups "$val")
+  vi=$((2 + gp))
+  re="(${prefix})(${val})"
+  if [ -n "$suf" ]; then re+="(${suf})"; si=$((vi + 1 + gv)); fi
+  ctx_redact "$re" 1 "$vi" "$si" 0 "$rule"
+}
+
+# Access-key IDs are semi-public identifiers by convention; the secret half
+# is the enforced boundary (guards-coordination#3). Redact IDs too only when
+# SECRET_GUARD_REDACT_KEY_IDS=1.
 shopt -s nocasematch
-KW='(secret|passw(or)?d|pwd|passphrase|token|api[_-]?key|apikey|private[_-]?key|credential|access[_-]?key)'
-# groups: 1 prefix, 2 key, 3 keyword, 4 (or), 5 value, 6 inner, 7 closing quote
-ctx_redact '(([A-Za-z0-9_.-]*'"$KW"'[A-Za-z0-9_.-]*)["'"'"']?[[:space:]]*[:=][[:space:]]*")((\\.|[^"\\]){4,})(")' 1 5 7 2 secret-lead-in
-ctx_redact "(([A-Za-z0-9_.-]*${KW}[A-Za-z0-9_.-]*)[\"']?[[:space:]]*[:=][[:space:]]*')((\\\\.|[^'\\\\]){4,})(')" 1 5 7 2 secret-lead-in
-# unquoted: groups 1 prefix, 2 key, 3 keyword, 4 (or), 5 value
-ctx_redact '(([A-Za-z0-9_.-]*'"$KW"'[A-Za-z0-9_.-]*)["'"'"']?[[:space:]]*[:=][[:space:]]*)([^[:space:]"'"'"']{4,})' 1 5 0 2 secret-lead-in
-# scheme://user:PASSWORD@host (postgres, clickhouse, redis, amqp, mongodb, https, ...)
-ctx_redact '(://[^/[:space:]:@]*:)([^[:space:]@/]{3,})(@)' 1 2 3 0 url-password
-# secret-ish query parameters
-ctx_redact '([?&](password|passwd|pwd|secret|token|access_token|api_key|apikey|x-amz-signature|x-amz-security-token)=)([^&[:space:]"'"'"']{4,})' 1 3 0 0 url-query-secret
-# Authorization header values
-ctx_redact '(authorization:[[:space:]]*(basic|bearer|token|digest)[[:space:]]+)([^[:space:]"'"'"']{8,})' 1 3 0 0 auth-header
+KW='secret|passw(or)?d|pwd|passphrase|token|api[_-]?key|apikey|private[_-]?key|credential'
+if [ "${SECRET_GUARD_REDACT_KEY_IDS:-0}" = "1" ]; then
+  KW="${KW}|access[_-]?key|client[_-]?id"
+fi
+KEYCH='[A-Za-z0-9_.-]'
+# Key names where the keyword is a WHOLE segment (so "compass" never matches
+# "pass"): PW, PWD, PASS, CRED, CREDS, PAT, client-key-data.
+ALIAS='pw|pwd|pass|creds?|pat|client-key-data'
+KEY_A="${KEYCH}*(${KW})${KEYCH}*"
+KEY_B="(^|[^A-Za-z0-9_.-])(${KEYCH}*[_.-])?(${ALIAS})([_.-]${KEYCH}*)?"
+KEY_ANY="(${KEY_A}|(${KEYCH}*[_.-])?(${ALIAS})([_.-]${KEYCH}*)?)"
+DELIM='["'"'"']?[[:space:]]*[:=][[:space:]]*'
+V_DQ='(\\.|[^"\\]){4,}'
+V_SQ="(\\\\.|[^'\\\\]){4,}"
+V_BARE='[^[:space:]"'"'"']{4,}'
+
+# --- key <delim> value, in the three quoting styles, for both key families
+for KEYRE in "$KEY_A" "$KEY_B"; do
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"'
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'"
+  ctx_rule secret-lead-in "$KEYRE" "$DELIM" "$V_BARE"
+done
+
+# --- URLs: scheme://user:PASSWORD@host, secret-ish query parameters
+ctx_plain url-password '://[^/[:space:]:@]*:' '[^[:space:]@/]{3,}' '@'
+ctx_plain url-query-secret '[?&](password|passwd|pwd|secret|token|access_token|api_key|apikey|x-amz-signature|x-amz-security-token)=' '[^&[:space:]"'"'"']{4,}'
+
+# --- HTTP: Authorization and Cookie headers
+ctx_plain auth-header 'authorization:[[:space:]]*(basic|bearer|token|digest)[[:space:]]+' '[^[:space:]"'"'"']{8,}'
+ctx_plain cookie-header '(^|[^A-Za-z-])(set-)?cookie:[[:space:]]*' '[^[:cntrl:]]{8,}'
+
+# --- Command-line flags (guards-coordination#10). Space-separated and glued
+# forms; --password=VALUE is already covered by the key rules above.
+ctx_plain cli-password-flag '(^|[[:space:]])--(password|passwd|pass|token|secret|api-key|apikey|client-secret|access-token|auth-token)[[:space:]]+' '[^[:space:]-][^[:space:]]{3,}'
+ctx_plain cli-password-flag '(mysql|mysqldump|mysqladmin|mariadb)[^|;&]*[[:space:]]-p' '[^[:space:]-][^[:space:]]{2,}'
+ctx_plain cli-password-flag 'redis-cli[^|;&]*[[:space:]]-a[[:space:]]+' '[^[:space:]]{4,}'
+ctx_plain cli-password-flag 'sshpass[[:space:]]+-p[[:space:]]*' '[^[:space:]]{4,}'
+ctx_plain cli-password-flag 'docker[[:space:]]+login[^|;&]*[[:space:]]-p[[:space:]]+' '[^[:space:]]{4,}'
+ctx_plain cli-password-flag 'mc[[:space:]]+alias[[:space:]]+set[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+' '[^[:space:]]{4,}'
+
+# --- Credential files: .netrc and .pgpass
+ctx_plain netrc-password '(^|[[:space:]])machine[[:space:]]+[^[:space:]]+([[:space:]]+(login|account)[[:space:]]+[^[:space:]]+)*[[:space:]]+password[[:space:]]+' '[^[:space:]]+'
+ctx_plain pgpass-password '(^|[[:space:]])[A-Za-z0-9_.*-]+:[0-9*]+:[A-Za-z0-9_.*-]+:[A-Za-z0-9_.@-]+:' '[^[:space:]]{4,}'
+
+# --- Key and value on separate lines or in one JSON object
+ctx_plain k8s-env-value '(^|[^A-Za-z0-9_.-])name:[[:space:]]*["'"'"']?'"${KEY_ANY}"'["'"'"']?[[:space:]]+value:[[:space:]]*["'"'"']?' '[^[:space:]"'"'"']{4,}'
+ctx_plain json-key-value '"(name|key)"[[:space:]]*:[[:space:]]*"'"${KEY_ANY}"'"[[:space:]]*,[[:space:]]*"value"[[:space:]]*:[[:space:]]*"' '[^"]{4,}' '"'
+
+# --- Vendor token shapes gitleaks' default ruleset lacks (P2)
+ctx_plain azure-client-secret '(^|[^A-Za-z0-9_~.-])' '[A-Za-z0-9_~.-]{3}8Q~[A-Za-z0-9_~.-]{34}'
+ctx_plain gcloud-oauth-token '(^|[^A-Za-z0-9_-])' 'ya29\.[A-Za-z0-9_-]{20,}'
+ctx_plain gcloud-oauth-token '(^|[^A-Za-z0-9_-])' '1//0[A-Za-z0-9_-]{30,}'
+ctx_plain bcrypt-hash '(^|[^A-Za-z0-9$])\$2[aby]\$[0-9]{2}\$' '[./A-Za-z0-9]{53}'
 shopt -u nocasematch
+
+# --- Known secret VALUES from the environment (guards-coordination#11) ---
+# A bare value with no key name or prefix (`echo $DB_PASSWORD`, an env dump)
+# is not detectable by any rule, but the process that is about to emit it
+# often HAS it in its environment. When SECRET_GUARD_ENV_VALUES=1, exact-
+# match redact the values of environment variables whose NAMES look secret.
+# Opt-in because it only makes sense where the scanner shares the session's
+# environment (the plugin's hooks and fallback), not in the service container.
+# Skipped: values under 8 chars, placeholders, and names that denote a
+# location or label (_FILE, _PATH, _DIR, _URL, _NAME, _ID, _TYPE, _HOST, _USER).
+if [ "${SECRET_GUARD_ENV_VALUES:-0}" = "1" ]; then
+  while IFS= read -r envname; do
+    [[ "$envname" =~ (SECRET|PASSWORD|PASSWD|TOKEN|API_?KEY|PRIVATE_KEY|CREDENTIAL|(^|_)(PW|PWD|PASS)($|_)) ]] || continue
+    [[ "$envname" =~ (_FILE|_PATH|_DIR|_URL|_URI|_NAME|_ID|_TYPE|_HOST|_PORT|_USER)$ ]] && continue
+    envval="${!envname}"
+    [ "${#envval}" -ge 8 ] || continue
+    ctx_placeholder "$envval" && continue
+    if [[ "$CTX_TEXT" == *"$envval"* ]]; then
+      CTX_TEXT="${CTX_TEXT//"$envval"/***REDACTED:SECRET***}"
+      CTX_HITS=$((CTX_HITS + 1))
+      case " $EXTRA_RULES " in *" env-value "*) ;; *) EXTRA_RULES="${EXTRA_RULES:+$EXTRA_RULES }env-value" ;; esac
+    fi
+  done < <(compgen -e)
+fi
+
+# Nothing redacted: hand back the original (ANSI intact, trailing newline kept).
+if [ "$CTX_HITS" -eq 0 ]; then
+  CTX_TEXT="$CTX_ORIG"
+fi
 
 if [ "$CTX_HITS" -gt 0 ]; then
   echo "REDACTED rule=context hits=$CTX_HITS rules=$EXTRA_RULES" >&2

@@ -408,6 +408,12 @@ command text or issue/PR bodies. `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the
 environment Claude Code starts from bypasses the guard for a reviewed false
 positive. Limits: only commands that name a publish verb are inspected;
 it covers Claude Code sessions with the plugin, not the GitHub web UI.
+Because this hook runs in the session's own environment, it also turns
+on `SECRET_GUARD_ENV_VALUES=1` for the scanner: the values of environment
+variables whose names look secret (`*TOKEN*`, `*PASSWORD*`, `*SECRET*`, ...)
+are exact-match redacted, which is the only way to catch a bare value with
+no key name or prefix. The backend-down fallback in `combined-hook.sh` does
+the same.
 Tests: `guards/tests/publish-guard.test.sh`.
 
 ## Known limitations
