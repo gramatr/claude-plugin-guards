@@ -383,6 +383,33 @@ hook fails open if `jq` is missing. Override with
 Tests: `guards/tests/credfile-guard.test.sh` (throwaway keys generated at
 run time, run in CI).
 
+## Pre-publish guard (PreToolUse)
+
+`hooks/publish-guard.sh` blocks commands that would publish credential
+material: `gh issue|pr|release|gist create|comment|edit|review`, `gh api`
+calls that carry a body, `git commit` (the message **and** the added lines
+of the staged diff), and GitHub MCP write tools. It scans the whole
+command including heredoc bodies, plus the contents of any file the
+command names (`--body-file`, `-F body=@file`, `--input`, `$(cat file)`,
+gist files), so a body file is not a bypass.
+
+It uses the vendored `scan.sh` locally (gitleaks, the private-key pass,
+and the context-aware pass for secret-word lead-ins, URL/DSN passwords and
+Authorization headers), not the guards-unified service: a publish check
+should not depend on a network daemon, and the service is slow on large
+text. On a finding it **denies** (it never silently redacts a post) and
+names the detector rules, never a value, and tells the agent to describe
+the *shape* only. If the scanner cannot run at all it fails closed; if
+only gitleaks is missing the built-in passes still run, with a notice.
+
+A line containing `guards:synthetic` is dropped from the staged diff
+before scanning, for deliberately fake test fixtures. It does not apply to
+command text or issue/PR bodies. `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the
+environment Claude Code starts from bypasses the guard for a reviewed false
+positive. Limits: only commands that name a publish verb are inspected;
+it covers Claude Code sessions with the plugin, not the GitHub web UI.
+Tests: `guards/tests/publish-guard.test.sh`.
+
 ## Known limitations
 
 - **Docker is the only path to PII/injection detection now.** Its only

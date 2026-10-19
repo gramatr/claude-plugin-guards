@@ -34,6 +34,9 @@ jobs:
       - name: credfile-guard tests
         # Generates throwaway keys at run time; nothing real is read.
         run: bash guards/tests/credfile-guard.test.sh
+      - name: publish-guard tests
+        # Fabricated credential values only; nothing real is read.
+        run: bash guards/tests/publish-guard.test.sh
 
   hadolint:
     runs-on: ubuntu-latest
