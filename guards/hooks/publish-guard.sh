@@ -73,6 +73,17 @@ deny() {
   exit 0
 }
 
+# ask: hand the decision to the HUMAN through Claude Code's built-in permission
+# prompt. The agent cannot answer it, so it is not a bypass the agent can type
+# for itself. What Claude Code does with an ask when no human is attached (a
+# non-interactive run) is not something this plugin controls or has verified;
+# set GUARDS_PUBLISH_ASK=0 / GUARDS_CRED_ASK=0 to make those runs hard blocks.
+ask() {
+  jq -n --arg reason "$1" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+  exit 0
+}
+
 notice() {
   jq -n --arg ctx "$1" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $ctx}}'
@@ -178,6 +189,21 @@ if ! secret_scan "$SCAN_INPUT"; then
 fi
 
 RULES="$(printf '%s' "$SS_RULES" | tr ' ' ',')"
+
+# Sure things are blocked outright: a private key, a vendor token format
+# gitleaks recognises, a value from this session's own environment. Matches
+# that come from a key name or URL shape next to a value (they also fire on
+# text that merely DOCUMENTS such things) go to the human instead. Setting
+# GUARDS_PUBLISH_ASK=0 makes every match a hard block, as before.
+AMBIGUOUS=" secret-lead-in url-password url-query-secret auth-header cookie-header cli-password-flag netrc-password pgpass-password k8s-env-value json-key-value azure-client-secret gcloud-oauth-token bcrypt-hash generic-api-key "
+HARD=0
+for r in $SS_RULES; do
+  case "$AMBIGUOUS" in *" $r "*) ;; *) HARD=1 ;; esac
+done
+if [ -n "$RULES" ] && [ "$HARD" -eq 0 ] && [ "${GUARDS_PUBLISH_ASK:-1}" = "1" ]; then
+  ask "guards publish-guard: ${LABEL} may contain a credential (detector rule(s): ${RULES}). Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and rewrite the text to describe the shape only (length, character classes, which tool produced it); nothing real belongs in a public repo, issue, PR, comment or commit, not even a rotated one."
+fi
+
 if [ -n "$RULES" ]; then
   deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES}). Do not include the value, not even a prefix, a partial, or a rotated/dead one. Describe the SHAPE only: length, character classes, which tool or command produced it. Put real material nowhere in a public repo, issue, PR, comment or commit. If this is a reviewed false positive, the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 in the environment Claude Code starts from; for deliberately fake fixtures in a commit, put 'guards:synthetic' on the same line."
 fi

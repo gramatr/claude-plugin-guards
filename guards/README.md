@@ -376,6 +376,15 @@ print file content (`cat`, `head`, `sed`, `grep`, `base64`, `python`, ...)
 that name a sensitive path are denied; `ssh -i key host` and
 `ssh-keygen -l -f key` use a key without printing it and are allowed.
 
+**Deny or ask.** Private keys and credential stores are always a hard deny.
+Files that merely *contain* credentials but are routinely needed for debugging
+(`.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state) go to the human
+through Claude Code's built-in permission prompt (`ask`) instead, because
+blocking them stops ordinary work. The agent cannot answer that prompt, so it
+is not a bypass the agent can type for itself. `GUARDS_CRED_ASK=0` makes every
+match a hard deny. What Claude Code does with an ask when no human is attached
+(a non-interactive run) is not verified: use `GUARDS_CRED_ASK=0` there.
+
 Limits: a `Grep` over a whole directory is checked by directory and glob
 name only; a Bash command that reads a key indirectly is not caught; the
 hook fails open if `jq` is missing. Override with
@@ -401,6 +410,15 @@ text. On a finding it **denies** (it never silently redacts a post) and
 names the detector rules, never a value, and tells the agent to describe
 the *shape* only. If the scanner cannot run at all it fails closed; if
 only gitleaks is missing the built-in passes still run, with a notice.
+
+**Deny or ask.** Sure things (a private key, a vendor token format gitleaks
+recognises, a value from this session's own environment) are hard blocks.
+Matches that come from a key name or URL shape next to a value also fire on
+text that merely *documents* such things, so those go to the human through
+Claude Code's built-in permission prompt (`ask`), with the rule names and no
+value. Only a human can approve, so it is not a bypass the agent can type for
+itself. `GUARDS_PUBLISH_ASK=0` makes every match a hard block (use it for
+non-interactive runs, where what an ask does is not verified).
 
 A line containing `guards:synthetic` is dropped from the staged diff
 before scanning, for deliberately fake test fixtures. It does not apply to
