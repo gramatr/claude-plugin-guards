@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
+# Local fix ahead of upstream: redaction pattern quoted + fail-closed verify (guards-unified#3 / guards-coordination#5).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -67,11 +68,52 @@ fi
 
 TEXT="$(cat "$INPUT_FILE")"
 
+WITHHELD='***REDACTED:SECRET*** (secret-guard could not safely redact this output; withheld)'
+
 # Replace longest secrets first so overlapping/substring matches don't
-# clobber each other's placeholders. Plain bash substring substitution
-# (not regex) — safe for arbitrary secret content.
-while IFS= read -r secret; do
-  [ -n "$secret" ] && TEXT="${TEXT//$secret/***REDACTED:SECRET***}"
-done < <(jq -r '[.[] | .Secret // empty] | unique_by(. ) | sort_by(-(. | length)) | .[]' "$REPORT_FILE")
+# clobber each other's placeholders. Plain bash substring substitution,
+# NOT regex -- but the pattern MUST be quoted: an unquoted ${TEXT//$s/..}
+# treats $s as a glob, so a backslash, *, ? or [ in the secret (an
+# escaped-newline PEM inside JSON, a password with punctuation) silently
+# stops matching and the "redaction" is a no-op while the verdict still
+# says found (guards-coordination#4/#5).
+#
+# Secrets are NUL-delimited, not newline-delimited: a multi-line secret
+# (a PEM block) must be replaced as ONE unit, not as its lines.
+SECRETS_FILE="$(mktemp)"
+FRAGMENTS_FILE="$(mktemp)"
+trap 'rm -f "$INPUT_FILE" "$REPORT_FILE" "$SECRETS_FILE" "$FRAGMENTS_FILE"' EXIT
+
+jq -j '[.[] | .Secret // empty] | unique | sort_by(-length) | .[] | (., "\u0000")' \
+  "$REPORT_FILE" > "$SECRETS_FILE"
+# Per-line fragments (16+ chars) of every secret, as a second pass: the
+# whole-secret replace above can miss when the scanner's reported span
+# and the text differ by line endings (CRLF). Short fragments are skipped
+# so ordinary words are never clobbered.
+jq -j '[.[] | .Secret // empty | split("\n")[] | rtrimstr("\r") | select(length >= 16)] | unique | sort_by(-length) | .[] | (., "\u0000")' \
+  "$REPORT_FILE" > "$FRAGMENTS_FILE"
+
+while IFS= read -r -d '' secret; do
+  [ -n "$secret" ] && TEXT="${TEXT//"$secret"/***REDACTED:SECRET***}"
+done < "$SECRETS_FILE"
+while IFS= read -r -d '' frag; do
+  [ -n "$frag" ] && TEXT="${TEXT//"$frag"/***REDACTED:SECRET***}"
+done < "$FRAGMENTS_FILE"
+
+# Verify, fail CLOSED. A finding was confirmed above, so if any reported
+# secret (or 16+ char line of one) is still present, withhold the whole
+# output instead of passing known secret material through.
+LEAKED=0
+while IFS= read -r -d '' secret; do
+  if [ -n "$secret" ] && [[ "$TEXT" == *"$secret"* ]]; then LEAKED=1; fi
+done < "$SECRETS_FILE"
+while IFS= read -r -d '' frag; do
+  if [ -n "$frag" ] && [[ "$TEXT" == *"$frag"* ]]; then LEAKED=1; fi
+done < "$FRAGMENTS_FILE"
+if [ "$LEAKED" -eq 1 ]; then
+  echo "secret-guard: redaction did not remove a confirmed secret, withholding the whole output (fail-closed)" >&2
+  printf '%s' "$WITHHELD"
+  exit 0
+fi
 
 printf '%s' "$TEXT"
