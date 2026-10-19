@@ -31,6 +31,13 @@ unchanged if the backend is unreachable, so a session never silently
 stalls), this tool returns an explicit {"error": ...} rather than a
 false "clean" result, because a caller that explicitly asked for a scan
 deserves to know it didn't happen rather than assume it passed.
+
+Trusting this: the HOOKS (not this tool) are what actually protect a
+session's tool output and agent-to-agent messages automatically; this
+MCP tool is the explicit, on-demand path. For what the hooks guarantee,
+what they don't, and a live-verified test of each (both with the
+backend up and deliberately killed) — see this repo's README,
+"Verified live: secret redaction across every surface."
 """
 
 import os
