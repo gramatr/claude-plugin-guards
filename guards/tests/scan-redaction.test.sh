@@ -61,9 +61,11 @@ for key in ec p8; do
   cp "$T/$key.pem" "$T/in_plain.txt"
   jq -n --rawfile k "$T/$key.pem" '{private_key: $k}' > "$T/in_json.txt"
   sed 's/$/\r/' "$T/$key.pem" > "$T/in_crlf.txt"
+  head -n -1 "$T/$key.pem" > "$T/in_trunc.txt"
   check "$key plain"          "$T/in_plain.txt"
   check "$key json-escaped"   "$T/in_json.txt"
   check "$key crlf"           "$T/in_crlf.txt"
+  check "$key truncated"      "$T/in_trunc.txt"
 done
 
 echo "scan-redaction: $pass passed, $fail failed"
