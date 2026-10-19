@@ -172,7 +172,10 @@ if [ ! -f "$SECRET_SCAN" ]; then
 fi
 FINDINGS="$WORK/findings.json"
 ERRLOG="$WORK/stderr.txt"
-SECRET_GUARD_FINDINGS_JSON="$FINDINGS" timeout 30 bash "$SECRET_SCAN" < "$SCAN_INPUT" > "$WORK/out.txt" 2> "$ERRLOG"
+# SECRET_GUARD_ENV_VALUES=1: this process shares the session environment, so
+# also exact-match redact the values of secret-named env vars (a bare value
+# pasted into an issue has no key name for any other rule to key on).
+SECRET_GUARD_ENV_VALUES=1 SECRET_GUARD_FINDINGS_JSON="$FINDINGS" timeout 30 bash "$SECRET_SCAN" < "$SCAN_INPUT" > "$WORK/out.txt" 2> "$ERRLOG"
 RC=$?
 if [ "$RC" -ne 0 ]; then
   deny "Blocked by guards publish-guard: the secret scanner failed (exit $RC) while checking ${LABEL}. Fail-closed: a publish cannot be un-done. Retry, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."

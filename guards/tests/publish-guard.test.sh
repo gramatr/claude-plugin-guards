@@ -58,6 +58,9 @@ git reset -q deploy.pem && rm -f deploy.pem
 expect deny  "marker does not excuse a message"    Bash "$(bash_in "gh issue create --title t --body 'DB_PASSWORD=$PW # guards:synthetic'")"
 expect deny  "MCP issue create with secret"        mcp__github__create_issue "$(jq -n --arg b "password: $PW" '{owner:"o",repo:"r",title:"t",body:$b}')"
 
+# A bare value with no key name: only the environment-value pass can catch it.
+expect deny  "bare env-var value in an issue body"  Bash "$(bash_in "gh issue create -R o/r --title t --body 'it printed $PW and then failed'")" MY_SERVICE_TOKEN="$PW"
+
 # --- allow: clean posts, non-publish commands, markers, override ---
 expect allow "clean issue body"                    Bash "$(bash_in "gh issue create -R o/r --title t --body 'The login flow fails after the token expires.'")"
 expect allow "mentions password without a value"   Bash "$(bash_in "gh issue create -R o/r --title t --body 'Rotate the DB password and update the consumers.'")"

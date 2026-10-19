@@ -249,7 +249,10 @@ scan_and_redact() {
     if [ -x "$SECRET_SCAN" ]; then
       echo "combined-hook: guards-unified unreachable at ${GUARDS_ENDPOINT}, falling back to local scan.sh for secrets only (PII/injection detection unavailable until guards-unified is back up)" >&2
       local redacted
-      redacted="$(printf '%s' "$current" | "$SECRET_SCAN" 2>/dev/null)"
+      # SECRET_GUARD_ENV_VALUES=1: the fallback runs in the session's own
+      # environment, so a bare value copied from a secret-named env var
+      # (echo $DB_PASSWORD) is exact-match redacted too.
+      redacted="$(printf '%s' "$current" | SECRET_GUARD_ENV_VALUES=1 "$SECRET_SCAN" 2>/dev/null)"
       if [ -n "$redacted" ] && [ "$redacted" != "$current" ]; then
         current="$redacted"
         changed=1
