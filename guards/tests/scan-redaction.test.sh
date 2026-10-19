@@ -61,9 +61,31 @@ for key in ec p8; do
   cp "$T/$key.pem" "$T/in_plain.txt"
   jq -n --rawfile k "$T/$key.pem" '{private_key: $k}' > "$T/in_json.txt"
   sed 's/$/\r/' "$T/$key.pem" > "$T/in_crlf.txt"
+  head -n -1 "$T/$key.pem" > "$T/in_trunc.txt"
   check "$key plain"          "$T/in_plain.txt"
   check "$key json-escaped"   "$T/in_json.txt"
   check "$key crlf"           "$T/in_crlf.txt"
+  check "$key truncated"      "$T/in_trunc.txt"
+done
+
+# Context rules: the secret must disappear and the surrounding text stay.
+ctx() { # ctx NAME INPUT SECRET
+  local out
+  out="$(printf '%s' "$2" | scan)"
+  if [[ "$out" == *"$3"* ]] || [ "$out" = "$2" ]; then
+    echo "FAIL: $1: secret survives"; fail=$((fail + 1))
+  else
+    pass=$((pass + 1))
+  fi
+}
+ctx "dsn postgres"      'postgresql://svc:Tq7vN2xLm9Kd4RzP8wYb@db.internal:5432/app' 'Tq7vN2xLm9Kd4RzP8wYb'
+ctx "dsn redis"         'redis://:Tq7vN2xLm9Kd4RzP8wYb@cache.internal:6379/0'          'Tq7vN2xLm9Kd4RzP8wYb'
+ctx "env punctuation"   'DB_PASSWORD=Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'                         'Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'
+ctx "json punctuation"  '{"secretKey": "Qm4*Xw9%tL2!pR7=zN3^vB8", "user": "bob"}'       'Qm4*Xw9%tL2!pR7=zN3^vB8'
+ctx "bearer header"     'Authorization: Bearer Tq7vN2xLm9Kd4RzP8wYb'                    'Tq7vN2xLm9Kd4RzP8wYb'
+# Harmless lookalikes stay byte-identical.
+for benign in 'password: ${DB_PASSWORD}' 'secretName: db-credentials' 'The secret to good tests is isolation.'; do
+  if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: benign altered: $benign"; fail=$((fail + 1)); fi
 done
 
 echo "scan-redaction: $pass passed, $fail failed"
