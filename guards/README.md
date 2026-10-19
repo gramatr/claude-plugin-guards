@@ -98,12 +98,16 @@ possibly a different user, possibly logged or relayed elsewhere.
   the message is authored by the sending agent itself, not forwarded
   untrusted content, so "is this an injection attempt" isn't the
   relevant question for an outbound send.
-- **Still fails CLOSED on one case: the backend being unreachable.**
-  There's nothing to safely redact against without a scan result, and
-  an unsent message is recoverable while a sent one is not — so that
-  one path still denies outright, unlike every other hook in this
-  stack, which fails open. This is the only remaining deny path; a
-  detected secret/PII no longer denies, it redacts.
+- **Degrades, does not block, when the backend is unreachable** (changed
+  in `1411d2b`, from an earlier version that denied outright in this
+  case — this section previously described that older, now-incorrect
+  behavior; corrected 2026-10-19). Falls back to the same vendored
+  local `scan.sh`/gitleaks secret-only scan `combined-hook.sh` uses for
+  its own backend-unreachable case: secrets still get real, local
+  redaction via `updatedInput`; only PII scanning (which needs
+  `guards-unified`'s loaded Presidio model) is unavailable until the
+  backend is back. Verified live, 2026-10-19 — see "Verified live:
+  secret redaction across every surface" below.
 
 ## Inbound awareness: flagging a secret in your own prompt — NOT prevention
 
@@ -140,6 +144,42 @@ version of this hook was.
 - Fails open on backend-unreachable, same as before — simpler to
   reason about now, since this hook never blocks anything regardless:
   unreachable just means no note gets added.
+
+## Verified live: secret redaction across every surface (2026-10-19)
+
+Prompted by a direct question — "prove secrets never go through
+unredacted, across every surface, not just one" — rather than answer
+from the code or from memory, each hooked surface was tested live
+against a real, synthetic GitHub-PAT-shaped value
+(`ghp_16C7e42F292c6912E7710c838347Ae178B4a` — fake, never a real
+credential, never needs rotation), both with `guards-unified` running
+normally and with it killed outright (`docker stop
+docker-guards-unified-1`) to force each hook's backend-unreachable
+fallback path for real, not assumed from a comment.
+
+| Surface | Backend up | Backend killed |
+|---|---|---|
+| `PostToolUse:Bash` (tool output) | Redacted — real `echo` of the fake secret came back as `***REDACTED:SECRET***` | Still redacted — same result, via local `scan.sh`/gitleaks fallback |
+| `PreToolUse:SendMessage` (agent-to-agent) | Redacted — `updatedInput.message` came back with `***REDACTED:SECRET***`, confirmed via a crafted `PreToolUse` payload piped directly into `sendmessage-guard.sh` | Still redacted — same result, `permissionDecisionReason` explicitly named the local-only fallback path |
+| `UserPromptSubmit` (the user's own prompt) | **Not redacted — reaches the model exactly as typed, by design.** See the section above: this is architecturally impossible to fix at this hook, not a gap in effort. | N/A — this hook never scans the backend at all for this decision |
+
+Reproduce the `PostToolUse` case yourself: run a Bash command whose
+output contains a secret-shaped string and read back what actually
+came through. Reproduce the `PreToolUse:SendMessage` case without
+sending anything real:
+
+```bash
+jq -n '{
+  tool_name: "SendMessage",
+  tool_input: { to: "test", message: "secret: ghp_16C7e42F292c6912E7710c838347Ae178B4a" }
+}' | bash guards/hooks/sendmessage-guard.sh
+```
+
+The `updatedInput.message` field in the output is what Claude Code
+would actually use for the tool call — if it shows the raw value, the
+redaction path is broken; if it shows `***REDACTED:SECRET***`, it
+isn't. This is the whole mechanism, reduced to one command — no live
+backend, no real recipient, no side effects, required to check it.
 
 ## Architecture
 
