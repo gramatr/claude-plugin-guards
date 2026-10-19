@@ -1,5 +1,5 @@
 {
-  "description": "gramatr guards: secret-guard + injection-guard + pii-guard, wired as one combined PostToolUse hook on Bash (see combined-hook.sh for why ONE hook, not three — Claude Code's own docs say multiple hooks returning updatedToolOutput for the same call have undefined resolution order). PreToolUse credfile-guard denies Read/Grep/Bash reads of credential files and private keys before any content is produced. PreToolUse publish-guard denies gh issue/pr/release/gist, gh api body and git commit publishes that contain credentials. SessionStart runs a self-heal script (same idempotent-check pattern as grāmatr's own statusline-selfheal.js) that installs/starts the injection-guard and pii-guard daemons if they're not already running.",
+  "description": "gramatr guards: secret-guard + injection-guard + pii-guard, wired as one combined PostToolUse hook on Bash (see combined-hook.sh for why ONE hook, not three — Claude Code's own docs say multiple hooks returning updatedToolOutput for the same call have undefined resolution order). PreToolUse credfile-guard denies Read/Grep/Bash reads of credential files and private keys before any content is produced. PostToolUse mcp-output-guard redacts secrets in MCP tool results. PreToolUse publish-guard denies gh issue/pr/release/gist, gh api body and git commit publishes that contain credentials. SessionStart runs a self-heal script (same idempotent-check pattern as grāmatr's own statusline-selfheal.js) that installs/starts the injection-guard and pii-guard daemons if they're not already running.",
   "hooks": {
     "SessionStart": [
       {
@@ -23,6 +23,17 @@
             "command": "bash",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/combined-hook.sh"],
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/mcp-output-guard.sh"],
+            "timeout": 30
           }
         ]
       }
