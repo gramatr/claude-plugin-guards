@@ -24,6 +24,16 @@ COMPOSE_FILE="$GUARDS_ROOT/docker/docker-compose.yml"
 ENV_FILE="$HOME/.config/gramatr-guards/injection-guard.env"
 METRICS_DIR="$HOME/.local/share/gramatr-guards/metrics"
 
+# Set by check_plugin_update() / ensure_docker_stack() below, read at
+# the very end of the script to build one additionalContext note.
+# Empty means "nothing to report" -- most sessions, most of the time.
+# This exists because a stale pull or a behind-latest plugin used to
+# be visible only in stderr nobody reads (or not at all, when the
+# fail-open fallback silently kept a stale cached image). Surfacing it
+# in-session is what actually lets the agent tell the user, or act.
+PLUGIN_UPDATE_NOTE=""
+IMAGE_UPDATE_NOTE=""
+
 # --- gitleaks/jq still checked either way: combined-hook.sh's secret
 # axis keeps a local scan.sh fallback for when guards-unified itself is
 # unreachable (the one case this stack still gives secret detection an
@@ -109,6 +119,28 @@ ensure_gitleaks
 if ! command -v jq >/dev/null 2>&1; then
   log "WARNING: jq not found on PATH — combined-hook.sh's secret-axis fallback will fail open if guards-unified is ever down. Install jq."
 fi
+
+check_plugin_update() {
+  # GUARDS_ROOT's own basename is this installed plugin's commit --
+  # Claude Code resolves ${CLAUDE_PLUGIN_ROOT} to exactly this path
+  # (.../guards/<commit>/...) before invoking this script, confirmed
+  # from the session's own debug log (see README). Compare against
+  # the marketplace repo's current main, bounded so an unreachable
+  # network can't hang SessionStart -- same fail-open posture as
+  # everything else here: no network, no verdict, not an error.
+  local installed_commit latest_commit
+  installed_commit="$(basename "$GUARDS_ROOT")"
+  latest_commit="$(timeout 5 git ls-remote https://github.com/gramatr/claude-plugin-guards.git main 2>/dev/null | awk '{print $1}')"
+  if [ -z "$latest_commit" ]; then
+    return 0
+  fi
+  case "$latest_commit" in
+    "$installed_commit"*) return 0 ;;
+  esac
+  PLUGIN_UPDATE_NOTE="A newer version of the guards plugin is available upstream (installed: ${installed_commit}; latest on main: ${latest_commit:0:12}). This session is running the installed one -- \`claude plugin marketplace update gramatr-guards && claude plugin update guards\`, then a restart, applies the newer one."
+}
+
+check_plugin_update
 
 docker_usable() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
@@ -286,6 +318,13 @@ ensure_docker_stack() {
   migrate_from_previous_architecture
   reconcile_port_8700
 
+  # Captured BEFORE the pull below, from whatever's already running --
+  # empty on a fresh install (nothing running yet), which is correct:
+  # a first-ever start isn't "an update" worth flagging the same way a
+  # real version change is.
+  local old_version
+  old_version="$(curl -sS -m 3 "http://127.0.0.1:8700/about" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)"
+
   # `docker compose up -d` alone never checks the registry for a newer
   # image -- it just reuses whatever's cached locally under this tag,
   # silently, forever. Confirmed by testing this gap directly: a
@@ -319,8 +358,32 @@ ensure_docker_stack() {
     return 1
   fi
 
-  if ! curl -sS -m 3 "http://127.0.0.1:8700/health" >/dev/null 2>&1; then
+  # Polls, doesn't single-shot -- confirmed by testing (2026-10-19)
+  # that a single 3s check isn't enough: FastAPI's lifespan loads the
+  # injection model BEFORE the ASGI server accepts any connections at
+  # all, including /health, so a cold start (exactly when an image
+  # actually changed, which is exactly when this note matters most)
+  # routinely takes longer than 3s. Bounded at 30s total so a genuinely
+  # failed start still reaches the existing warning below in
+  # reasonable time, not the full 240s pull budget's worth of waiting.
+  local waited=0 healthy=""
+  while [ "$waited" -lt 30 ]; do
+    if curl -sS -m 3 "http://127.0.0.1:8700/health" >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  if [ -z "$healthy" ]; then
     log "WARNING: guards-unified not answering on 127.0.0.1:8700/health yet — it may still be starting (model load takes longer on first run), or it failed to start. Check: docker compose -f $COMPOSE_FILE logs guards-unified"
+  else
+    local new_version
+    new_version="$(curl -sS -m 3 "http://127.0.0.1:8700/about" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)"
+    if [ -n "$old_version" ] && [ -n "$new_version" ] && [ "$old_version" != "$new_version" ]; then
+      IMAGE_UPDATE_NOTE="guards-unified was just updated from version ${old_version} to ${new_version} as part of this session starting (self-heal pulls on every SessionStart)."
+    fi
   fi
   return 0
 }
@@ -372,6 +435,27 @@ if docker_usable; then
   command -v flock >/dev/null 2>&1 && flock -u 9 2>/dev/null
 else
   fallback_non_docker
+fi
+
+# Factual statements, not imperative instructions — additionalContext
+# feeds back into the model's own context, and imperative phrasing
+# there is exactly the shape a prompt-injection defense watches for.
+# This hook has no business tripping that itself (same reasoning as
+# userpromptsubmit-guard.sh's own additionalContext). Combines both
+# notes into one so a session with both an image update AND a plugin
+# update pending doesn't need two separate reminders.
+if [ -n "$IMAGE_UPDATE_NOTE" ] || [ -n "$PLUGIN_UPDATE_NOTE" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    combined="$(printf '%s %s' "$IMAGE_UPDATE_NOTE" "$PLUGIN_UPDATE_NOTE" | sed 's/^ *//;s/ *$//')"
+    jq -n --arg ctx "$combined" '{
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: $ctx
+      }
+    }'
+  else
+    log "$IMAGE_UPDATE_NOTE $PLUGIN_UPDATE_NOTE"
+  fi
 fi
 
 exit 0
