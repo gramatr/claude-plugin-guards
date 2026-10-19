@@ -24,13 +24,16 @@ jobs:
       - name: Lint hook + vendor scripts
         run: |
           shopt -s nullglob
-          files=(guards/hooks/*.sh guards/bin/*.sh guards/vendor/secret-guard-core/scan.sh)
+          files=(guards/hooks/*.sh guards/bin/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh)
           echo "Linting: ${files[*]}"
           # -S warning: info-level SC2016 fires on intentional single
           # quotes around jq's own $vars (e.g. '{message: $msg}'), not
           # a real shell-quoting bug — verified locally before adding
           # this gate.
           shellcheck -S warning "${files[@]}"
+      - name: credfile-guard tests
+        # Generates throwaway keys at run time; nothing real is read.
+        run: bash guards/tests/credfile-guard.test.sh
 
   hadolint:
     runs-on: ubuntu-latest

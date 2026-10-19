@@ -358,6 +358,31 @@ version: it's architecturally fine for `injection-guard`, and explicitly
 not fine for `secret-guard`/`pii-guard` per their own READMEs, for
 reasons that don't go away just because the network boundary is ours.
 
+## Credential-file guard (PreToolUse)
+
+`hooks/credfile-guard.sh` denies reads of credential material *before any
+content is produced*, for the `Read`, `Grep` and `Bash` tools. Redaction
+after the fact is only a backstop: it sees Bash output only, and can miss
+keys in odd shapes (escaped newlines, truncated PEM).
+
+Denied: SSH private keys (not `*.pub`, `known_hosts`, `config`),
+`~/.aws/credentials`, kubeconfigs, gcloud and docker credential files,
+`.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`, `.pypirc`, `.env` and
+`.env.*` (not `.env.example`/`.sample`/`.template`), keystores,
+`*.tfstate`, service-account / client-secret JSON, and **any readable file
+whose content has a PEM/OpenSSH private-key header, whatever its name**
+(sniffed with `grep -q`, never printed). For Bash, only commands that
+print file content (`cat`, `head`, `sed`, `grep`, `base64`, `python`, ...)
+that name a sensitive path are denied; `ssh -i key host` and
+`ssh-keygen -l -f key` use a key without printing it and are allowed.
+
+Limits: a `Grep` over a whole directory is checked by directory and glob
+name only; a Bash command that reads a key indirectly is not caught; the
+hook fails open if `jq` is missing. Override with
+`GUARDS_ALLOW_CRED_READ=1` in the environment Claude Code starts from.
+Tests: `guards/tests/credfile-guard.test.sh` (throwaway keys generated at
+run time, run in CI).
+
 ## Known limitations
 
 - **Docker is the only path to PII/injection detection now.** Its only
@@ -367,7 +392,7 @@ reasons that don't go away just because the network boundary is ours.
 - **Windows not supported at all for `guards-unified`** — secret
   detection still works there (no daemon needed), PII/injection stages
   fail open.
-- **Only Bash tool calls are guarded** — Read/Grep/WebFetch's `updatedToolOutput` shapes aren't confirmed from the docs; rather than guess, those tool calls pass through unguarded for v1.
+- **Output redaction covers Bash tool calls only.** Read/Grep/WebFetch's `updatedToolOutput` shapes aren't documented, and a wrong shape is silently ignored, so those results are never rewritten. Credential files are instead blocked *before* they are read by `credfile-guard.sh` (see "Credential-file guard" below); everything else those tools return is unscanned.
 - **Vendored hook scripts** (`hooks/*.sh`, `vendor/secret-guard-core/scan.sh`) must be manually synced if their source repos change — no automated sync exists yet.
 - **secret-guard's `gitleaks`/`jq` dependencies are checked, never auto-installed** — a system package manager assumption felt too risky to make silently; the self-heal script warns and fails open instead.
 
