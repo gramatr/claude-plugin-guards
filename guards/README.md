@@ -446,6 +446,35 @@ session tokens by design. `GUARDS_MCP_SCAN=0` disables it. The payload shape
 was taken from the session transcript, not from a documented example:
 verify live after enabling. Tests: `guards/tests/mcp-output-guard.test.sh`.
 
+## Bash output hook: the hot path
+
+`hooks/combined-hook.sh` runs on **every** Bash call, so its latency is felt on
+all work. Measured on the running service before this change, the single
+`/v1/scan` call cost 229 ms at 1 KB, 5.4 s at 24 KB and 23 s at 100 KB (the
+hook took 10.4 s on 24 KB of output), almost all of it the PII and
+prompt-injection models at about 0.25 s per KB. Those models are flag-only
+and are not made faster by parallel requests. It also only ever scanned the
+first 24 KB, so a secret later in a larger output was returned unredacted.
+
+The default path (`GUARDS_FAST_BASH=1`) now does two things:
+
+1. **Secrets, always and fast.** `secret-scan-lib.sh`: the service's
+   secret-only route (about 55 ms) plus the local-environment passes, over up
+   to `SECRET_MAX_BYTES` (256 KB, was 24 KB). Any failure falls back to the
+   full local `scan.sh`. This never waits on the models.
+2. **PII and injection flags, best effort.** The first `FLAG_MAX_BYTES`
+   (1 KB) only, run in parallel with the secret scan, abandoned after
+   `FLAG_BUDGET` (0.5 s) and dropped silently if the service is slow or down.
+   Set `FLAG_MAX_BYTES=0` to skip them entirely. Injection or PII text later
+   in a long output is not flagged; that is the cost of keeping the hook
+   fast.
+
+Safeguards: `GUARDS_FAST_BASH=0` restores the previous single-call behavior
+exactly; `PII_GUARD_MODE=redact` also uses the previous path; if the library
+is missing or no scanner can run, the hook uses the previous path instead of
+skipping the scan. Tests: `guards/tests/combined-hook.test.sh` (a stub
+service with a slow model scan proves secrets never wait on it).
+
 ## Known limitations
 
 - **Docker is the only path to PII/injection detection now.** Its only

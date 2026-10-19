@@ -37,6 +37,9 @@ jobs:
       - name: mcp-output-guard tests
         # Fabricated values only.
         run: bash guards/tests/mcp-output-guard.test.sh
+      - name: Bash output hook tests (hot path)
+        # Stub service with a slow model scan: proves secrets never wait on it.
+        run: bash guards/tests/combined-hook.test.sh
       - name: fast secret-scan path tests
         # Stub service; proves the fast path is used and every failure falls back.
         run: bash guards/tests/fast-secret-scan.test.sh
