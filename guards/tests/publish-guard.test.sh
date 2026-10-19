@@ -65,8 +65,15 @@ expect ask   "MCP issue create with secret"        mcp__github__create_issue "$(
 expect deny  "bare env-var value in an issue body"  Bash "$(bash_in "gh issue create -R o/r --title t --body 'it printed $PW and then failed'")" MY_SERVICE_TOKEN="$PW"
 
 # --- ask vs deny: a human decides the ambiguous cases, sure things stay blocked ---
-expect deny  "a vendor token format is a sure thing"  Bash "$(bash_in "gh issue create -R o/r --title t --body 'token ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'")"
-expect deny  "ambiguous AND sure thing together denies" Bash "$(bash_in "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW and ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'")"
+# A private key is a sure thing and needs no gitleaks (the private-key pass is deterministic).
+{ printf 'DB_PASSWORD=%s\n' "$PW"; cat "$T/key.pem"; } > "$T/mixed.md"
+cp "$T/key.pem" "$T/keyonly.md"
+expect deny  "a private key in an issue body is a sure thing"      Bash "$(bash_in "gh issue create -R o/r --title t --body-file $T/keyonly.md")"
+expect deny  "ambiguous AND sure thing together denies"            Bash "$(bash_in "gh issue create -R o/r --title t --body-file $T/mixed.md")"
+# A vendor token format is a sure thing too, but only gitleaks knows those.
+if command -v gitleaks >/dev/null 2>&1; then
+  expect deny  "a vendor token format is a sure thing (gitleaks)"  Bash "$(bash_in "gh issue create -R o/r --title t --body 'token ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8'")"
+fi
 expect deny  "GUARDS_PUBLISH_ASK=0 restores the hard block" Bash "$(bash_in "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'")" GUARDS_PUBLISH_ASK=0
 out="$(jq -n --arg c "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'" --arg cwd "$T/repo" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd}' | bash "$HOOK")"
 msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
