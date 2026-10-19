@@ -106,7 +106,10 @@ ctx_redact() {
     key=""; [ "$ki" -gt 0 ] && key="${BASH_REMATCH[$ki]}"
     pre="${rest%%"$m"*}"
     out+="$pre"
-    if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; }; then
+    if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
+      || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
+      # last clause: a bare plural heading followed by a markdown code span
+      # ("Query-string tokens: `access_token=`") is prose, not a value.
       out+="$m"
     else
       out+="${pfx}***REDACTED:SECRET***${sfx}"
