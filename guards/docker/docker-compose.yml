@@ -76,6 +76,54 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 60s
+    labels:
+      # Scopes watchtower (below) to THIS container only -- without
+      # --label-enable + this label, watchtower's default behavior is
+      # to update every container on the host, which is not
+      # acceptable on a shared box like dgx-spark-01 (raven demo
+      # stack, text2video eval containers, etc. all run there too).
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Self-heal's own `docker compose pull` only ever runs at
+  # SessionStart -- a running Claude Code session could sit on a
+  # stale, already-fixed-upstream image indefinitely until the user
+  # quit and restarted, just to pick up a container that has nothing
+  # to do with the plugin code a restart actually reloads. Watchtower
+  # decouples "the container is current" from "a Claude session
+  # happened to restart" entirely: it polls the registry on its own
+  # schedule and swaps the container in place (a few seconds of
+  # downtime, same as any `docker compose up -d` on a changed image)
+  # whether or not anyone's Claude session is even open.
+  #
+  # containrrr/watchtower is archived (confirmed 2026-10-19); this is
+  # the actively maintained fork.
+  watchtower:
+    image: nickfedor/watchtower:1.23.1
+    volumes:
+      # Full docker.sock access is watchtower's whole mechanism, not
+      # an oversight -- it needs the daemon API to inspect, pull, and
+      # recreate containers. WATCHTOWER_LABEL_ENABLE below is a
+      # policy filter on what IT chooses to act on, not a kernel-level
+      # restriction on what the socket itself permits; the trust
+      # boundary here is "this image is actively maintained and we
+      # pin an exact version," the same posture as everything else in
+      # this stack (gitleaks, uv, etc.), not a stronger guarantee.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_LABEL_ENABLE=true
+      # 5 minutes -- real releases are rare (hours to weeks apart,
+      # not minutes), so this costs nothing most of the time; it just
+      # means a fix is live within 5 minutes of being published
+      # instead of whenever someone next happens to restart Claude
+      # Code.
+      - WATCHTOWER_POLL_INTERVAL=300
+      # Otherwise every update leaves the previous image sitting on
+      # disk forever -- this stack has already accumulated several
+      # multi-GB tags in one day of real releases.
+      - WATCHTOWER_CLEANUP=true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   default:
