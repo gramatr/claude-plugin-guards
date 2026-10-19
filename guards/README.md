@@ -416,6 +416,24 @@ no key name or prefix. The backend-down fallback in `combined-hook.sh` does
 the same.
 Tests: `guards/tests/publish-guard.test.sh`.
 
+## MCP result guard (PostToolUse)
+
+`hooks/mcp-output-guard.sh` redacts secrets in an MCP tool's result before
+the model sees it. Claude Code passes MCP replacement output through with
+no schema validation, so the hook is deliberately conservative: it rewrites
+only recognised shapes and returns the same shape (an array of
+`{"type":"text","text":...}` content blocks, an object with such a
+`content` array, or a bare string). Images, resources and unknown wrappers
+pass through untouched, so a wrong guess cannot corrupt a result. It uses
+the vendored `scan.sh` locally (secrets only; PII and injection stay with
+the Bash path's service call, to avoid a service round trip on every MCP
+call), and fails open on any error. `GUARDS_MCP_SKIP` (extended regex on
+the tool name) excludes tools whose results legitimately carry credentials
+the session needs; the default skips grāmatr's own server, which returns
+session tokens by design. `GUARDS_MCP_SCAN=0` disables it. The payload shape
+was taken from the session transcript, not from a documented example:
+verify live after enabling. Tests: `guards/tests/mcp-output-guard.test.sh`.
+
 ## Known limitations
 
 - **Docker is the only path to PII/injection detection now.** Its only
@@ -425,7 +443,7 @@ Tests: `guards/tests/publish-guard.test.sh`.
 - **Windows not supported at all for `guards-unified`** — secret
   detection still works there (no daemon needed), PII/injection stages
   fail open.
-- **Output redaction covers Bash tool calls only.** Read/Grep/WebFetch's `updatedToolOutput` shapes aren't documented, and a wrong shape is silently ignored, so those results are never rewritten. Credential files are instead blocked *before* they are read by `credfile-guard.sh` (see "Credential-file guard" below); everything else those tools return is unscanned.
+- **Output redaction covers Bash and MCP tool results only.** Read/Grep/WebFetch's `updatedToolOutput` shapes aren't documented, and a wrong shape is silently ignored, so those results are never rewritten. Credential files are instead blocked *before* they are read by `credfile-guard.sh` (see "Credential-file guard"); everything else those tools return is unscanned. MCP results are redacted by `mcp-output-guard.sh` (see below).
 - **Vendored hook scripts** (`hooks/*.sh`, `vendor/secret-guard-core/scan.sh`) must be manually synced if their source repos change — no automated sync exists yet.
 - **secret-guard's `gitleaks`/`jq` dependencies are checked, never auto-installed** — a system package manager assumption felt too risky to make silently; the self-heal script warns and fails open instead.
 
