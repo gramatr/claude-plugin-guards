@@ -83,8 +83,10 @@ ctx "dsn redis"         'redis://:Tq7vN2xLm9Kd4RzP8wYb@cache.internal:6379/0'   
 ctx "env punctuation"   'DB_PASSWORD=Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'                         'Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'
 ctx "json punctuation"  '{"secretKey": "Qm4*Xw9%tL2!pR7=zN3^vB8", "user": "bob"}'       'Qm4*Xw9%tL2!pR7=zN3^vB8'
 ctx "bearer header"     'Authorization: Bearer Tq7vN2xLm9Kd4RzP8wYb'                    'Tq7vN2xLm9Kd4RzP8wYb'
+B64DSN="$(printf 'postgresql://svc:Tq7vN2xLm9Kd4RzP8wYb@db.internal:5432/app' | base64 -w0)"
+ctx "base64 DSN under a plain key" "{\"conn\": \"$B64DSN\"}" "$B64DSN"
 # Harmless lookalikes stay byte-identical.
-for benign in 'password: ${DB_PASSWORD}' 'secretName: db-credentials' 'The secret to good tests is isolation.'; do
+for benign in 'password: ${DB_PASSWORD}' 'secretName: db-credentials' 'The secret to good tests is isolation.' 'commit 3f2a9c1e5b7d4a6082f1c3e5a7b9d1f3e5a7c9b1 Author: x'; do
   if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: benign altered: $benign"; fail=$((fail + 1)); fi
 done
 

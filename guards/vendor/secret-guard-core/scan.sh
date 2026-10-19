@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key and context passes, SECRET_GUARD_SKIP_GITLEAKS (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -229,6 +229,41 @@ ctx_plain gcloud-oauth-token '(^|[^A-Za-z0-9_-])' 'ya29\.[A-Za-z0-9_-]{20,}'
 ctx_plain gcloud-oauth-token '(^|[^A-Za-z0-9_-])' '1//0[A-Za-z0-9_-]{30,}'
 ctx_plain bcrypt-hash '(^|[^A-Za-z0-9$])\$2[aby]\$[0-9]{2}\$' '[./A-Za-z0-9]{53}'
 shopt -u nocasematch
+
+# --- Secrets hiding in base64 (guards-coordination#11) ---------------------
+# A value under an innocent key name ({"conn": "cG9zdGdyZXM6Ly8..."}, a
+# Kubernetes Secret, a config map) is invisible to every key-name rule. Decode
+# long base64-looking tokens and run the DETERMINISTIC passes on the decoded
+# text (no gitleaks, no further decoding); if a secret is found, the whole
+# token is redacted. Cheap by construction: hex digests (git hashes, sha256)
+# are skipped without decoding, binary decodes (images, archives) are dropped
+# by a printable-ratio test, and at most 25 tokens of 44-4096 characters are
+# tried per scan. SECRET_GUARD_B64=0 turns it off.
+if [ "${SECRET_GUARD_B64:-1}" = "1" ] && [ -z "${SECRET_GUARD_B64_DEPTH:-}" ]; then
+  b64_tmp="$(mktemp)"
+  # Candidates come from ONE grep: a bounded repeat like {44,4096} in bash's own
+  # regex engine costs seconds per call (measured +2.9 s on a 24 KB scan).
+  while IFS= read -r b64_cand; do
+    [ "${#b64_cand}" -le 65536 ] || continue
+    [[ "$b64_cand" =~ ^[0-9a-fA-F]+$ ]] && continue          # hex digest, not base64
+    [[ "$b64_cand" =~ ^[A-Za-z]+$ ]] && continue             # one long word
+    b64_std="${b64_cand//-/+}"; b64_std="${b64_std//_//}"
+    while [ $(( ${#b64_std} % 4 )) -ne 0 ]; do b64_std+="="; done
+    printf '%s' "$b64_std" | base64 -d > "$b64_tmp" 2>/dev/null || continue
+    b64_len="$(wc -c < "$b64_tmp")"
+    [ "$b64_len" -ge 16 ] || continue
+    b64_print="$(LC_ALL=C tr -cd '[:print:][:space:]' < "$b64_tmp" | wc -c)"
+    [ $(( b64_print * 100 )) -ge $(( b64_len * 95 )) ] || continue   # mostly printable text only
+    b64_dec="$(cat "$b64_tmp")"
+    b64_out="$(printf '%s' "$b64_dec" | SECRET_GUARD_B64_DEPTH=1 SECRET_GUARD_SKIP_GITLEAKS=1 SECRET_GUARD_ENV_VALUES=0 bash "$0" 2>/dev/null)"
+    if [ "$b64_out" != "$b64_dec" ]; then
+      CTX_TEXT="${CTX_TEXT//"$b64_cand"/***REDACTED:SECRET***}"
+      CTX_HITS=$((CTX_HITS + 1))
+      case " $EXTRA_RULES " in *" base64-secret "*) ;; *) EXTRA_RULES="${EXTRA_RULES:+$EXTRA_RULES }base64-secret" ;; esac
+    fi
+  done < <(printf '%s' "$CTX_TEXT" | grep -oE '[A-Za-z0-9+/_-]{44,}={0,2}' 2>/dev/null | sort -u | head -n 25)
+  rm -f "$b64_tmp"
+fi
 
 # --- Known secret VALUES from the environment (guards-coordination#11) ---
 # A bare value with no key name or prefix (`echo $DB_PASSWORD`, an env dump)
