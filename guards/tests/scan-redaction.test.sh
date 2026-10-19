@@ -88,5 +88,21 @@ for benign in 'password: ${DB_PASSWORD}' 'secretName: db-credentials' 'The secre
   if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: benign altered: $benign"; fail=$((fail + 1)); fi
 done
 
+# Large input with a secret: the span split used to be quadratic (232 KB took
+# 19 s, 1 MB 447 s), and the loops stopped after 200 matches, leaving later
+# secrets unredacted. Allow generous time for slow CI.
+many="$(for i in $(seq 1 300); do printf 'APP%s_PASSWORD=hunter2-%s\n' "$i" "$i"; done)"
+left="$(printf '%s' "$many" | scan | grep -c 'hunter2-' || true)"
+if [ "$left" = "0" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: $left of 300 secret lines survive (match cap?)"; fi
+big="$(python3 -I -c "
+import random, string
+random.seed(1)
+print(' '.join(''.join(random.choice(string.ascii_lowercase) for _ in range(random.randint(3, 9))) for _ in range(34000)))
+print('DB_PASSWORD=Tq7vN2xLm9Kd4RzP8wYb')")"
+start=$SECONDS
+out="$(printf '%s' "$big" | scan)"
+took=$((SECONDS - start))
+if [[ "$out" != *Tq7vN2xLm9Kd4RzP8wYb* ]] && [ "$took" -le 20 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: large input: took ${took}s (limit 20s) or secret survived"; fi
+
 echo "scan-redaction: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
