@@ -286,22 +286,25 @@ scan_and_redact() {
 #      environment passes, via secret-scan-lib.sh, over up to SECRET_MAX_BYTES
 #      (256 KB; was 24 KB). Falls back to the full local scan.sh on any
 #      failure. This part never waits on the models.
-#   2. PII / injection flags: best effort, on the first FLAG_MAX_BYTES (1 KB)
-#      only, in parallel with the secret scan, and abandoned after FLAG_BUDGET
-#      (0.5 s). Skipped silently if the service is slow or down.
+#   2. PII / injection flags: best effort, on the first FLAG_MAX_BYTES (2 KB)
+#      only, in parallel with the secret scan, and abandoned after a budget that scales with
+#      the bytes sent (0.85 s for 2 KB). Skipped silently if the service is slow or down.
 # GUARDS_FAST_BASH=0 restores the previous single /v1/scan behavior exactly.
 # PII_GUARD_MODE=redact also uses the previous path (it needs the combined
 # redaction from the full scan).
 # shellcheck source=guards/hooks/secret-scan-lib.sh
 [ -f "$SCRIPT_DIR/secret-scan-lib.sh" ] && . "$SCRIPT_DIR/secret-scan-lib.sh"
 SECRET_MAX_BYTES="${SECRET_MAX_BYTES:-262144}"
-FLAG_MAX_BYTES="${FLAG_MAX_BYTES:-1024}"
-FLAG_BUDGET="${FLAG_BUDGET:-0.5}"
+FLAG_MAX_BYTES="${FLAG_MAX_BYTES:-2048}"
+# FLAG_BUDGET (seconds) unset = scales with the bytes actually sent, because
+# the models cost about 0.3 s per KB on top of a fixed 0.2 s: 0.25 s + 0.3 s
+# per KB, so a 2 KB prefix is abandoned after 0.85 s (it takes about 0.62 s).
+FLAG_BUDGET="${FLAG_BUDGET:-}"
 FAST_WORK=""
 
 scan_and_redact_fast() {
   local text="$1" w="$FAST_WORK" full_len remainder="" truncated=0 changed=0 current
-  local fpid="" pii_verdict pii_types ig_verdict ig_score note warning
+  local fpid="" fbudget pii_verdict pii_types ig_verdict ig_score note warning
 
   full_len="$(printf '%s' "$text" | wc -c)"
   if [ "$full_len" -gt "$SECRET_MAX_BYTES" ]; then
@@ -317,8 +320,9 @@ scan_and_redact_fast() {
   rm -f "$w/flags.json"
   if [ "$FLAG_MAX_BYTES" -gt 0 ]; then
     head -c "$FLAG_MAX_BYTES" "$w/in.txt" > "$w/flag_in.txt"
+    fbudget="$(awk -v n="$(wc -c < "$w/flag_in.txt")" -v b="$FLAG_BUDGET" 'BEGIN { if (b != "") print b; else printf "%.2f", 0.25 + 0.3 * n / 1024 }')"
     ( jq -n --rawfile text "$w/flag_in.txt" '{text: $text}' 2>/dev/null \
-        | curl -sS -m "$FLAG_BUDGET" -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+        | curl -sS -m "$fbudget" -X POST "${GUARDS_ENDPOINT}/v1/scan" \
             -H "Content-Type: application/json" -d @- -o "$w/flags.json" ) >/dev/null 2>&1 &
     fpid=$!
   fi

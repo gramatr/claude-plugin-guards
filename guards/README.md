@@ -463,8 +463,12 @@ The default path (`GUARDS_FAST_BASH=1`) now does two things:
    to `SECRET_MAX_BYTES` (256 KB, was 24 KB). Any failure falls back to the
    full local `scan.sh`. This never waits on the models.
 2. **PII and injection flags, best effort.** The first `FLAG_MAX_BYTES`
-   (1 KB) only, run in parallel with the secret scan, abandoned after
-   `FLAG_BUDGET` (0.5 s) and dropped silently if the service is slow or down.
+   (2 KB) only, run in parallel with the secret scan, abandoned after a
+   budget that scales with the bytes sent (0.25 s + 0.3 s per KB, so 0.85 s
+   for 2 KB; override with `FLAG_BUDGET`) and dropped silently if the service
+   is slow or down. The models cost about 0.3 s per KB: 2 KB takes about
+   0.62 s, 3 KB about 0.94 s, so `FLAG_MAX_BYTES=3072` gives about 90% of
+   outputs full coverage at the cost of staying right at one second.
    Set `FLAG_MAX_BYTES=0` to skip them entirely. Injection or PII text later
    in a long output is not flagged; that is the cost of keeping the hook
    fast.

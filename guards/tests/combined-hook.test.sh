@@ -27,6 +27,7 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         text = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}").get("text", "")
         open(f"{t}/{name}.requests", "a").write(self.path + "\n")
+        open(f"{t}/{name}.lens", "a").write(self.path + " " + str(len(text.encode())) + "\n")
         secret = {"type": "secret", "verdict": "clean", "reason_code": None, "detail": {}}
         red = text
         if "STUBSECRET123" in text:
@@ -95,6 +96,11 @@ so="$(field "$out" stdout)"
 [[ -n "$out" && "$so" != *STUBSECRET123* ]] && ok || bad "secret redacted even though the model scan is slow"
 [[ "$so" != *"possible PII"* ]] && ok || bad "slow flags are dropped silently, not waited for"
 MS="$(cat "$T/ms")"; [ "$MS" -le 2000 ] && ok || bad "slow models held the hook for ${MS} ms (budget 2000)"
+
+# 5b. the flag prefix is capped at 2 KB however large the output is
+: > "$T/fast.lens"
+hook "$(python3 -I -c "print('word ' * 2000)")" "" "$FAST" >/dev/null
+awk '$1=="/v1/scan" && $2>2048 {bad=1} END{exit bad}' "$T/fast.lens" && grep -q '^/v1/scan 2048$' "$T/fast.lens" && ok || bad "flag prefix capped at 2048 bytes ($(grep '^/v1/scan ' "$T/fast.lens" | tr '\n' ' '))"
 
 # 6. big output (the old 24 KB cap would have missed this), secret at the end
 big="$(python3 -I -c "print('log line number one two three four five six seven\n' * 4000)")"
