@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, deterministic private-key and context passes (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key and context passes (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -50,7 +50,7 @@ WITHHELD='***REDACTED:SECRET*** (secret-guard could not safely redact this outpu
 PEM_RE='-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[A-Za-z0-9+/=\\[:space:]]*(-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----)?'
 PEM_HITS=0
 PEM_TEXT="$(cat "$INPUT_FILE")"
-while [[ "$PEM_TEXT" =~ $PEM_RE ]] && [ "$PEM_HITS" -lt 50 ]; do
+while [[ "$PEM_TEXT" =~ $PEM_RE ]] && [ "$PEM_HITS" -lt 100000 ]; do
   m="${BASH_REMATCH[0]}"
   PEM_TEXT="${PEM_TEXT/"$m"/***REDACTED:SECRET***}"
   PEM_HITS=$((PEM_HITS + 1))
@@ -80,11 +80,16 @@ fi
 CTX_HITS=0
 CTX_TEXT="$PEM_TEXT"
 # A coloured key name (ESC[32mDB_PASSWORD ESC[0m=...) defeats every rule
-# below, and CLI tools colour output by default. Match on a copy with ANSI
-# colour/control sequences stripped; keep the original text unless
-# something was actually redacted.
+# below, and CLI tools colour output by default. Zero-width characters in a
+# key name and fullwidth '=' / ':' defeat them just as well. Match on a copy
+# with ANSI sequences and zero-width characters stripped and the fullwidth
+# delimiters mapped to ASCII; keep the original text unless something was
+# actually redacted.
 CTX_ORIG="$CTX_TEXT"
-CTX_TEXT="$(printf '%s' "$CTX_TEXT" | sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g')"
+CTX_TEXT="$(printf '%s' "$CTX_TEXT" | LC_ALL=C sed -E \
+  -e $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' \
+  -e $'s/\xe2\x80[\x8b-\x8d]//g' -e $'s/\xe2\x81\xa0//g' -e $'s/\xef\xbb\xbf//g' \
+  -e $'s/\xef\xbc\x9d/=/g' -e $'s/\xef\xbc\x9a/:/g')"
 
 # Values that are references or placeholders, not secrets.
 ctx_placeholder() {
@@ -102,15 +107,26 @@ ctx_describes_secret() {
 # ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID
 ctx_redact() {
   local re="$1" pi="$2" vi="$3" si="$4" ki="$5" rule="$6"
-  local rest="$CTX_TEXT" out="" m pre pfx val sfx key n=0
-  while [[ "$rest" =~ $re ]] && [ "$n" -lt 200 ]; do
-    n=$((n + 1))
+  local rest="$CTX_TEXT" out="" m pre pfx val sfx key tmp sent
+  # A sentinel byte that does not occur in the text, so the matched span can
+  # be located without a leading-glob pattern (see below).
+  for sent in $'\x01' $'\x02' $'\x03' $'\x04'; do
+    [[ "$rest" == *"$sent"* ]] || break
+  done
+  while [[ "$rest" =~ $re ]]; do
     m="${BASH_REMATCH[0]}"
+    [ -n "$m" ] || break
     pfx="${BASH_REMATCH[$pi]}"
     val="${BASH_REMATCH[$vi]}"
     sfx=""; [ "$si" -gt 0 ] && sfx="${BASH_REMATCH[$si]}"
     key=""; [ "$ki" -gt 0 ] && key="${BASH_REMATCH[$ki]}"
-    pre="${rest%%"$m"*}"
+    # Split rest into pre | m | tail WITHOUT ${rest%%"$m"*} / ${rest#*"$m"}:
+    # a leading-* glob makes bash try every prefix length, which made one
+    # redaction quadratic in input size (1 MB with one secret: 447 s, past
+    # the service's 15 s timeout, i.e. a fail-open). Replacing the first
+    # literal occurrence with a sentinel is linear.
+    tmp="${rest/"$m"/$sent}"
+    pre="${tmp%%"$sent"*}"
     out+="$pre"
     if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
@@ -122,7 +138,7 @@ ctx_redact() {
       CTX_HITS=$((CTX_HITS + 1))
       case " $EXTRA_RULES " in *" $rule "*) ;; *) EXTRA_RULES="${EXTRA_RULES:+$EXTRA_RULES }$rule" ;; esac
     fi
-    rest="${rest#*"$m"}"
+    rest="${tmp:$((${#pre} + 1))}"
   done
   CTX_TEXT="$out$rest"
 }
@@ -305,11 +321,9 @@ fi
 
 # Findings confirmed from here on — redact unconditionally, no fallback
 # path that could pass a known secret through unredacted.
-while IFS= read -r finding; do
-  rule="$(echo "$finding" | jq -r '.RuleID // "unknown"')"
-  line="$(echo "$finding" | jq -r '.StartLine // "?"')"
-  echo "REDACTED rule=$rule line=$line" >&2
-done < <(jq -c '.[]' "$REPORT_FILE")
+# One jq call for all findings: two jq processes per finding cost about
+# 20 ms each, so 300 findings took 5 s of pure logging.
+jq -r '.[] | "REDACTED rule=\(.RuleID // "unknown") line=\(.StartLine // "?")"' "$REPORT_FILE" >&2
 
 if [ -n "${SECRET_GUARD_FINDINGS_JSON:-}" ]; then
   jq -c '[.[] | {RuleID: (.RuleID // "unknown"), StartLine: .StartLine, Fingerprint: (.Fingerprint // "")}]' \
