@@ -74,7 +74,8 @@ pub() { # pub COMMAND ENDPOINT -> "deny"/"allow"
   local out
   out="$(jq -n --arg c "$1" --arg cwd "$T" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd}' \
     | GUARDS_ENDPOINT="$2" GUARDS_SECRET_SCAN="$T/scan-wrapper.sh" SS_SERVICE_TIMEOUT="${3:-2}" bash "$PUB")"
-  [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)" = "deny" ] && echo deny || echo allow
+  # "deny" here means the publish was stopped: a hard deny or a hand-off to the human.
+  case "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)" in deny|ask) echo deny ;; *) echo allow ;; esac
 }
 
 for m in ok 404 garbage error-verdict hang; do start_stub "$m"; done

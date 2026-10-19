@@ -37,21 +37,17 @@ jq -n --rawfile k "$HOME/proj/deploy.pem" '{private_key: $k}' > "$HOME/proj/sa.j
 pass=0 fail=0
 
 # run TOOL TOOL_INPUT_JSON -> prints "deny" or "allow"
-run() {
-  local out
+run() { # run TOOL INPUT_JSON [ENV...] -> deny | ask | allow
+  local out d
   out="$(jq -n --arg t "$1" --argjson i "$2" --arg cwd "$HOME/proj" \
-    '{tool_name: $t, tool_input: $i, cwd: $cwd}' | bash "$HOOK")"
+    '{tool_name: $t, tool_input: $i, cwd: $cwd}' | env "${@:3}" bash "$HOOK")"
   # jq -e exits 0 on empty input, so compare the decision text instead.
-  if [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)" = "deny" ]; then
-    echo deny
-  else
-    echo allow
-  fi
+  d="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
+  case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
 }
-
 expect() { # expect WANT DESCRIPTION TOOL INPUT
   local got
-  got="$(run "$3" "$4")"
+  got="$(run "$3" "$4" "${@:5}")"
   if [ "$got" = "$1" ]; then
     pass=$((pass + 1))
   else
@@ -74,8 +70,8 @@ expect deny  "Read key under an innocuous name"   Read "$(read_in "$HOME/proj/in
 expect deny  "Read .pem private key"              Read "$(read_in "$HOME/proj/deploy.pem")"
 expect deny  "Read JSON with embedded key"        Read "$(read_in "$HOME/proj/sa.json")"
 expect deny  "Read aws credentials"               Read "$(read_in "$HOME/.aws/credentials")"
-expect deny  "Read .env"                          Read "$(read_in "$HOME/proj/.env")"
-expect deny  "Read kubeconfig"                    Read "$(read_in "$HOME/.kube/config")"
+expect ask   "Read .env"                          Read "$(read_in "$HOME/proj/.env")"
+expect ask   "Read kubeconfig"                    Read "$(read_in "$HOME/.kube/config")"
 expect allow "Read public key"                    Read "$(read_in "$HOME/.ssh/id_rsa.pub")"
 expect allow "Read ssh config"                    Read "$(read_in "$HOME/.ssh/config")"
 expect allow "Read public certificate .pem"       Read "$(read_in "$HOME/proj/public-cert.pem")"
@@ -86,7 +82,7 @@ expect allow "Read nonexistent file"              Read "$(read_in "$HOME/proj/no
 # --- Grep ---
 expect deny  "Grep a private key file"            Grep "$(grep_in "$HOME/.ssh/id_rsa")"
 expect deny  "Grep the .ssh directory"            Grep "$(grep_in "$HOME/.ssh")"
-expect deny  "Grep with .env glob"                Grep "$(grep_in "$HOME/proj" ".env*")"
+expect ask   "Grep with .env glob"                Grep "$(grep_in "$HOME/proj" ".env*")"
 expect deny  "Grep with *.pem glob"               Grep "$(grep_in "$HOME/proj" "*.pem")"
 expect allow "Grep ordinary file"                 Grep "$(grep_in "$HOME/proj/README.md")"
 expect allow "Grep project dir, plain glob"       Grep "$(grep_in "$HOME/proj" "*.md")"
@@ -97,7 +93,7 @@ expect deny  "cat private key"                    Bash "$(bash_in "cat $HOME/.ss
 expect deny  "cat ~ form"                         Bash "$(bash_in 'cat ~/.ssh/id_rsa')"
 expect deny  "cat with prompt-ish prefix"         Bash "$(bash_in 'echo hi; cat ~/.ssh/id_rsa | head')"
 expect deny  "cat glob over .ssh"                 Bash "$(bash_in 'cat ~/.ssh/id_*')"
-expect deny  "head of .env"                       Bash "$(bash_in 'head -n 5 .env')"
+expect ask   "head of .env"                       Bash "$(bash_in 'head -n 5 .env')"
 expect deny  "base64 of key"                      Bash "$(bash_in "base64 $HOME/.ssh/id_rsa")"
 expect deny  "grep inside key under odd name"     Bash "$(bash_in 'grep -n . innocuous-name.txt')"
 expect deny  "cat redirect-quoted path"           Bash "$(bash_in "cat '$HOME/.aws/credentials'")"
@@ -109,6 +105,24 @@ expect allow "cat ordinary file"                  Bash "$(bash_in 'cat README.md
 expect allow "cat .env.example"                   Bash "$(bash_in 'cat .env.example')"
 expect allow "ls .ssh (no content)"               Bash "$(bash_in 'ls -la ~/.ssh')"
 expect allow "test -f key"                        Bash "$(bash_in 'test -f ~/.ssh/id_rsa && echo yes')"
+
+# --- ask vs deny (guards-coordination: "not a nanny state") ---
+printf '//registry.npmjs.org/:_authToken=not-a-real-token\n' > "$HOME/proj/.npmrc"
+printf '{"resources": []}\n' > "$HOME/proj/terraform.tfstate"
+expect ask   "Read .npmrc asks"                   Read "$(read_in "$HOME/proj/.npmrc")"
+expect ask   "Read terraform state asks"          Read "$(read_in "$HOME/proj/terraform.tfstate")"
+expect deny  "a private key still denies"         Read "$(read_in "$HOME/.ssh/id_rsa")"
+expect deny  "aws credentials still deny"         Read "$(read_in "$HOME/.aws/credentials")"
+expect deny  "a deny-class path beats an ask-class one" Bash "$(bash_in "cat .env $HOME/.ssh/id_rsa")"
+expect deny  "ask-class first, deny-class second, still deny" Bash "$(bash_in "head .env && cat ~/.ssh/id_ed25519")"
+expect deny  "GUARDS_CRED_ASK=0 restores the hard deny for .env" Read "$(read_in "$HOME/proj/.env")" GUARDS_CRED_ASK=0
+expect deny  "GUARDS_CRED_ASK=0 restores the hard deny for kubeconfig" Read "$(read_in "$HOME/.kube/config")" GUARDS_CRED_ASK=0
+expect allow "override env still allows everything" Read "$(read_in "$HOME/proj/.env")" GUARDS_ALLOW_CRED_READ=1
+
+# the ask message must not leak content and must say what will happen
+out="$(jq -n --argjson i "$(read_in "$HOME/proj/.env")" --arg cwd "$HOME/proj" '{tool_name:"Read",tool_input:$i,cwd:$cwd}' | bash "$HOOK")"
+msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
+if [[ "$msg" == *"transcript"* && "$msg" == *".env"* && "$msg" != *"KEY=value"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: ask message is informative and does not echo file content ($msg)"; fi
 
 # --- other tools untouched ---
 expect allow "Glob not inspected"                 Glob '{"pattern":"**/*.pem"}'

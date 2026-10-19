@@ -74,6 +74,19 @@ deny() {
   exit 0
 }
 
+# ask: hand the decision to the HUMAN via Claude Code's built-in permission
+# prompt. Used for files that are credential-adjacent but routinely needed
+# for ordinary debugging (.env, kubeconfig, .npmrc, terraform state). The
+# agent cannot answer it, so it is not a bypass the agent can type for
+# itself; what Claude Code does with an ask when no human is attached (a
+# non-interactive run) is not something this plugin controls or has verified;
+# set GUARDS_CRED_ASK=0 to make those runs hard denies.
+ask() {
+  jq -n --arg reason "$1" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+  exit 0
+}
+
 # resolve PATH -> absolute, ~ and $HOME expanded, symlinks followed if
 # the target exists. Prints nothing for an empty argument.
 resolve_path() {
@@ -146,7 +159,23 @@ sensitive_dir_reason() {
   return 1
 }
 
+# Private keys and credential stores are never worth reading: DENY. Config
+# files that merely CONTAIN credentials (a .env you are debugging) are ASK.
+# GUARDS_CRED_ASK=0 makes everything a hard deny, as before.
+ASK_MSG=""
+is_ask_class() {
+  case "$1" in
+    "environment file (.env)"|"kubeconfig"|"package-registry token file"|"terraform state (contains secrets)"|"glob targets .env files") return 0 ;;
+  esac
+  return 1
+}
+
 block() {
+  if [ "${GUARDS_CRED_ASK:-1}" = "1" ] && is_ask_class "$1"; then
+    # Remember it and keep checking: a later deny-class path must still win.
+    [ -n "$ASK_MSG" ] || ASK_MSG="guards credfile-guard: this would put the contents of $2 ($1) into the session transcript, where the model can read it. Approve only if you need Claude to see it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>."
+    return 0
+  fi
   deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript. Do not read it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
 }
 
@@ -172,7 +201,9 @@ case "$TOOL_NAME" in
         *.env*|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|*id_rsa*|*id_ed25519*|*id_ecdsa*|*id_dsa*|*credentials*|*.netrc*|*.pgpass*|*.npmrc*|*.pypirc*|*.tfstate*|*.ssh*|*client_secret*|*service-account*)
           case "$(printf '%s' "$GLOB" | tr '[:upper:]' '[:lower:]')" in
             *.env.example*|*.env.sample*|*.env.template*) ;;
-            *) block "glob targets credential files" "$GLOB" ;;
+            *.pem*|*.key*|*.p12*|*.pfx*|*.jks*|*id_*|*credentials*|*.netrc*|*.pgpass*|*.npmrc*|*.pypirc*|*.tfstate*|*.ssh*|*client_secret*|*service-account*)
+              block "glob targets credential files" "$GLOB" ;;
+            *) block "glob targets .env files" "$GLOB" ;;
           esac ;;
       esac
     fi
@@ -202,5 +233,7 @@ case "$TOOL_NAME" in
     done < <(printf '%s' "$CMD" | tr ';|&<>()"`'"'"'\t\n=' '          ' | tr ' ' '\n')
     ;;
 esac
+
+[ -n "$ASK_MSG" ] && ask "$ASK_MSG"
 
 exit 0
