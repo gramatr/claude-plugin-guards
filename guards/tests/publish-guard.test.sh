@@ -7,6 +7,8 @@
 # without it only the built-in checks run).
 
 set -uo pipefail
+# Hermetic: never talk to a real guards-unified service from a test.
+export GUARDS_ENDPOINT="http://127.0.0.1:1"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../hooks/publish-guard.sh"

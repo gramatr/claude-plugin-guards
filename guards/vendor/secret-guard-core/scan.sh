@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key and context passes (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key and context passes, SECRET_GUARD_SKIP_GITLEAKS (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -287,6 +287,16 @@ emit_unflagged() {
     cat "$INPUT_FILE"
   fi
 }
+
+# SECRET_GUARD_SKIP_GITLEAKS=1: run only the deterministic passes above
+# (private-key, context rules, env values) and skip gitleaks. For callers that
+# already got gitleaks' answer from the warm service (/v1/scan/secret) and only
+# need the passes that need the local environment. Saves the gitleaks process
+# start (about 230 ms on a laptop, about 20 ms in the container).
+if [ "${SECRET_GUARD_SKIP_GITLEAKS:-0}" = "1" ]; then
+  emit_unflagged
+  exit 0
+fi
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "secret-guard: gitleaks not found on PATH, skipping scan (fail-open — unknown whether a secret is present)" >&2

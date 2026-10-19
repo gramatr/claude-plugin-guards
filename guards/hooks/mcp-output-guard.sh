@@ -52,17 +52,21 @@ case "$TOOL_NAME" in mcp__*) ;; *) exit 0 ;; esac
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# scan_text FILE -> writes FILE.out; returns 0 if the scanner changed it
+# scan_file FILE -> writes FILE.out; returns 0 only if secrets were found and
+# the text changed. Secrets only, fast: the warm service's secret-only route
+# plus the local-environment passes, falling back to the full local scan.sh
+# (see secret-scan-lib.sh). Any failure means "leave this block alone".
+SS_WORK="$WORK"
+# shellcheck source=guards/hooks/secret-scan-lib.sh
+. "$SCRIPT_DIR/secret-scan-lib.sh"
 scan_file() {
-  local in="$1" findings="$1.f"
+  local in="$1"
   [ "$(wc -c < "$in")" -le "$MAX_BYTES" ] || return 1
-  SECRET_GUARD_ENV_VALUES=1 SECRET_GUARD_FINDINGS_JSON="$findings" \
-    timeout 20 bash "$SECRET_SCAN" < "$in" > "$in.out" 2>/dev/null || return 1
-  [ -s "$findings" ] && grep -q RuleID "$findings" || return 1
-  if grep -q RuleID "$findings"; then
-    RULES="$RULES $(grep -o '"RuleID":"[^"]*"' "$findings" | cut -d'"' -f4 | sort -u | tr '\n' ' ')"
-  fi
-  ! cmp -s "$in" "$in.out"
+  secret_scan "$in" || return 1
+  [ -n "$SS_RULES" ] && [ "$SS_CHANGED" -eq 1 ] || return 1
+  cp "$SS_OUT" "$in.out"
+  RULES="$RULES $SS_RULES"
+  return 0
 }
 
 RESP="$WORK/resp.json"

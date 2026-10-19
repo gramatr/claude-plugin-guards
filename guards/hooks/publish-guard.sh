@@ -166,34 +166,23 @@ esac
 
 [ -s "$SCAN_INPUT" ] || exit 0
 
-# Run the scanner. rc != 0 or no executable scanner = cannot vouch = deny.
-if [ ! -f "$SECRET_SCAN" ]; then
-  deny "Blocked by guards publish-guard: the secret scanner ($SECRET_SCAN) is missing, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed. Reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
-fi
-FINDINGS="$WORK/findings.json"
-ERRLOG="$WORK/stderr.txt"
-# SECRET_GUARD_ENV_VALUES=1: this process shares the session environment, so
-# also exact-match redact the values of secret-named env vars (a bare value
-# pasted into an issue has no key name for any other rule to key on).
-SECRET_GUARD_ENV_VALUES=1 SECRET_GUARD_FINDINGS_JSON="$FINDINGS" timeout 30 bash "$SECRET_SCAN" < "$SCAN_INPUT" > "$WORK/out.txt" 2> "$ERRLOG"
-RC=$?
-if [ "$RC" -ne 0 ]; then
-  deny "Blocked by guards publish-guard: the secret scanner failed (exit $RC) while checking ${LABEL}. Fail-closed: a publish cannot be un-done. Retry, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
+# Secrets only, fast: the warm service's secret-only route plus the local-
+# environment passes, falling back to the full local scan.sh if the service is
+# unavailable (see secret-scan-lib.sh). If NO scanner can run, we cannot vouch
+# for the text, so deny: a publish cannot be un-done.
+SS_WORK="$WORK"
+# shellcheck source=guards/hooks/secret-scan-lib.sh
+. "$SCRIPT_DIR/secret-scan-lib.sh"
+if ! secret_scan "$SCAN_INPUT"; then
+  deny "Blocked by guards publish-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
 fi
 
-RULES=""
-if [ -s "$FINDINGS" ] && grep -q RuleID "$FINDINGS"; then
-  RULES="$(grep -o '"RuleID":"[^"]*"' "$FINDINGS" | cut -d'"' -f4 | sort -u | paste -sd, -)"
-fi
-if [ -z "$RULES" ] && grep -q '^REDACTED rule=' "$ERRLOG"; then
-  RULES="$(grep -o '^REDACTED rule=[^ ]*' "$ERRLOG" | cut -d= -f2 | sort -u | paste -sd, -)"
-fi
-
+RULES="$(printf '%s' "$SS_RULES" | tr ' ' ',')"
 if [ -n "$RULES" ]; then
   deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES}). Do not include the value, not even a prefix, a partial, or a rotated/dead one. Describe the SHAPE only: length, character classes, which tool or command produced it. Put real material nowhere in a public repo, issue, PR, comment or commit. If this is a reviewed false positive, the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 in the environment Claude Code starts from; for deliberately fake fixtures in a commit, put 'guards:synthetic' on the same line."
 fi
 
-if grep -q 'gitleaks not found' "$ERRLOG" 2>/dev/null; then
+if [ "$SS_SOURCE" = "local" ] && grep -q 'gitleaks not found' "$WORK/ss.err" 2>/dev/null; then
   notice "publish-guard: gitleaks is not installed, so only the built-in private-key and context checks ran on ${LABEL}. Vendor-token formats were not checked."
 fi
 exit 0
