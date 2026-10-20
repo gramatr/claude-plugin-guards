@@ -13,7 +13,7 @@
 #   gitleaks, so protection never depends on the service being up.
 #
 #   The PII and prompt-injection models are NOT involved: they cost about
-#   0.25 s per KB, are flag-only, and secrets are what must never wait on
+#   0.3 s per KB, are flag-only, and secrets are what must never wait on
 #   them.
 #
 # Needs from the caller: SS_WORK (a writable temp dir) and SECRET_SCAN (path

@@ -3,9 +3,7 @@
 # ONE service, built from the public gramatr/guards-unified image —
 # secret-guard + pii-guard + injection-guard combined into one process,
 # one API (POST /v1/scan). Replaces the old three-container stack
-# (secret-guard/pii-guard/injection-guard on 8732/8731/8730); same
-# consolidation already shipped and CI-verified in
-# gramatr/platform-guards#1 — this is that same change applied here.
+# (secret-guard/pii-guard/injection-guard on 8732/8731/8730).
 #
 # LOOPBACK-ONLY BY DESIGN — not a config choice to revisit casually.
 # guards-unified bundles secret-guard and pii-guard, whose own upstream
@@ -80,8 +78,7 @@ services:
       # Scopes watchtower (below) to THIS container only -- without
       # --label-enable + this label, watchtower's default behavior is
       # to update every container on the host, which is not
-      # acceptable on a shared box like dgx-spark-01 (raven demo
-      # stack, text2video eval containers, etc. all run there too).
+      # acceptable on a shared host that runs other containers.
       - "com.centurylinklabs.watchtower.enable=true"
 
   # Self-heal's own `docker compose pull` only ever runs at
