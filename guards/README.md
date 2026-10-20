@@ -30,6 +30,8 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | [`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) | Every environment variable the plugin reads |
 | [`docs/LIMITS.md`](../docs/LIMITS.md) | What the guards do not catch |
 | [`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md) | Where the guards were tightened or loosened, and why |
+| [Threat model](https://github.com/gramatr/guards-unified/blob/main/docs/THREAT-MODEL.md) | Assets, actors, trust boundaries, and what is and is not defended (in guards-unified) |
+| [`SECURITY.md`](../SECURITY.md) | How to report a vulnerability privately |
 
 ## The seven hooks
 
