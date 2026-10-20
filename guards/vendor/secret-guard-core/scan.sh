@@ -111,6 +111,14 @@ ctx_describes_secret() {
   # switch, a "..._TOKEN_TIMEOUT" value). Docs and commit messages show these
   # all the time and their values are numbers or words, never the credential.
   [[ "$1" =~ [_.-](bytes|size|length|limit|max|min|timeout|secs|seconds|ms|port|depth|mode|ask|enabled|disabled)$ ]] && return 0
+  # A tokenizer is not a token: a variable named tokenizer holding the result of
+  # a model loader is in every ML codebase. Skip the key only if it has no other
+  # credential word once the tokeniz* part is removed (tokenizer_secret still
+  # redacts).
+  if [[ "$1" =~ tokeni[sz](er|ers|ation|ed|ing)? ]]; then
+    local rest="${1/${BASH_REMATCH[0]}/}"
+    [[ "$rest" =~ ($KW) ]] || return 0
+  fi
   return 1
 }
 
