@@ -508,6 +508,16 @@ is missing or no scanner can run, the hook uses the previous path instead of
 skipping the scan. Tests: `guards/tests/combined-hook.test.sh` (a stub
 service with a slow model scan proves secrets never wait on it).
 
+## Versioning
+
+This plugin and the `guards-unified` service are one product shipped as two
+packages, so **they carry the same version and the same tag**, cut together:
+`vX.Y.Z` on both repos. The version is in the `VERSION` file at the root of this
+repo. Plugin installs track `main` and are identified by commit (that is what
+`/plugin` shows), so the tag here is a label; a CI check
+(`.github/workflows/tag-check.yml`) fails if a pushed tag does not equal
+`VERSION`. Before tagging a release, confirm `VERSION` is the same in both repos.
+
 ## Known limitations
 
 - **Docker is the only path to PII/injection detection now.** Its only

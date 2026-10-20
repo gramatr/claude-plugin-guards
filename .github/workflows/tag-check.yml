@@ -1,0 +1,29 @@
+name: Tag check
+
+# claude-plugin-guards and guards-unified are one product in two packages and
+# carry the same version and the same tag (see guards-unified's
+# docs/RELEASING.md, "Versions move in lockstep"). Plugin installs track main
+# and are identified by commit, so a tag here is a label, but a label that
+# disagrees with VERSION would defeat the point of lockstep. Fail loudly.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  tag-matches-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag equals VERSION at the tagged commit
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(tr -d '[:space:]' < VERSION)"
+          if [ "$tag" != "$file" ]; then
+            echo "::error::Tag v$tag does not match VERSION ($file) on this commit. Bump VERSION in a PR, merge it, THEN tag that merge commit. Keep it equal to guards-unified's VERSION."
+            exit 1
+          fi
+          echo "Tag v$tag matches VERSION."
