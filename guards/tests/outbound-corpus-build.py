@@ -16,6 +16,7 @@ guards/tests/outbound-parse.test.sh checks the committed file equals this
 script's output.
 """
 
+import pathlib
 import sys
 
 R = []
@@ -315,6 +316,11 @@ for c, e, ch in [
 ]:
     add("E-evasion", e, ch, c)
 
-out = open(sys.argv[1], "w") if len(sys.argv) > 1 else sys.stdout
-for i, (cat, e, ch, c) in enumerate(R, 1):
-    out.write(f"{i}\t{cat}\t{e}\t{ch}\t{c.replace(chr(10), chr(92) + 'n')}\n")
+text = "".join(
+    f"{i}\t{cat}\t{e}\t{ch}\t{c.replace(chr(10), chr(92) + 'n')}\n"
+    for i, (cat, e, ch, c) in enumerate(R, 1)
+)
+if len(sys.argv) > 1:
+    pathlib.Path(sys.argv[1]).write_text(text)
+else:
+    sys.stdout.write(text)
