@@ -60,6 +60,7 @@ done
 
 echo "without jq"
 step "no-jq" bash guards/tests/no-jq.test.sh
+step "outbound-parse" bash guards/tests/outbound-parse.test.sh
 
 echo "MCP server (HTTP client stubbed)"
 step "mcp-server" "$PY" guards/tests/mcp-server.test.py
