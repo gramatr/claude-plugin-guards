@@ -312,11 +312,13 @@ client-secret JSON files, whole credential directories, and **any readable
 regular file whose content has a PEM/OpenSSH private-key header, whatever its
 name** (see "False positives" below).
 
-**Ask (hard deny with `GUARDS_CRED_ASK=0`):** files that merely contain
+**Ask (only where a person can answer; see "Permission modes" below)** for files that merely contain
 credentials but are often needed for debugging: `.env` and `.env.*` (not
 `.env.example`, `.sample`, `.template`, `.dist`), kubeconfig, `.npmrc`,
 `.pypirc`, and terraform state. These go to the human through Claude Code's
-permission prompt. A deny-class match in the same call still wins.
+permission prompt in `default`, `acceptEdits` and `plan` modes, and are hard
+denies in `auto`, `bypassPermissions`, `dontAsk` or any mode the hook does not
+recognise. A deny-class match in the same call still wins.
 
 For `Bash`, only commands that print file content (`cat`, `head`, `tail`,
 `sed`, `awk`, `grep`, `base64`, `xxd`, `strings`, `python`, ...) and name a
@@ -324,13 +326,14 @@ sensitive path are checked. Globs are expanded (20 matches per glob, 60 tokens
 per command). `ssh -i key host`, `ssh-keygen -l -f key`, `test -f key` and
 `ls ~/.ssh` use or inspect a key without printing it and are allowed.
 
-**Auto mode.** An `ask` is only a gate if a person answers it. In `auto` mode
-Claude Code answers it with its own approval logic: a `.env` read went through
-without a prompt (verified live). The publish guard handles this differently
-(it denies; see below). What Claude Code does with an `ask` when no human is
-attached at all is not verified. If you want a hard deny in `auto` or in
-unattended runs, set `GUARDS_CRED_ASK=0`. See
-[`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md) for why the two guards differ.
+**Permission modes.** An `ask` is only a gate if a person answers it. In `auto`
+mode Claude Code answers it with its own approval logic: a `.env` read went
+through without a prompt (verified live). So this guard follows the rule the
+publish guard already uses: ask in `default`, `acceptEdits` and `plan`, deny in
+`auto`, `bypassPermissions`, `dontAsk` or an unknown mode. `GUARDS_CRED_ASK` set to `force`
+asks in every mode (for an operator who knows a person is attached);
+`GUARDS_CRED_ASK=0` denies in every mode. See
+[`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md).
 
 **False positives from the private-key content sniff.** The sniff reads the
 first `CREDFILE_SNIFF_MAX_BYTES` (10 MiB) of every readable regular file a

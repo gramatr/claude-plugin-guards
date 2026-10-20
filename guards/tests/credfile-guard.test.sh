@@ -37,10 +37,14 @@ jq -n --rawfile k "$HOME/proj/deploy.pem" '{private_key: $k}' > "$HOME/proj/sa.j
 pass=0 fail=0
 
 # run TOOL TOOL_INPUT_JSON -> prints "deny" or "allow"
+# MODE is the permission_mode put in the payload (default: "default", a mode
+# where a person can answer an ask); MODE=none omits the field.
+ASKVAR="GUARDS_CRED_ASK" # name kept in a variable for the force cases
+MODE="default"
 run() { # run TOOL INPUT_JSON [ENV...] -> deny | ask | allow
   local out d
-  out="$(jq -n --arg t "$1" --argjson i "$2" --arg cwd "$HOME/proj" \
-    '{tool_name: $t, tool_input: $i, cwd: $cwd}' | env "${@:3}" bash "$HOOK")"
+  out="$(jq -n --arg t "$1" --argjson i "$2" --arg cwd "$HOME/proj" --arg m "$MODE" \
+    '{tool_name: $t, tool_input: $i, cwd: $cwd} + (if $m == "none" then {} else {permission_mode: $m} end)' | env "${@:3}" bash "$HOOK")"
   # jq -e exits 0 on empty input, so compare the decision text instead.
   d="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
   case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
@@ -118,6 +122,44 @@ expect deny  "ask-class first, deny-class second, still deny" Bash "$(bash_in "h
 expect deny  "GUARDS_CRED_ASK=0 restores the hard deny for .env" Read "$(read_in "$HOME/proj/.env")" GUARDS_CRED_ASK=0
 expect deny  "GUARDS_CRED_ASK=0 restores the hard deny for kubeconfig" Read "$(read_in "$HOME/.kube/config")" GUARDS_CRED_ASK=0
 expect allow "override env still allows everything" Read "$(read_in "$HOME/proj/.env")" GUARDS_ALLOW_CRED_READ=1
+
+# --- permission mode: ask only where a person can answer (same rule as publish-guard) ---
+# Each mode is tried against every ask-class shape and against a deny-class
+# file, which must deny in every mode.
+for m in default acceptEdits plan; do
+  MODE="$m"
+  expect ask  "[$m] Read .env asks"               Read "$(read_in "$HOME/proj/.env")"
+  expect ask  "[$m] Read kubeconfig asks"         Read "$(read_in "$HOME/.kube/config")"
+  expect ask  "[$m] Read .npmrc asks"             Read "$(read_in "$HOME/proj/.npmrc")"
+  expect ask  "[$m] Read tfstate asks"            Read "$(read_in "$HOME/proj/terraform.tfstate")"
+  expect ask  "[$m] Grep .env glob asks"          Grep "$(grep_in "$HOME/proj" ".env*")"
+  expect ask  "[$m] Bash head .env asks"          Bash "$(bash_in 'head -n 5 .env')"
+done
+for m in auto bypassPermissions dontAsk someFutureMode none ""; do
+  MODE="$m"; label="${m:-empty}"
+  expect deny "[$label] Read .env denies"         Read "$(read_in "$HOME/proj/.env")"
+  expect deny "[$label] Read kubeconfig denies"   Read "$(read_in "$HOME/.kube/config")"
+  expect deny "[$label] Read .npmrc denies"       Read "$(read_in "$HOME/proj/.npmrc")"
+  expect deny "[$label] Read tfstate denies"      Read "$(read_in "$HOME/proj/terraform.tfstate")"
+  expect deny "[$label] Grep .env glob denies"    Grep "$(grep_in "$HOME/proj" ".env*")"
+  expect deny "[$label] Bash head .env denies"    Bash "$(bash_in 'head -n 5 .env')"
+  expect ask  "[$label] GUARDS_CRED_ASK force asks" Read "$(read_in "$HOME/proj/.env")" "$ASKVAR=force"
+  expect deny "[$label] GUARDS_CRED_ASK=0 denies"  Read "$(read_in "$HOME/proj/.env")" GUARDS_CRED_ASK=0
+  expect allow "[$label] GUARDS_ALLOW_CRED_READ=1 allows" Read "$(read_in "$HOME/proj/.env")" GUARDS_ALLOW_CRED_READ=1
+  expect allow "[$label] .env.example still allowed" Read "$(read_in "$HOME/proj/.env.example")"
+done
+for m in default acceptEdits plan auto bypassPermissions dontAsk someFutureMode; do
+  MODE="$m"
+  expect deny "[$m] private key denies"           Read "$(read_in "$HOME/.ssh/id_rsa")"
+  expect deny "[$m] deny-class beats ask-class"   Bash "$(bash_in "cat .env $HOME/.ssh/id_rsa")"
+  expect deny "[$m] GUARDS_CRED_ASK force does not soften a private key" Read "$(read_in "$HOME/.ssh/id_rsa")" "$ASKVAR=force"
+done
+MODE="default"
+MODE="auto"
+out="$(jq -n --argjson i "$(read_in "$HOME/proj/.env")" --arg cwd "$HOME/proj" '{tool_name:"Read",tool_input:$i,cwd:$cwd,permission_mode:"auto"}' | bash "$HOOK")"
+msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
+if [[ "$msg" == *"auto"* && "$msg" == *"no person"* && "$msg" != *"KEY=value"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: deny message in auto names the mode and the reason ($msg)"; fi
+MODE="default"
 
 # the ask message must not leak content and must say what will happen
 out="$(jq -n --argjson i "$(read_in "$HOME/proj/.env")" --arg cwd "$HOME/proj" '{tool_name:"Read",tool_input:$i,cwd:$cwd}' | bash "$HOOK")"
