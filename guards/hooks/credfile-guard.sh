@@ -57,6 +57,11 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline deny 6
+
 [ "${GUARDS_ALLOW_CRED_READ:-0}" = "1" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 

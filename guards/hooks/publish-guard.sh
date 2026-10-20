@@ -50,6 +50,13 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline deny 25
+# Local scan budgets inside that deadline (secret-scan-lib.sh).
+export SS_LOCAL_TIMEOUT="${SS_LOCAL_TIMEOUT:-15}" SS_ENV_TIMEOUT="${SS_ENV_TIMEOUT:-4}"
+
 [ "${GUARDS_ALLOW_PUBLISH_SECRETS:-0}" = "1" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -186,6 +193,9 @@ SS_WORK="$WORK"
 # shellcheck source=guards/hooks/secret-scan-lib.sh
 . "$SCRIPT_DIR/secret-scan-lib.sh"
 if ! secret_scan "$SCAN_INPUT"; then
+  if [ "$SS_TIMED_OUT" = 1 ]; then
+    deny "Blocked by guards publish-guard: the local secret scan did not finish in time, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Retry; if the text is very large, publish a shorter one."
+  fi
   deny "Blocked by guards publish-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
 fi
 

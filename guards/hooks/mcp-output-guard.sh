@@ -35,6 +35,13 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline withhold-mcp 20
+# Local scan budgets inside that deadline (secret-scan-lib.sh).
+export SS_LOCAL_TIMEOUT="${SS_LOCAL_TIMEOUT:-8}" SS_ENV_TIMEOUT="${SS_ENV_TIMEOUT:-4}"
+
 [ "${GUARDS_MCP_SCAN:-1}" = "0" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -62,7 +69,9 @@ SS_WORK="$WORK"
 scan_file() {
   local in="$1"
   [ "$(wc -c < "$in")" -le "$MAX_BYTES" ] || return 1
-  secret_scan "$in" || return 1
+  # Out of time (not merely unable to run): exit 124, which deadline-lib.sh
+  # turns into withholding the result rather than passing it unscanned.
+  secret_scan "$in" || { [ "$SS_TIMED_OUT" = 1 ] && exit 124; return 1; }
   [ -n "$SS_RULES" ] && [ "$SS_CHANGED" -eq 1 ] || return 1
   cp "$SS_OUT" "$in.out"
   RULES="$RULES $SS_RULES"

@@ -52,6 +52,12 @@ jobs:
       - name: publish-guard tests
         # Fabricated credential values only; nothing real is read.
         run: bash guards/tests/publish-guard.test.sh
+      - name: hook deadline tests
+        # Hung scanner stubs; each hook must answer before its hooks.json timeout.
+        # The negative control reads the pre-change hooks from git history.
+        env:
+          DEADLINE_REQUIRE_CONTROL: "1"
+        run: bash guards/tests/hook-deadlines.test.sh
 
   scan-sh-drift:
     runs-on: ubuntu-latest

@@ -33,6 +33,11 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline silent 10
+
 GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 
 RAW="$(cat)"
@@ -43,7 +48,7 @@ if [ -z "$PROMPT" ]; then
 fi
 
 RESPONSE="$(jq -n --arg text "$PROMPT" '{text: $text}' 2>/dev/null \
-  | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+  | curl -sS --connect-timeout 3 -m 8 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
 # A non-empty RESPONSE isn't enough on its own -- a truncated body or
