@@ -118,7 +118,9 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   [`guards/README.md`](../guards/README.md).
 - **The publish guard occasionally blocks a post that sits next to a
   secret-ish key name.** In `default`, `acceptEdits` and `plan` modes it asks;
-  elsewhere it denies.
+  elsewhere it denies. The credential-file guard does the same for a `.env`,
+  kubeconfig, `.npmrc`/`.pypirc` or terraform state: it asks only where a person
+  can answer, so in `auto` an agent that needs one is denied, not prompted.
 - **PII notes on ordinary developer output** (a tool name tagged as a person,
   a git remote as an email address). They are notes only.
 

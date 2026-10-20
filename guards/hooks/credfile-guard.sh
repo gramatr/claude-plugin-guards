@@ -63,6 +63,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 RAW="$(cat)"
 TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)" || exit 0
 CWD="$(printf '%s' "$RAW" | jq -r '.cwd // ""' 2>/dev/null)"
+PERM_MODE="$(printf '%s' "$RAW" | jq -r '.permission_mode // ""' 2>/dev/null)"
 [ -n "$CWD" ] || CWD="$PWD"
 
 SNIFF_MAX_BYTES="${CREDFILE_SNIFF_MAX_BYTES:-10485760}"
@@ -78,14 +79,21 @@ deny() {
 # prompt. Used for files that are credential-adjacent but routinely needed
 # for ordinary debugging (.env, kubeconfig, .npmrc, terraform state). The
 # agent cannot answer it, so it is not a bypass the agent can type for
-# itself; what Claude Code does with an ask when no human is attached (a
-# non-interactive run) is not something this plugin controls or has verified;
-# set GUARDS_CRED_ASK=0 to make those runs hard denies.
+# itself. But an ask only protects anything if a PERSON answers it: in auto,
+# bypassPermissions and dontAsk modes (or any mode this hook does not
+# recognise) Claude Code resolves it without one (verified live in auto mode,
+# where the read went through). Same rule as publish-guard.sh: ask only in
+# default, acceptEdits and plan; deny elsewhere. GUARDS_CRED_ASK set to "force" asks
+# regardless of mode; set to 0 it denies in every mode.
 ask() {
   jq -n --arg reason "$1" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
   exit 0
 }
+
+HUMAN=0
+case "$PERM_MODE" in default|acceptEdits|plan) HUMAN=1 ;; esac
+[ "${GUARDS_CRED_ASK:-1}" = "force" ] && HUMAN=1
 
 # resolve PATH -> absolute, ~ and $HOME expanded, symlinks followed if
 # the target exists. Prints nothing for an empty argument.
@@ -161,7 +169,8 @@ sensitive_dir_reason() {
 
 # Private keys and credential stores are never worth reading: DENY. Config
 # files that merely CONTAIN credentials (a .env you are debugging) are ASK.
-# GUARDS_CRED_ASK=0 makes everything a hard deny, as before.
+# GUARDS_CRED_ASK=0 makes everything a hard deny, and so does a permission mode
+# with no person to answer the prompt (see ask() above).
 ASK_MSG=""
 is_ask_class() {
   case "$1" in
@@ -171,12 +180,16 @@ is_ask_class() {
 }
 
 block() {
-  if [ "${GUARDS_CRED_ASK:-1}" = "1" ] && is_ask_class "$1"; then
+  if { [ "${GUARDS_CRED_ASK:-1}" = "1" ] || [ "${GUARDS_CRED_ASK:-1}" = "force" ]; } && [ "$HUMAN" -eq 1 ] && is_ask_class "$1"; then
     # Remember it and keep checking: a later deny-class path must still win.
     [ -n "$ASK_MSG" ] || ASK_MSG="guards credfile-guard: this would put the contents of $2 ($1) into the session transcript, where the model can read it. Approve only if you need Claude to see it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>."
     return 0
   fi
-  deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript. Do not read it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
+  local note=""
+  if is_ask_class "$1" && [ "$HUMAN" -eq 0 ] && [ "${GUARDS_CRED_ASK:-1}" != "0" ]; then
+    note=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so this is blocked instead of asked]"
+  fi
+  deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript${note}. Do not read it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
 }
 
 check_path() {

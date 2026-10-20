@@ -15,7 +15,7 @@ For why the hooks are arranged this way (one rewriter per tool), see the
 | `PostToolUse` | `Bash` | `hooks/combined-hook.sh` | 15 s | Scans stdout and stderr. Redacts secrets; prepends a note for PII and for likely injection. Rewrites the Bash output shape only. |
 | `PostToolUse` | `mcp__.*` | `hooks/mcp-output-guard.sh` | 30 s | Redacts secrets in MCP tool results of recognised shapes. Skips `^mcp__plugin_gramatr_` by default. |
 | `PreToolUse` | `SendMessage` | `hooks/sendmessage-guard.sh` | 15 s | Redacts secrets in `message`, `summary`, `content` before the message is sent; flags PII. Must stay the only `PreToolUse` hook on `SendMessage`. |
-| `PreToolUse` | `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | 10 s | Denies reads of credential files and of any file containing a private-key header; asks for `.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state. |
+| `PreToolUse` | `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | 10 s | Denies reads of credential files and of any file containing a private-key header; for `.env`, kubeconfig, `.npmrc`/`.pypirc` and terraform state it asks where a person can answer and denies otherwise. |
 | `PreToolUse` | `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | 40 s | Denies (or asks about) `gh` publishes, `gh api` with a body, `git commit` and GitHub MCP writes that carry credentials. |
 | `UserPromptSubmit` | none (all prompts) | `hooks/userpromptsubmit-guard.sh` | 15 s | Adds a note if the prompt contains a secret. Cannot redact or block. |
 
@@ -73,12 +73,12 @@ Notes on the matrix:
 
 ## Ask versus deny by permission mode
 
-Two guards use Claude Code's `ask` decision, and they treat modes differently.
+Two guards use Claude Code's `ask` decision, and they treat modes the same way.
 Details and the reasoning are in [`TRADEOFFS.md`](TRADEOFFS.md).
 
 | Guard | `default`, `acceptEdits`, `plan` | `auto`, `bypassPermissions`, `dontAsk`, unknown |
 |---|---|---|
 | Publish guard, ambiguous match | ask | **deny** (no person to answer) |
 | Publish guard, sure thing | deny | deny |
-| Credential-file guard, ask-class file (`.env`, kubeconfig, ...) | ask | ask: in `auto` mode Claude Code answers the prompt itself (observed: the read went through); behavior in the other modes and with no person attached is not verified; `GUARDS_CRED_ASK=0` makes it a deny |
+| Credential-file guard, ask-class file (`.env`, kubeconfig, ...) | ask | **deny** (no person to answer); `GUARDS_CRED_ASK` set to `force` asks in every mode, `0` denies in every mode |
 | Credential-file guard, deny-class file or private-key content | deny | deny |

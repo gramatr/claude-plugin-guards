@@ -63,7 +63,7 @@ scans whatever text it is sent; the hook decides how much to send.
 | Variable | Default | Meaning |
 |---|---|---|
 | `GUARDS_ALLOW_CRED_READ` | `0` | `1` disables the guard. Set it in the environment Claude Code starts from; there is no per-call bypass. |
-| `GUARDS_CRED_ASK` | `1` | `1` sends `.env`, kubeconfig, `.npmrc`/`.pypirc` and terraform state to the permission prompt. `0` makes them hard denies. Private keys and credential stores are always hard denies. |
+| `GUARDS_CRED_ASK` | `1` | `1`: `.env`, kubeconfig, `.npmrc`/`.pypirc` and terraform state ask the person in `default`, `acceptEdits` and `plan` modes and deny in every other mode. `force`: ask in every mode. `0`: hard deny in every mode. Private keys and credential stores are always hard denies. |
 | `CREDFILE_SNIFF_MAX_BYTES` | `10485760` (10 MiB) | Bytes of each readable regular file checked for a private-key header. This is what denies an unrelated document that quotes a key header. |
 
 ## Publish guard (`publish-guard.sh`)

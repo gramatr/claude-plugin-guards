@@ -76,24 +76,24 @@ authoritative.
 
 ## The open inconsistency: ask in `auto` mode
 
-The two guards that use Claude Code's `ask` decision disagree about unattended
-sessions.
+The two guards that use Claude Code's `ask` decision now behave the same in
+unattended sessions. This was an open inconsistency; it is closed by #PRNUM
+(coordination issue #35, private repo).
 
 - The **publish guard** reads the permission mode. In `auto`, `bypassPermissions`
   and `dontAsk` (or an unrecognised mode) it denies an ambiguous match, because
   an `ask` was seen to run with no person answering and a publish cannot be
   undone (#62).
-- The **credential-file guard** was not given the same logic. In `auto` mode its
-  `ask` for a `.env` or kubeconfig is answered by Claude Code itself, and the
-  read went through (observed live). The reasoning in #62 is that reading is not
-  irreversible the way publishing is, and `auto` is an autonomy level you chose.
-  What Claude Code does with an `ask` when no person is attached at all is not
-  verified.
+- The **credential-file guard** used to ask regardless of mode. In `auto` mode
+  its `ask` for a `.env` or kubeconfig was answered by Claude Code itself, and
+  the read went through (observed live), so it was not a gate. It now applies
+  the same rule: ask in `default`, `acceptEdits` and `plan`, deny elsewhere.
 
-Choices, not yet decided: keep it as is; set `GUARDS_CRED_ASK=0` so those files
-are a hard deny everywhere (the recommended setting for `auto` and unattended
-runs today); or apply the publish guard's mode logic to the credential-file
-guard. If you want a deny in your own setup, `GUARDS_CRED_ASK=0` is the switch.
+Decision (#PRNUM): ask only where a person can answer. The cost: in `auto`,
+`bypassPermissions` and `dontAsk` an agent that legitimately needs a `.env` or
+kubeconfig is denied and cannot be approved in-session; the person must read it
+themselves, or start Claude Code with `GUARDS_CRED_ASK` set to `force` (ask in every mode,
+only if a person is attached) or `GUARDS_ALLOW_CRED_READ=1`.
 
 Another open item: `FLAG_MAX_BYTES`. Measured by the maintainers (not re-measured
 for this page), the hook with flags on took about 0.6 s at 1 KB and about 1.0 s
@@ -106,7 +106,8 @@ platform side; the hook cannot get there by chunking.
 
 | Setting | Direction | Effect |
 |---|---|---|
-| `GUARDS_CRED_ASK=0` | Harden | `.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state become hard denies. Recommended for `auto` and unattended runs |
+| `GUARDS_CRED_ASK=0` | Harden | `.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state become hard denies in every mode, including `default`, `acceptEdits` and `plan` |
+| `GUARDS_CRED_ASK` set to `force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
 | `GUARDS_PUBLISH_ASK=force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
 | `GUARDS_PUBLISH_ASK=0` | Harden | Every match is a hard deny |
 | `GUARDS_ALLOW_CRED_READ=1`, `GUARDS_ALLOW_PUBLISH_SECRETS=1`, `GUARDS_MCP_SCAN=0` | Loosen | Turn a guard off for the session |
