@@ -153,7 +153,9 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   [guards-unified](https://github.com/gramatr/guards-unified), and neither
   repository's CI checks that they match. A scanner fix that lands only in
   guards-unified reaches the local fallback only after a paired sync commit
-  here. At 0.2.3 the two files are identical apart from a two-line header.
+  here. At the 0.2.3 release the two files were identical apart from a two-line
+  header; a later comment-only fix in guards-unified had not been copied over
+  when this page was written, which shows the sync is manual.
 - **Versions move in lockstep,** but each repository's CI cannot see the other,
   so equal `VERSION` files are a release-checklist step.
 - **gitleaks versions** are pinned in two places (the self-heal script and the
