@@ -79,12 +79,13 @@ declare -A SCRIPT=(
   [publish]=publish-guard [credfile]=credfile-guard [combined]=combined-hook
   [mcp]=mcp-output-guard [sendmessage]=sendmessage-guard [userprompt]=userpromptsubmit-guard)
 
-# Expected outcome per hook, as a predicate over the hook's stdout file.
-outcome_publish()     { jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$1"; }
+# Expected outcome per hook, as a predicate over the hook's stdout file. Each
+# requires a non-empty file first: some jq versions exit 0 for -e on empty input.
+outcome_publish()     { [ -s "$1" ] && jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$1"; }
 outcome_credfile()    { outcome_publish "$1"; }
 outcome_sendmessage() { outcome_publish "$1"; }
-outcome_combined()    { jq -e '.hookSpecificOutput.updatedToolOutput | (.stdout | test("withheld")) and .stderr == ""' "$1"; }
-outcome_mcp()         { jq -e '.hookSpecificOutput.updatedToolOutput[0].text | test("withheld")' "$1"; }
+outcome_combined()    { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput | (.stdout | test("withheld")) and .stderr == ""' "$1"; }
+outcome_mcp()         { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput[0].text | test("withheld")' "$1"; }
 outcome_userprompt()  { [ ! -s "$1" ]; }   # advisory: no note, no decision
 
 echo "plain text" > "$T/notes.txt"
@@ -184,7 +185,7 @@ for n in publish credfile combined mcp sendmessage userprompt; do
   if [ "$have_old" -eq 1 ]; then
     orc="$(cat "$T/res/$n.old.rc")"
     check "$n control: the unmodified hook is killed at its ${limit}s timeout (rc=$orc), i.e. fails open" test "$orc" -eq 124
-    check "$n control: the unmodified hook has no deadline outcome" bash -c "! $(declare -f "outcome_$n" outcome_publish) ; outcome_$n '$T/res/$n.old.out'"
+    if [ "$n" != userprompt ] && "outcome_$n" "$T/res/$n.old.out" >/dev/null 2>&1; then bad "$n control: the unmodified hook produced the deadline outcome"; else ok; fi
   fi
 done
 
