@@ -67,7 +67,24 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   never a "clean" result, but its wording says the backend is unreachable,
   which is misleading for a 413.
 - **The publish guard reads at most 512 KB** per named file and of the staged
-  diff (`PUBLISH_GUARD_MAX_BYTES`).
+  diff (`PUBLISH_GUARD_MAX_BYTES`); it says so when it cuts a diff, and nothing
+  past the cut is scanned.
+- **A very long single line makes the local scan slow, and the publish guard
+  denies when it runs out of time (15 s).** The context pass takes much more than
+  linear time on one huge line: in one measurement on a shared host, a 20 KB
+  line took 11 s and 100 KB in three lines took 60 s, while 200 KB of ordinary
+  short lines took about half a second. A minified or generated file, or a
+  one-line JSON blob, in a commit can therefore be denied with "did not finish in
+  time". The `guards:synthetic` marker is for fake fixtures and removes the line
+  from the scan; it is not meant as a way past a size limit. Not fixed: it is in
+  the shared `scan.sh`.
+- **`git commit` forms the publish guard does not follow:** a pathspec commit
+  (`git commit src/a.ts -m x`, which commits the working-tree state of the
+  listed paths whatever is staged), `--amend` (only the newly staged changes are
+  scanned, not what the amended commit already holds), and `git add` with a glob,
+  quoted or `$`-expanded argument in the same command (falls back to the tracked
+  changes against `HEAD`; a new untracked file is not seen). Untracked files that
+  nothing stages are never scanned.
 - **Very large inputs with thousands of matches are slow.** A timeout in the
   scanner keeps the original text rather than withholding it, so a scan that
   runs out of time is a leak, not a block. This was a deliberate choice; see

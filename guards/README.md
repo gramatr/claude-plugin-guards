@@ -377,11 +377,18 @@ only vendor token formats and does not scan issue bodies.
 - `gh issue|pr|release|gist` with `create`, `comment`, `edit` or `review`.
 - `gh api ...` when the call carries a body flag (`-f`, `-F`, `--field`,
   `--raw-field`, `--input`).
-- `git commit`, including `git -C <dir> commit`: the command text (the message)
-  **and** the added lines of the staged diff (`--cached`; the working tree
-  against `HEAD` when `-a`/`--all` is used), minus lines containing
-  `guards:synthetic`. Each file or diff is capped at `PUBLISH_GUARD_MAX_BYTES`
-  (512 KB).
+- `git commit`, including `git -C <dir> commit`, `git -c k=v commit` and a
+  commit after `cd <dir>`: the command text (the message) **and** the added
+  lines of the staged diff (`--cached`; the working tree against `HEAD` when
+  `-a`/`--all` is used), minus lines containing `guards:synthetic`. The
+  repository is found by following `cd`, `pushd` and `git -C` in order (quotes
+  and `~` understood, relative paths resolved against the session's directory),
+  and `--git-dir`/`--work-tree`/`GIT_DIR`/`GIT_WORK_TREE`. With `git add ... &&
+  git commit` in one command the add has not run yet, so it is replayed against
+  a throwaway copy of the index (plain pathspecs and `-A`, `-u`, `-f` only;
+  anything else falls back to the tracked changes against `HEAD`). Each file or
+  diff is capped at `PUBLISH_GUARD_MAX_BYTES` (512 KB); the hook says when a
+  diff was cut.
 - GitHub MCP write tools: tools whose name matches `mcp__.*github.*` **and**
   contains one of `create`, `update`, `add_`, `comment`, `push`, `merge`,
   `review`, `edit`, `post`, `send`, `write`. The whole `tool_input` is scanned.
@@ -398,8 +405,18 @@ MCP tools (GitLab, Jira, Slack, ...), and the GitHub web UI. See
 [`docs/LIMITS.md`](../docs/LIMITS.md).
 
 **Decision.** On a finding it never rewrites the text and never echoes a
-value; the message names the detector rules and tells the agent to describe the
-*shape* only.
+value. The message names the detector rules, says **where** the match is (up to
+5 places: the command text, a file the command names, or the staged diff with
+file and line; each line is shown as the scanner redacts it, so the key and its
+context are visible and the value is not), and says what to do: describe the
+*shape* only, how far `guards:synthetic` reaches, and that the override is the
+user's. Example:
+
+```
+Where (first 2 of 2; each line is shown as the scanner redacts it, the value itself is never printed):
+  1. the staged diff, file src/cfg.ts, line 3: db_password: "***REDACTED:SECRET***"
+  2. the staged diff, file src/cfg.ts, line 5: api_secret = "***REDACTED:SECRET***"
+```
 
 | Finding | `default`, `acceptEdits`, `plan` | `auto`, `bypassPermissions`, `dontAsk`, or unknown mode |
 |---|---|---|
@@ -418,8 +435,10 @@ person is attached); `GUARDS_PUBLISH_ASK=0` makes every match a hard deny.
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the environment Claude Code starts from
 bypasses the guard for a reviewed false positive. A line carrying
 `guards:synthetic` is dropped from the staged diff for deliberately fake
-fixtures; it does not apply to command text, issue or PR bodies, or named
-files. If only gitleaks is missing, the built-in passes still run and the
+fixtures; it does not apply to command text (a `-m` message), issue or PR
+bodies, or named files (`--body-file`, `-F`, `cat`). Typing
+`GUARDS_ALLOW_PUBLISH_SECRETS=1` in front of a command does nothing: the hook
+reads its own environment. If only gitleaks is missing, the built-in passes still run and the
 hook adds a notice. The hook fails open only if `jq` is missing.
 
 Because this hook runs in the session's own environment it also turns on
@@ -434,18 +453,93 @@ Writing about secrets trips the guard too. Pass commit messages and PR bodies
 through files, describe shapes rather than values, and mark deliberately fake
 fixture lines `guards:synthetic`. Tests: `guards/tests/publish-guard.test.sh`.
 
-### The MCP `scan` tool: `mcp/server.py`
+### The MCP server: `mcp/server.py`
 
-Exposes one tool, `scan(text)`, for any MCP-capable caller. It posts to
-`POST {GUARDS_ENDPOINT}/v1/scan` (15 s limit) and returns the service's JSON:
-a finding each for `secret`, `pii` and `injection`, plus `redacted_text` (secrets
-and then PII redacted; injection never alters text). If the service is
-unreachable it returns `{"error": ...}` instead of a false "clean": a caller
-that explicitly asked for a scan should not be told something is clean when it
-was never checked. Scanning a secret with this tool returns the secret inside
-the finding's `detail`; the MCP result guard redacts that on the way back
-because the tool is not in the default skip list. The tool and the full
-server have no automated tests; verified live in an installed session.
+The server is named `guards`. It exposes:
+
+- **`scan(text)`**, for any MCP-capable caller. It posts to
+  `POST {GUARDS_ENDPOINT}/v1/scan` (15 s limit) and returns the service's JSON:
+  a finding each for `secret`, `pii` and `injection`, plus `redacted_text`
+  (secrets and then PII redacted; injection never alters text). If the service
+  is unreachable it returns `{"error": ...}` instead of a false "clean": a
+  caller that explicitly asked for a scan should not be told something is clean
+  when it was never checked. Scanning a secret with this tool returns the secret
+  inside the finding's `detail`; the MCP result guard redacts that on the way
+  back because the tool is not in the default skip list.
+- **`check_before_publish(text_or_command, cwd="", kind="auto")`**, which runs
+  `hooks/publish-guard.sh` itself, offline, on a would-be command, body or
+  message (permission mode `auto`, so the answer is the strict one) and returns
+  `{"decision": "allow"|"deny", "inspected": bool, "explanation": str}`. On a
+  deny the explanation is the hook's located, value-free message. A command
+  the guard does not inspect (not a publish) is `allow` with `inspected: false`.
+  If the check cannot run (hook missing, crashed, timed out) the result is
+  `{"error": ...}`, never an allow. `GUARDS_ALLOW_PUBLISH_SECRETS` in the
+  server's environment is ignored (and mentioned). The tool talks to the
+  service only through the hook, which falls back to the local scanner.
+- **Instructions** (about 135 words): what the guards do, the three rules an
+  agent must follow, and where to look. MCP clients add server instructions to
+  the agent's system prompt, so this is the channel that reaches the agent.
+- **Resources** `guards://guide/publishing`, `guards://guide/false-positives`,
+  `guards://guide/hooks` and `guards://guide/diagnosing-a-block`.
+
+Tests: `guards/tests/mcp-server.test.py` (HTTP client stubbed for `scan`; the
+`check_before_publish` tests run the real hook in throwaway repositories; one
+test starts the server over stdio and reads the instructions and resources as a
+client would).
+
+## Working with the guards as a coding agent
+
+The guards are meant to be worked with, not around. What an agent needs to know:
+
+1. **Never put a real credential** in a commit message, PR or issue body,
+   comment or file: not a prefix, a partial, or a rotated one. Describe the
+   shape (length, character classes, which tool produced it).
+2. **Put long messages and bodies in a file** (`git commit -F`, `gh ... --body-file`),
+   and check the text first with the `check_before_publish` tool of the plugin's
+   MCP server. It runs the real publish guard offline and returns allow or deny
+   with the located, value-free explanation.
+3. **`guards:synthetic` on the same line** marks a deliberately fake fixture line.
+   It covers only the added lines of the staged diff of a `git commit`. It does
+   not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
+   bodies, or files named by `--body-file`, `-F` or `cat`.
+4. **`GUARDS_ALLOW_PUBLISH_SECRETS=1` does nothing when typed in front of a
+   command.** The hook reads its own environment, which is the one Claude Code
+   was started from. It is the user's switch, for a reviewed false positive.
+5. **Never disable the guards and never ask the user to.** Report a false
+   positive (which key, which rule) and let the user decide.
+6. **A block says where.** The message lists up to 5 places (the command text, a
+   named file, the staged diff with file and line), each line shown as the
+   scanner redacts it. A key name that only names an identifier of a secret
+   (`secret_vault_id`, `client_secret_bws_id`, `token_store_ref`) is a false
+   positive: rename or reword it if you can, and report it.
+
+The plugin's MCP server carries this so the agent has it without anyone
+pasting it: the rules are in the server `instructions` (they reach the agent's
+system prompt), four resources hold the detail (`guards://guide/publishing`,
+`guards://guide/false-positives`, `guards://guide/hooks`,
+`guards://guide/diagnosing-a-block`), and `check_before_publish` is the tool.
+For projects that want the rules in their own agent instructions, this snippet
+for `CLAUDE.md` or `AGENTS.md` is self-contained:
+
+```markdown
+## Secret guards
+
+This session runs gramatr-guards. It redacts secrets in command and MCP output,
+denies reads of credential files, and blocks commits, PRs, issues and comments
+that look like they contain a credential. Rules:
+
+- Never put a real credential in a commit message, PR or issue body, comment or
+  file. Describe its shape (length, character classes, source), not its value.
+- Put long messages and bodies in a file and check them first with the
+  `check_before_publish` tool of the `guards` MCP server.
+- Mark a deliberately fake fixture line of a commit with `guards:synthetic` on
+  the same line. It covers added lines of a git commit's staged diff only: not
+  the commit message, not PR or issue bodies, not files named by `--body-file`.
+- `GUARDS_ALLOW_PUBLISH_SECRETS=1` typed in front of a command does nothing.
+- Never disable the guards or ask the user to. A block shows the matching line
+  with the value redacted; if it is a false positive (for example a key named
+  `secret_vault_id`), rename or reword it, or report it.
+```
 
 ## Verified live
 

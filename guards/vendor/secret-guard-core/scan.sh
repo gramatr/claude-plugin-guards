@@ -102,10 +102,35 @@ ctx_placeholder() {
   [[ "$1" == /* ]] && [ -e "$1" ] && return 0
   return 1
 }
+# ctx_names_secret_ref KEY: a credential word, one or more further segments,
+# then a descriptor segment (id, ref, arn, ...) at the end. snake/kebab/dotted
+# and ALL_CAPS go through a lowercased copy; camelCase needs the case-sensitive
+# match (the caller runs with nocasematch on) so that "secretValid" does not
+# read as "secret" + "Id".
+ctx_names_secret_ref() {
+  local kl="${1,,}" nc=0 rc=1
+  local sfx='(name|ref|id|type|path|file|version|count|ttl|namespace|store|manager|provider|url|arn)s?'
+  if [[ "$kl" =~ (secret|token|credential)s?[a-z0-9_.-]{1,40}[_.-]${sfx}$ ]]; then
+    return 0
+  fi
+  shopt -q nocasematch && nc=1
+  shopt -u nocasematch
+  local camel='([Ss]ecret|[Tt]oken|[Cc]redential)s?[A-Za-z0-9_.-]{0,40}[a-z0-9](Name|Ref|Id|Type|Path|File|Version|Count|Ttl|Namespace|Store|Manager|Provider|Url|Arn)s?$'
+  [[ "$1" =~ $camel ]] && rc=0
+  [ "$nc" = 1 ] && shopt -s nocasematch
+  return $rc
+}
 # Keys that merely NAME or describe a secret (secretName, token_type, ...).
 ctx_describes_secret() {
   [[ "$1" =~ (secret|token|credential)s?[_.-]?(name|ref|id|type|path|file|version|count|ttl|namespace|store|manager|provider|url|arn)$ ]] && return 0
   [[ "$1" =~ (secretkeyref|secretref|secretkey_?ref) ]] && return 0
+  # The same naming suffix after extra segments (client_secret_bws_id,
+  # secret_vault_id, token_store_ref, credential_provider_arn,
+  # clientSecretBwsId): the key names an identifier or reference OF a secret.
+  # The LAST segment must be the descriptor, so client_secret_value,
+  # secret_key and AUTH_TOKEN, whose last segment is the credential or a
+  # value word, still redact.
+  ctx_names_secret_ref "$1" && return 0
   # A setting about a credential rather than a credential: the name ends in a
   # unit, limit, switch or mode word (SCAN_SECRET_MAX_BYTES, a "..._CRED_ASK"
   # switch, a "..._TOKEN_TIMEOUT" value). Docs and commit messages show these
@@ -420,6 +445,25 @@ if ! run_gitleaks; then
   echo "secret-guard: gitleaks exited non-zero, retrying once" >&2
   : > "$REPORT_FILE"
   run_gitleaks || echo "secret-guard: gitleaks failed twice; relying on the private-key pass only" >&2
+fi
+
+# gitleaks' generic-api-key rule reads any "secret_*"/"token_*" key with a
+# quoted value as a credential, including a key that only names an identifier
+# or reference (client_secret_bws_id: "...", secretName: "..."). Drop those
+# findings with the same key-name check the context pass uses, so the two
+# passes agree. Only generic-api-key; a vendor-shaped rule match stays.
+if [ -s "$REPORT_FILE" ] && [ "$(jq -r 'length' "$REPORT_FILE" 2>/dev/null)" != "0" ]; then
+  DROP_IDX=""
+  shopt -s nocasematch
+  while IFS=$'\t' read -r idx mtch; do
+    [[ "$mtch" =~ ([A-Za-z0-9_.-]*($KW)[A-Za-z0-9_.-]*) ]] || continue
+    ctx_describes_secret "${BASH_REMATCH[1]}" && DROP_IDX="${DROP_IDX:+$DROP_IDX,}$idx"
+  done < <(jq -r 'to_entries[] | select(.value.RuleID == "generic-api-key") | [.key, ((.value.Match // "") | gsub("[\t\n\r]"; " "))] | @tsv' "$REPORT_FILE" 2>/dev/null)
+  shopt -u nocasematch
+  if [ -n "$DROP_IDX" ]; then
+    jq -c --argjson d "[$DROP_IDX]" 'to_entries | map(select(.key as $k | $d | index($k) | not)) | map(.value)' \
+      "$REPORT_FILE" > "$REPORT_FILE.tmp" && mv "$REPORT_FILE.tmp" "$REPORT_FILE"
+  fi
 fi
 
 # gitleaks writes "[]" (not "null") when there are no findings; treat all
