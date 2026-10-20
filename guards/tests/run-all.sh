@@ -34,7 +34,8 @@ step() { # step LABEL CMD...
 }
 
 SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift
-        sendmessage-guard userpromptsubmit-guard guards-selfheal)
+        sendmessage-guard userpromptsubmit-guard guards-selfheal
+        credclass-lib credfile-diff)
 
 # The MCP server test is Python and needs `mcp>=2` and `httpx`. Point
 # GUARDS_TEST_PYTHON at an interpreter that has them (CI installs them with
