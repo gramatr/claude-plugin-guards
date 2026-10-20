@@ -261,7 +261,7 @@ shopt -u nocasematch
 # text (no gitleaks, no further decoding); if a secret is found, the whole
 # token is redacted. Cheap by construction: hex digests (git hashes, sha256)
 # are skipped without decoding, binary decodes (images, archives) are dropped
-# by a printable-ratio test, and at most 25 tokens of 44-4096 characters are
+# by a printable-ratio test, and at most 25 tokens of 44-65536 characters are
 # tried per scan. SECRET_GUARD_B64=0 turns it off.
 if [ "${SECRET_GUARD_B64:-1}" = "1" ] && [ -z "${SECRET_GUARD_B64_DEPTH:-}" ]; then
   b64_tmp="$(mktemp)"

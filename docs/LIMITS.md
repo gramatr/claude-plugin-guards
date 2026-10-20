@@ -61,6 +61,11 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   and says so. `SendMessage` has the same 24 KB cap per field.
 - **MCP text blocks over 512 KB are skipped silently** (`MCP_GUARD_MAX_BYTES`)
   and arrive unredacted, with no note.
+- **The plugin's own `scan` MCP tool posts the whole text to the server's
+  `/v1/scan`**, which refuses bodies over 64 KiB with HTTP 413 (guards-unified
+  #17, released after 0.2.3). The tool then returns its `{"error": ...}` shape,
+  never a "clean" result, but its wording says the backend is unreachable,
+  which is misleading for a 413.
 - **The publish guard reads at most 512 KB** per named file and of the staged
   diff (`PUBLISH_GUARD_MAX_BYTES`).
 - **Very large inputs with thousands of matches are slow.** A timeout in the
@@ -153,9 +158,9 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   [guards-unified](https://github.com/gramatr/guards-unified), and neither
   repository's CI checks that they match. A scanner fix that lands only in
   guards-unified reaches the local fallback only after a paired sync commit
-  here. At the 0.2.3 release the two files were identical apart from a two-line
-  header; a later comment-only fix in guards-unified had not been copied over
-  when this page was written, which shows the sync is manual.
+  here. As of this change the two files are identical apart from a two-line
+  header; a comment-only fix in guards-unified once sat uncopied for a day,
+  which shows the sync is manual.
 - **Versions move in lockstep,** but each repository's CI cannot see the other,
   so equal `VERSION` files are a release-checklist step.
 - **gitleaks versions** are pinned in two places (the self-heal script and the
