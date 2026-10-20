@@ -33,7 +33,13 @@ step() { # step LABEL CMD...
   fi
 }
 
-SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift)
+SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift
+        sendmessage-guard userpromptsubmit-guard guards-selfheal)
+
+# The MCP server test is Python and needs `mcp>=2` and `httpx`. Point
+# GUARDS_TEST_PYTHON at an interpreter that has them (CI installs them with
+# pip); without them it prints a skip locally and fails under CI=true.
+PY="${GUARDS_TEST_PYTHON:-python3}"
 
 if command -v shellcheck >/dev/null 2>&1; then
   echo "lint"
@@ -44,6 +50,9 @@ echo "without gitleaks (as CI sees it)"
 for s in "${SUITES[@]}"; do
   step "$s" env "PATH=$SHADOW" bash "guards/tests/$s.test.sh"
 done
+
+echo "MCP server (HTTP client stubbed)"
+step "mcp-server" "$PY" guards/tests/mcp-server.test.py
 
 if command -v gitleaks >/dev/null 2>&1; then
   echo "with gitleaks"
