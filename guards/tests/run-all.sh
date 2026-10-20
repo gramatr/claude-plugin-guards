@@ -41,6 +41,12 @@ SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-g
 # pip); without them it prints a skip locally and fails under CI=true.
 PY="${GUARDS_TEST_PYTHON:-python3}"
 
+if command -v ruff >/dev/null 2>&1; then
+  echo "ruff"
+  step "ruff check" ruff check .
+  step "ruff format" ruff format --check .
+fi
+
 if command -v shellcheck >/dev/null 2>&1; then
   echo "lint"
   step "shellcheck" shellcheck -S warning -x guards/hooks/*.sh guards/bin/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh
