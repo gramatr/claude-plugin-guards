@@ -122,8 +122,13 @@ Environment variables that disable single guards are listed in
 - **PII and injection** need the loaded models, so they exist only in the
   service (`POST /v1/scan`). There is no local fallback for them.
 - `guards/vendor/secret-guard-core/scan.sh` is a copy of
-  `app/scan.sh` in guards-unified, kept in sync by hand. There is no automated
-  drift check. Every change to the scanner needs a paired sync commit here.
+  `app/scan.sh` in guards-unified. Every change to the scanner needs a paired
+  sync commit here, and CI enforces it: the `scan-sh-drift` job
+  (`guards/tests/scan-sh-drift.sh`) fetches guards-unified's `app/scan.sh` from
+  `main` (on a tag build, the same tag when guards-unified has it) and fails if
+  this copy differs by even one character, apart from its two-line header.
+  Merge the guards-unified change first, then re-run the check here. To run it
+  locally: `SERVER_REF=<branch> bash guards/tests/scan-sh-drift.sh`.
 
 ### One rewriter per tool
 

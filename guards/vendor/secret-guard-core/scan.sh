@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# VENDORED COPY of app/scan.sh in https://github.com/gramatr/guards-unified, kept in sync by hand.
-# Change it there first, then copy it here; no automated check compares the two.
+# VENDORED COPY of app/scan.sh in https://github.com/gramatr/guards-unified. Change it there first, then copy it here;
+# CI (scan-sh-drift) fails if this file differs from the server copy apart from these two header lines.
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -41,10 +41,10 @@ WITHHELD='***REDACTED:SECRET*** (secret-guard could not safely redact this outpu
 # intermittently reported no finding for an input it detects when replayed
 # (observed about once per few hundred scans in CI, with its stderr
 # discarded below), and its private-key rule needs the END marker, so a
-# truncated key (head, clipped output) was never detected at all
-# (guards-coordination#5/#10). So: match BEGIN ... PRIVATE KEY----- plus
-# whatever base64 / escaped-newline / whitespace body follows, END marker
-# optional, and redact it here. Runs even if gitleaks or jq is missing.
+# truncated key (head, clipped output) was never detected at all. So: match
+# BEGIN ... PRIVATE KEY----- plus whatever base64 / escaped-newline /
+# whitespace body follows, END marker optional, and redact it here. Runs
+# even if gitleaks or jq is missing.
 # Known limit: legacy encrypted PEM with Proc-Type/DEK-Info header lines
 # stops at the first dash in those headers; gitleaks still covers that.
 PEM_RE='-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[A-Za-z0-9+/=\\[:space:]]*(-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----)?'
@@ -68,7 +68,7 @@ fi
 # password full of punctuation, a short human-chosen one, a password inside
 # a connection string. Context is the stronger signal: a value right after
 # a secret-ish key name, inside URL userinfo, or after an Authorization
-# scheme is a secret whatever it looks like (guards-coordination#1/#9).
+# scheme is a secret whatever it looks like.
 # Bias is deliberately toward over-redaction: a leaked credential is
 # costly, a redacted harmless value is not. Pure bash, so it also works
 # when gitleaks or jq are missing and in the plugin's backend-down path.
@@ -96,7 +96,7 @@ ctx_placeholder() {
   [[ "$1" =~ ^(\$|\<|\{|%\(|\*\*\*|\.\.\.) ]] && return 0
   [[ "$1" =~ ^(x+|\*+|\.+|-+|_+|true|false|null|none|nil|yes|no|undefined|empty|redacted|changeme|change-me|example|todo|tbd|string|password|secret|token)$ ]] && return 0
   # An absolute path that exists is a path, not a password. This is what
-  # `env`, `printenv PWD`, `export -p` and a "pwd: /home/..." line print: the
+  # `env`, `printenv PWD`, `export -p` and a "pwd: /path/to/dir" line print: the
   # key PWD is a real password alias (ODBC "Pwd=..."), but its value here is
   # the working directory (found live: those lines were redacted).
   [[ "$1" == /* ]] && [ -e "$1" ] && return 0
@@ -109,10 +109,12 @@ ctx_describes_secret() {
   return 1
 }
 
-# ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID
+# ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID [QUOTE]
+# QUOTE (" or '): the rule's value opens with that quote; see the wrapped-key
+# check below.
 ctx_redact() {
-  local re="$1" pi="$2" vi="$3" si="$4" ki="$5" rule="$6"
-  local rest="$CTX_TEXT" out="" m pre pfx val sfx key tmp sent
+  local re="$1" pi="$2" vi="$3" si="$4" ki="$5" rule="$6" qg="${7:-}"
+  local rest="$CTX_TEXT" out="" m pre pfx val sfx key tmp sent lead cb
   # A sentinel byte that does not occur in the text, so the matched span can
   # be located without a leading-glob pattern (see below).
   for sent in $'\x01' $'\x02' $'\x03' $'\x04'; do
@@ -133,6 +135,24 @@ ctx_redact() {
     tmp="${rest/"$m"/$sent}"
     pre="${tmp%%"$sent"*}"
     out+="$pre"
+    # Prose that wraps a key word in quotes WITH its colon ("token:" or
+    # 'password:') ends the key's own quote right where a quoted value would
+    # open, so the text up to the NEXT quote on the line looked like a value.
+    # It is the key's closing quote when the key is preceded by that same
+    # quote and the colon follows the key directly (a real key has its closing
+    # quote before the colon: "password": "x", "password":"x"). Emit the
+    # prefix as-is and carry on from the would-be value. Only for a colon:
+    # nested shell quoting, "PASSWORD="x" cmd", is a real value.
+    if [ -n "$qg" ] && [[ "$pfx" == *:"$qg" ]]; then
+      cb="${pfx: -3:1}"
+      lead="${pfx:0:1}"
+      [[ "$lead" == [A-Za-z0-9_.-] ]] && lead="${out: -1}"
+      if [ "$lead" = "$qg" ] && [ "$cb" != '"' ] && [ "$cb" != "'" ] && [[ "$cb" != [[:blank:]] ]]; then
+        out+="$pfx"
+        rest="${val}${sfx}${tmp:$((${#pre} + 1))}"
+        continue
+      fi
+    fi
     if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
@@ -155,15 +175,15 @@ count_groups() {
   printf '%s' "${#s}"
 }
 
-# ctx_rule RULE KEYRE DELIMRE VALRE [SUFRE]: a "key <delim> value" rule.
+# ctx_rule RULE KEYRE DELIMRE VALRE [SUFRE [QUOTE]]: a "key <delim> value" rule.
 # Builds ((KEYRE)DELIM)(VAL)[(SUF)] and works out the group indexes.
 ctx_rule() {
-  local rule="$1" keyre="$2" delim="$3" val="$4" suf="${5:-}" gk gd gv vi si=0 re
+  local rule="$1" keyre="$2" delim="$3" val="$4" suf="${5:-}" qg="${6:-}" gk gd gv vi si=0 re
   gk=$(count_groups "$keyre"); gd=$(count_groups "$delim"); gv=$(count_groups "$val")
   vi=$((3 + gk + gd))
   re="((${keyre})${delim})(${val})"
   if [ -n "$suf" ]; then re+="(${suf})"; si=$((vi + 1 + gv)); fi
-  ctx_redact "$re" 1 "$vi" "$si" 2 "$rule"
+  ctx_redact "$re" 1 "$vi" "$si" 2 "$rule" "$qg"
 }
 
 # ctx_plain RULE PREFIXRE VALRE [SUFRE]: no key name, just context around a value.
@@ -177,7 +197,7 @@ ctx_plain() {
 }
 
 # Access-key IDs are semi-public identifiers by convention; the secret half
-# is the enforced boundary (guards-coordination#3). Redact IDs too only when
+# is the enforced boundary. Redact IDs too only when
 # SECRET_GUARD_REDACT_KEY_IDS=1.
 shopt -s nocasematch
 KW='secret|passw(or)?d|pwd|passphrase|token|api[_-]?key|apikey|private[_-]?key|credential'
@@ -205,8 +225,8 @@ V_BARE='[^[:space:]"'"'"']{4,}'
 
 # --- key <delim> value, in the three quoting styles, for both key families
 for KEYRE in "$KEY_A" "$KEY_B"; do
-  ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"'
-  ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'"
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'" "'"
   ctx_rule secret-lead-in "$KEYRE" "$DELIM" "$V_BARE"
 done
 
@@ -233,7 +253,7 @@ ctx_plain url-query-secret '[?&](password|passwd|pwd|secret|token|access_token|a
 ctx_plain auth-header 'authorization:[[:space:]]*(basic|bearer|token|digest)[[:space:]]+' '[^[:space:]"'"'"']{8,}'
 ctx_plain cookie-header '(^|[^A-Za-z-])(set-)?cookie:[[:space:]]*' '[^[:cntrl:]]{8,}'
 
-# --- Command-line flags (guards-coordination#10). Space-separated and glued
+# --- Command-line flags. Space-separated and glued
 # forms; --password=VALUE is already covered by the key rules above.
 ctx_plain cli-password-flag '(^|[[:space:]])--(password|passwd|pass|token|secret|api-key|apikey|client-secret|access-token|auth-token)[[:space:]]+' '[^[:space:]-][^[:space:]]{3,}'
 ctx_plain cli-password-flag '(mysql|mysqldump|mysqladmin|mariadb)[^|;&]*[[:space:]]-p' '[^[:space:]-][^[:space:]]{2,}'
@@ -257,7 +277,7 @@ ctx_plain gcloud-oauth-token '(^|[^A-Za-z0-9_-])' '1//0[A-Za-z0-9_-]{30,}'
 ctx_plain bcrypt-hash '(^|[^A-Za-z0-9$])\$2[aby]\$[0-9]{2}\$' '[./A-Za-z0-9]{53}'
 shopt -u nocasematch
 
-# --- Secrets hiding in base64 (guards-coordination#11) ---------------------
+# --- Secrets hiding in base64 ---------------------------------
 # A value under an innocent key name ({"conn": "cG9zdGdyZXM6Ly8..."}, a
 # Kubernetes Secret, a config map) is invisible to every key-name rule. Decode
 # long base64-looking tokens and run the DETERMINISTIC passes on the decoded
@@ -292,7 +312,7 @@ if [ "${SECRET_GUARD_B64:-1}" = "1" ] && [ -z "${SECRET_GUARD_B64_DEPTH:-}" ]; t
   rm -f "$b64_tmp"
 fi
 
-# --- Known secret VALUES from the environment (guards-coordination#11) ---
+# --- Known secret VALUES from the environment ---
 # A bare value with no key name or prefix (`echo $DB_PASSWORD`, an env dump)
 # is not detectable by any rule, but the process that is about to emit it
 # often HAS it in its environment. When SECRET_GUARD_ENV_VALUES=1, exact-
@@ -418,7 +438,7 @@ TEXT="$PEM_TEXT"
 # treats $s as a glob, so a backslash, *, ? or [ in the secret (an
 # escaped-newline PEM inside JSON, a password with punctuation) silently
 # stops matching and the "redaction" is a no-op while the verdict still
-# says found (guards-coordination#4/#5).
+# says found.
 #
 # Secrets are NUL-delimited, not newline-delimited: a multi-line secret
 # (a PEM block) must be replaced as ONE unit, not as its lines.
