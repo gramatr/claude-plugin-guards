@@ -68,6 +68,13 @@ jobs:
         env:
           DEADLINE_REQUIRE_CONTROL: "1"
         run: bash guards/tests/hook-deadlines.test.sh
+      - name: outbound safe-forms tests
+        # Real curl, wget and HTTPie against a localhost listener; fabricated values only.
+        # HTTPie is optional: the test reports a SKIP if the install fails.
+        run: |
+          sudo apt-get install -y curl wget
+          sudo apt-get install -y httpie || echo "httpie not installed; its cases will be skipped"
+          bash guards/tests/outbound-safeforms.test.sh
       - name: sendmessage-guard tests
         # Stub service and stub scan.sh; fabricated values only.
         run: bash guards/tests/sendmessage-guard.test.sh
