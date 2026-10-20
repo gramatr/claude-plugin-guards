@@ -114,7 +114,8 @@ out="$(prompt_hook "$UP" "key $SEC" "PATH=$T/bin:$PATH")"
 [ -z "$out" ] && [ "$(rc)" = 0 ] && ok || bad "timeout: no note, exit 0"
 grep -qE -- '-m 8( |$)' "$T/curl.args" && ok || bad "the request carries an 8 s time limit (-m 8): $(cat "$T/curl.args" 2>/dev/null)"
 
-# 8. long prompts: sent whole (no client-side cap); the service's 413 means no note
+# 8. long prompts go to the secret-only route and are sent whole (up to 900000 bytes);
+# a service refusal (413) means no note
 : > "$T/capped/requests"
 big="$(head -c 20000 /dev/zero | tr '\0' 'a') $SEC"
 out="$(prompt_hook "$CAPPED" "$big")"
@@ -124,15 +125,26 @@ out="$(prompt_hook "$CAPPED" "$big")"
 big="$(head -c 70000 /dev/zero | tr '\0' 'a') $SEC"
 out="$(prompt_hook "$CAPPED" "$big")"
 [ -z "$out" ] && [ "$(rc)" = 0 ] && ok || bad "a prompt over the service cap (413) gets no note, exit 0 (documented open)"
-grep -q "^/v1/scan " "$T/capped/requests" && ok || bad "the oversize prompt was sent to /v1/scan"
+grep -q "^/v1/scan/secret " "$T/capped/requests" && ok || bad "the oversize prompt was sent to the secret-only route"
+! grep -q "^/v1/scan " "$T/capped/requests" && ok || bad "the hook never uses the full route (it would run the models for nothing)"
 
-# A prompt past the OS per-argument limit (~128 KB) makes the hook's own jq call
-# fail, so an empty text reaches the service and no note is added. Pinned here
-# as observed behavior, documented in docs/HOOKS.md (open).
+# A prompt past the OS per-argument limit (~128 KB) used to break the hook's own
+# jq call (empty text scanned, no note). The text now goes to jq on stdin, so a
+# 200 KB prompt is sent whole and a credential at the very end still gets the note.
 : > "$T/open/requests"
 head -c 200000 /dev/zero | tr '\0' 'a' > "$T/huge.txt"; printf ' %s' "$SEC" >> "$T/huge.txt"
 out="$(jq -n --rawfile p "$T/huge.txt" '{prompt:$p}' | GUARDS_ENDPOINT="$UP" bash "$HOOK")"
-[ -z "$out" ] && [ "$(awk '{print $2}' "$T/open/requests" | head -1)" = 0 ] && ok || bad "a 200 KB prompt: empty text is scanned, no note (observed)"
+[ "$(awk '{print $2}' "$T/open/requests" | head -1)" -gt 200000 ] && ok || bad "a 200 KB prompt is sent whole, not as an empty text"
+[ -n "$out" ] && ok || bad "a 200 KB prompt with a credential at the end gets the note"
+
+# Past 900000 bytes the prompt is cut so the secret-only route never refuses it
+# for size; a credential at the start still gets the note.
+: > "$T/open/requests"
+{ printf '%s ' "$SEC"; head -c 1100000 /dev/zero | tr '\0' 'a'; } > "$T/giant.txt"
+out="$(jq -n --rawfile p "$T/giant.txt" '{prompt:$p}' | GUARDS_ENDPOINT="$UP" bash "$HOOK")"
+sent="$(awk '{print $2}' "$T/open/requests" | head -1)"
+[ "$sent" -le 900000 ] && [ "$sent" -gt 800000 ] && ok || bad "a 1.1 MB prompt is cut to at most 900000 bytes (sent $sent)"
+[ -n "$out" ] && ok || bad "a 1.1 MB prompt with a credential at the start gets the note"
 
 # 9. jq missing: no note, exit 0 (hook cannot parse the payload)
 mkdir -p "$T/nojq"

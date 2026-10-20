@@ -154,11 +154,11 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
 
 ## Maintenance gaps
 
-- **Untested components:** `sendmessage-guard.sh`, `userpromptsubmit-guard.sh`,
-  `guards-selfheal.sh` and `mcp/server.py` have no automated tests. They were
-  verified by hand against a live session (SendMessage, the install flow, the
-  MCP tool). The `UserPromptSubmit` hook's behavior with a slow service or a
-  very long prompt is derived from the code and has not been measured.
+- **Hook tests use stubs.** `sendmessage-guard.sh`, `userpromptsubmit-guard.sh`,
+  `guards-selfheal.sh` and `mcp/server.py` have automated tests, but against a
+  stub service and stubbed `docker`, `curl` and HTTP client, not the real
+  models. What a real Claude Code session does with their output was verified
+  by hand (see [`HOOKS.md`](HOOKS.md)).
 - **The vendored `scan.sh` is copied by hand** from `app/scan.sh` in
   [guards-unified](https://github.com/gramatr/guards-unified). This repository's
   CI (`scan-sh-drift`) fails when the copy differs from guards-unified's `main`

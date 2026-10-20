@@ -299,9 +299,10 @@ The note is written as a statement of fact rather than an instruction, so it
 does not look like injected text.
 
 Only the secret finding is used. PII and injection are ignored (it is your own
-data and your own instruction). The hook scans the whole prompt with the full
-`/v1/scan` (10 s limit). With the service down, and for very long prompts that
-exceed the limit, no note appears. It has no local fallback and no tests.
+data and your own instruction). The hook sends the prompt to the secret-only
+route (`/v1/scan/secret`, 8 s limit, no models), cut at 900000 bytes, so a
+credential anywhere in a long prompt is found. With the service down, or for a
+prompt the service refuses, no note appears. It has no local fallback.
 
 ### Credential-file guard (PreToolUse): `credfile-guard.sh`
 
