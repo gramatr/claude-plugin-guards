@@ -1,0 +1,194 @@
+# Hardening and loosening: the trade-offs behind the guards
+
+Every guard here sits between "stops a leak" and "gets in the way of real work".
+This page records where each guard was tightened and where it was loosened,
+with the pull request, the version it first shipped in, the reason, and what it
+cost. It exists so that the next change starts from the evidence rather than
+repeating a mistake.
+
+PR numbers are this repository's (`gramatr/claude-plugin-guards`). Scanner
+changes are made in
+[guards-unified](https://github.com/gramatr/guards-unified) and copied into the
+vendored `scan.sh` here by a sync PR; the sync PR is the number given. "Version"
+is the first release tag that contains the change; plugin installs track `main`,
+so a change is live as soon as it is merged and the plugin updates. Tags that
+exist: v0.1.0 to v0.1.4, v0.2.2 and v0.2.3; there are no plugin tags for
+v0.1.5 to v0.2.1.
+
+Dates are 2026-10-17 to 2026-10-20. Anything described as "verified live" comes
+from the PR descriptions; it was not re-run for this page.
+
+## Hardening
+
+| PR | Version | What | Why | Cost or residual |
+|---|---|---|---|---|
+| #5 | v0.1.0 | `SendMessage` guard: scan outgoing agent-to-agent text | A message leaves the session for another agent and possibly other places | First version denied; see #6 and #21 |
+| #36 | v0.1.3 | A truncated or error-shaped service response is treated as "service down", not "clean" | An empty `jq` result looked identical to "scanned, nothing found" | None known |
+| #42 | v0.1.3 | stderr scanned as well as stdout | A token logged to stderr got no coverage at all | One more scan per call |
+| #43 | v0.1.4 | Output passed through files (`--rawfile`) instead of arguments; scan cap with disclosure | A roughly 128 KB value crashed the final `jq` and silently dropped the redaction, because Claude Code then uses the original output | The 24 KB cap left later secrets unscanned; replaced by #58 and #59 for secrets |
+| #51 | v0.2.2 | `credfile-guard`: deny reads of credential files before content exists, including any file with a private-key header | Read and Grep output cannot be rewritten, so a pre-tool deny is the only reliable control there | False positives on documents that quote a key header (see below); indirect reads not caught |
+| #52, #53 | v0.2.2 | Scanner sync: redaction pattern quoted; a deterministic private-key pass that works without gitleaks (including truncated keys); one gitleaks retry; fail-closed verification that withholds the whole output if a confirmed secret survives | A detection that did not redact: unquoted pattern treated as a glob, so a key inside JSON came back unchanged; gitleaks occasionally returned nothing on a detectable key | An output can be withheld entirely when verification fails |
+| #54 | v0.2.2 | `publish-guard`: block credentials in `gh` publishes, `gh api` bodies, `git commit` and GitHub MCP writes | A live key was once quoted in the body of a public issue; nothing looked at outbound text | Occasional block next to a secret-ish key name; does not cover `git push` |
+| #55 | v0.2.2 | Scanner sync: context rules (value after a key name, URL passwords, headers, CLI flags, `.netrc`, Azure/gcloud/bcrypt shapes); exact-match redaction of secret-named environment variable values in the publish guard and the fallback | gitleaks keys on value shape and real credentials often do not have one | **Stated bias: over-redact.** More false positives; fixes for those are below |
+| #56 | v0.2.2 | `mcp-output-guard`: redact secrets in MCP results | MCP results are the third path into the session | Rewrites recognised shapes only; skips grāmatr's own server by default |
+| #57 | v0.2.2 | Scanner sync: linear-time redaction, no per-rule match cap, Unicode-safe matching (zero-width characters, fullwidth delimiters) | Speed bugs were leak bugs: a quadratic split took longer than the service timeout, which then returned the text unredacted; a cap of 200 matches left 100 of 300 secrets | Thousands of matches are still slow |
+| #58 | v0.2.2 | Secret-only route (about 55 ms) with local fallback for the publish and MCP guards | Make the secret path fast without making protection depend on the service | Two code paths to keep consistent |
+| #59 | v0.2.2 | Bash hook fast path: secrets scanned up to 256 KB without waiting for the models | The old hook took 10 s on 24 KB and did not redact a secret later in a large output | See the PII and injection loosening below |
+| #61 | v0.2.2 | Scanner sync: decode long base64 tokens and scan the decoded text | A secret wrapped in base64 had no key name to match | Up to 25 candidates per scan; no other encodings |
+| #62 | v0.2.2 | Publish guard denies instead of asking when no person can answer (modes `auto`, `bypassPermissions`, `dontAsk`, unknown) | An `ask` in `auto` mode was seen to let a command carrying a fake password run through | An ambiguous match in an unattended session blocks work until a person intervenes |
+
+## Loosening and walk-backs
+
+| PR | Version | What | Why | Cost or residual |
+|---|---|---|---|---|
+| #6 | v0.1.0 | `SendMessage`: redact and send instead of deny | The other guards redact exact spans; all-or-nothing denial was inconsistent | A message goes out with redaction markers |
+| #19 | v0.1.0 | `UserPromptSubmit`: from blocking to a note only | Claude Code lets this event block the whole prompt or add a note, nothing in between; blocking was judged too costly | **Real loss of protection:** a secret in your own prompt reaches the model. Only a platform-side control can close it |
+| #20 | v0.1.0 | PII flagged, not redacted, in the Bash hook (`PII_GUARD_MODE=flag`) | The PII model tagged a git remote as an email address, an epoch timestamp as a phone number, a tool name as a person; redaction destroyed output | PII reaches the model unredacted, only the types are noted |
+| #35 | v0.1.3 | Same for `SendMessage` | Messages go between your own agents; redaction destroyed operational content | Same |
+| #21 | v0.1.0 | `SendMessage` when the service is down: degrade (local secret scan, allow, disclose) instead of deny | Denying blocked all cross-agent coordination on one dependency | PII is not scanned during an outage, only disclosed |
+| #27 | v0.1.2 | Injection warning needs a 0.95 confidence floor (`INJECTION_MIN_SCORE`) | Benign security-themed text scored 0.86 to 0.91 as malicious; real attacks 0.977 and up | Text that discusses override phrasing can still score above it; recall on indirect injection is about 6% |
+| #38 | v0.1.3 | Self-heal removes only a container it can prove is its own stale instance | A copy running in a sandbox once removed the production container | An unmanaged container holding port 8700 needs manual cleanup |
+| #57 | v0.2.2 | A scan that times out keeps the original text; withholding on timeout was tried and dropped | A timeout was withholding a user's whole result to protect against a rare case; a policy choice made inside a bug fix was backed out | A scan that runs out of time leaks rather than blocks |
+| #59 | v0.2.2 | PII and injection flags only on the first 2 KB (`FLAG_MAX_BYTES`), abandoned after a budget | The models cost about 0.3 s per KB and parallel requests did not help; the hook runs on every Bash call | **PII and injection beyond 2 KB are never flagged;** the hook is still not always under one second |
+| #60 | v0.2.2 | Credential-file and publish guards ask the person for ambiguous cases instead of denying | Blocking every match stopped ordinary work (a `.env` being debugged, an issue documenting flag syntax) | A distracted person can approve a real leak; the original incident (a punctuation-heavy key after "secret key") is now an ask. Sure things still deny |
+| #62, #63 | v0.2.2 | Scanner sync: a value that is an existing path is never a password; `PWD` and `OLDPWD` are skipped | The `PWD` environment variable matched a password alias, so every mention of the working directory was redacted and the publish guard blocked a commit that only contained it | A password that is also a real path on the scanning host is not redacted |
+| #65 | v0.2.3 | Scanner sync: the key-name rules' delimiter is a space or tab only, no longer a newline | A heading that ended in "token:" or "secret:" followed by an indented line had that line's first word redacted | **Removed real protection:** a value on the line after its key (a YAML scalar) was no longer caught |
+| #66 | v0.2.3 | Scanner sync: YAML next-line rule restored narrowly (key line is only the key and a colon, next line a single bare token) | Restore the YAML scalar case without the heading false positive | A heading ending in a keyword and a colon, followed by exactly one word, still redacts that word |
+| #15, #16 | v0.1.0 | Metrics directory made `chmod 777` | The container's non-root user could not write to a root-owned bind mount | A world-writable directory; it holds verdicts only, never scanned text |
+
+Not a plugin change but a deliberate non-hardening: access-key and client IDs
+are not redacted by default (the scanner switch is `SECRET_GUARD_REDACT_KEY_IDS`),
+because an ID is a semi-public identifier and the secret half is the boundary.
+It arrived with #55.
+
+Not hardening and not loosening, but worth knowing: #47 (v0.1.4) lengthened the
+image pull timeout to 240 s inside a 270 s hook timeout, because a 15 s timeout
+meant nobody ever picked up a fixed image; the cost is up to several minutes
+the first time a cold pull happens. #49 (v0.2.2) added Watchtower so a fixed
+image reaches you within minutes; the cost is a Docker-socket mount and a
+floating tag (see [`LIMITS.md`](LIMITS.md)). #22 (v0.1.0) raised the
+service's memory limit from 2 GB to 4 GB because kernel out-of-memory kills
+looked like an intermittent outage.
+
+The description of #59 says a 1 KB prefix and a 0.5 s budget. The shipped values
+are 2 KB and `0.25 + 0.3 s per KB` (0.85 s for 2 KB); the code and the README are
+authoritative.
+
+## The open inconsistency: ask in `auto` mode
+
+The two guards that use Claude Code's `ask` decision disagree about unattended
+sessions.
+
+- The **publish guard** reads the permission mode. In `auto`, `bypassPermissions`
+  and `dontAsk` (or an unrecognised mode) it denies an ambiguous match, because
+  an `ask` was seen to run with no person answering and a publish cannot be
+  undone (#62).
+- The **credential-file guard** was not given the same logic. In `auto` mode its
+  `ask` for a `.env` or kubeconfig is answered by Claude Code itself, and the
+  read went through (observed live). The reasoning in #62 is that reading is not
+  irreversible the way publishing is, and `auto` is an autonomy level you chose.
+  What Claude Code does with an `ask` when no person is attached at all is not
+  verified.
+
+Choices, not yet decided: keep it as is; set `GUARDS_CRED_ASK=0` so those files
+are a hard deny everywhere (the recommended setting for `auto` and unattended
+runs today); or apply the publish guard's mode logic to the credential-file
+guard. If you want a deny in your own setup, `GUARDS_CRED_ASK=0` is the switch.
+
+Another open item: `FLAG_MAX_BYTES`. Measured by the maintainers (not re-measured
+for this page), the hook with flags on took about 0.6 s at 1 KB and about 1.0 s
+at 3 KB and above, worst case 1.4 s; with `FLAG_MAX_BYTES=0` about 0.3 to 0.8 s.
+A 2 KB prefix covers roughly 80% of outputs completely (measured over 120
+sessions), 3 KB roughly 90%. A real fix needs an asynchronous tier on the
+platform side; the hook cannot get there by chunking.
+
+## Knobs and their direction
+
+| Setting | Direction | Effect |
+|---|---|---|
+| `GUARDS_CRED_ASK=0` | Harden | `.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state become hard denies. Recommended for `auto` and unattended runs |
+| `GUARDS_PUBLISH_ASK=force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
+| `GUARDS_PUBLISH_ASK=0` | Harden | Every match is a hard deny |
+| `GUARDS_ALLOW_CRED_READ=1`, `GUARDS_ALLOW_PUBLISH_SECRETS=1`, `GUARDS_MCP_SCAN=0` | Loosen | Turn a guard off for the session |
+| `FLAG_MAX_BYTES` larger | Harden (PII, injection), slower | More of the output is flagged; each KB costs about 0.3 s |
+| `FLAG_MAX_BYTES=0` | Loosen (PII, injection), faster | No PII or injection notes |
+| `GUARDS_FAST_BASH=0` or `PII_GUARD_MODE=redact` | Mixed | Older path: scans only the first 24 KB for secrets, but redacts PII |
+| `GUARDS_MCP_SKIP` | Either | A narrower pattern scans more tools; the default skips grāmatr's own server |
+| `INJECTION_MIN_SCORE` | Either | Lower shows more injection warnings, with more false positives |
+| `SECRET_GUARD_REDACT_KEY_IDS=1` (scanner) | Harden | Also redacts access-key and client IDs |
+| `SECRET_GUARD_B64=0` (scanner) | Loosen | Turns off the base64 pass |
+
+## Design lessons
+
+These recur across the history above. Lessons that are about the scanner apply
+here because the plugin vendors it.
+
+1. **One hard rule: no secrets.** It is the one control that must be fast and
+   synchronous. PII and injection are best-effort notices on a prefix, because
+   their models cost about 0.3 s per KB and cannot be sped up by parallelism.
+   Policy, asynchronous delivery and audit belong to a platform behind
+   `GUARDS_ENDPOINT`, not to this open-source plugin.
+2. **Context beats shape.** gitleaks keys on value shape; real credentials often
+   lack one. The rules key on what a value is next to. The cost is false
+   positives, so every context rule needs benign lookalike tests and a skip list.
+3. **Bias toward over-redaction for secrets, toward flag-only for PII.** A leaked
+   credential is permanent; a redacted harmless value is recoverable. For PII on
+   engineering text the reverse holds.
+4. **Every false-positive fix removes some protection; state what.** #65 removed
+   the YAML next-line case and #66 restored it narrowly; #62 and #63 declared an
+   existing path is never a password. Write the residual down and keep a
+   "must stay unchanged" test beside every "must redact" test.
+5. **Judge the value as well as the key.** Both `PWD` bugs came from trusting the
+   name alone.
+6. **A detection that does not redact is worse than none.** "Found" with
+   unchanged text gave a false sense of safety (the unquoted pattern, caps, a
+   quadratic timeout, an argument-length crash, an empty field skipping the
+   others). Assert that "found" implies changed text, and fail closed inside the
+   scanner on survivors.
+7. **Fail open versus fail closed is per surface, and must be explicit.** Closed:
+   the publish guard (irreversible). Open: tool-output redaction, MCP results,
+   the prompt note (a safety net must not become a single point of failure).
+   `SendMessage` was denied-when-down at first and now degrades with disclosure.
+   Never decide fail-closed inside a bug fix; ask.
+8. **An `ask` protects only if a person answers.** In `auto`, `bypassPermissions`
+   and `dontAsk` Claude Code resolves it. Irreversible actions must deny where no
+   person is present. Any bypass the agent can type for itself (a marker in the
+   command) defeats the guard; only a human decision or a variable set before
+   launch counts as an override.
+9. **Deny before, redact after.** Where the output schema is undocumented (Read,
+   Grep) a rewrite is silently ignored, so a pre-tool deny is the only reliable
+   control. Where the schema is not validated (MCP), rewrite only recognised
+   shapes and never guess. A second `PreToolUse` hook on the same event silently
+   drops `updatedInput`, so `SendMessage` keeps a single one.
+10. **Hot path rule.** No change to the Bash hook without before and after
+    numbers from the real service, an off switch (`GUARDS_FAST_BASH=0`,
+    `FLAG_MAX_BYTES=0`), and a fallback to the previous behavior on any error.
+    Avoid leading-`*` globs and bounded large regex repeats on large text in
+    bash; the first base64 pass cost 2.9 s per scan.
+11. **Speed bugs are leak bugs.** Timeouts and caps return the original text.
+    Never cap matches; keep the scan cap above realistic output; disclose what
+    was not scanned.
+12. **Test against reality.** Live runs found what unit tests could not: `PWD`,
+    ask-in-auto, the MCP result shape. `guards/tests/run-all.sh` mirrors CI
+    (gitleaks hidden from `PATH`, the scanner image, no host paths) because
+    tests passed on a laptop and failed in CI twice.
+13. **Vendored copy parity.** The vendored `scan.sh` is a copy of guards-unified's
+    `app/scan.sh`. Every scanner change needs a paired sync PR here, and a PR
+    should be opened only after every commit is pushed: a fix once merged
+    without its later commits (#52 reached `main` without its second commit,
+    which landed as #53).
+14. **Version and tag discipline.** A tag push on guards-unified is the only
+    publish; versions move in lockstep; a burned number is skipped, never deleted
+    or reused.
+15. **Writing about secrets trips the guards.** Pass commit messages and PR bodies
+    as files, use fabricated values built at run time, describe shapes, and mark
+    deliberately fake fixture lines `guards:synthetic`. Never use a rotated value
+    or a lookalike of a real one.
+16. **Protocol limits shape policy.** `UserPromptSubmit` can only add a note or
+    block the whole prompt; that, not preference, is why the prompt guard is
+    advisory. Document such limits as limits and route the real fix to the
+    platform.
+17. **Self-healing can destroy.** Port reconciliation once removed a production
+    container from a sandbox copy. The fix proves staleness (this project's image
+    and a compose file under the plugin cache) before removing anything, at the
+    cost of manual cleanup in edge cases.
