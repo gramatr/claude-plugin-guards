@@ -166,6 +166,9 @@ ctx_code_shape_cs() {
   [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && delim="${delim:-spaced}"
   [ -n "$delim" ] || return 1
   line="$lb$pfx$val$la"
+  # a value that ends at a quote sits inside a string (a JSON body, a quoted
+  # command), not in code
+  [[ "$la" =~ ^[\"\'] ]] && return 1
   # `= await fn(...)`, `= new Foo(...)`: the word itself is a keyword
   [[ "$core" =~ ^(await|new|typeof|yield)$ && "$la" =~ ^[[:blank:]]+[A-Za-z_\$] ]] && return 0
   # a call: the value runs straight into an opening parenthesis
@@ -185,7 +188,7 @@ ctx_code_shape_cs() {
     [[ "$core" =~ ^(string|number|boolean|unknown|any|void|object|never|bigint|symbol)(\[\])?$ ]] && return 0
     if [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; then
       [[ "$core" =~ ^(Promise|Record|Array|Map|Set|Partial|Readonly|ReadonlyArray|Omit|Pick)\< ]] && return 0
-      [[ "$core" =~ ^[A-Z][A-Za-z0-9]*(\[\])?$ ]] && return 0
+      [[ "$core" =~ ^([A-Z][a-z]{2,})+(\[\])?$ ]] && return 0
     fi
   fi
   # a variable or member chain: needs a separator (so a plain word such as
@@ -195,7 +198,7 @@ ctx_code_shape_cs() {
     local k="${key,,}" c="${core,,}" shaped=0
     k="${k//[_.-]/}"; c="${c//[_.-]/}"
     [ "$c" = "$k" ] && shaped=1
-    [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ [a-z][A-Z] ) ]] && shaped=1
+    [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ ^[a-z]{2,}([A-Z][a-z]{2,})+$ ) ]] && shaped=1
     if [ "$shaped" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ $endp ]]; }; then
       [ "$delim" = colon ] && return 0
       [[ "$val" =~ \;$ ]] && return 0
