@@ -382,7 +382,11 @@ Files that merely *contain* credentials but are routinely needed for debugging
 through Claude Code's built-in permission prompt (`ask`) instead, because
 blocking them stops ordinary work. The agent cannot answer that prompt, so it
 is not a bypass the agent can type for itself. `GUARDS_CRED_ASK=0` makes every
-match a hard deny. What Claude Code does with an ask when no human is attached
+match a hard deny. In `auto` mode an ask is answered by Claude Code's own
+approval logic, not a person (verified live: a `.env` read went through
+without a prompt); that is the autonomy level that mode chooses, and reading a
+file is not irreversible the way a publish is, so these still ask. Use
+`GUARDS_CRED_ASK=0` if you want a hard deny there. What Claude Code does with an ask when no human is attached
 (a non-interactive run) is not verified: use `GUARDS_CRED_ASK=0` there.
 
 Limits: a `Grep` over a whole directory is checked by directory and glob
@@ -417,8 +421,15 @@ Matches that come from a key name or URL shape next to a value also fire on
 text that merely *documents* such things, so those go to the human through
 Claude Code's built-in permission prompt (`ask`), with the rule names and no
 value. Only a human can approve, so it is not a bypass the agent can type for
-itself. `GUARDS_PUBLISH_ASK=0` makes every match a hard block (use it for
-non-interactive runs, where what an ask does is not verified).
+itself. **An ask only protects anything if a person answers it.** In `auto`,
+`bypassPermissions` and `dontAsk` modes (or a mode the hook does not
+recognise) Claude Code resolves it without one. Verified live in `auto` mode:
+a command carrying a fake password ran straight through an `ask`. So the
+hook reads `permission_mode` from its input and, when no person can answer,
+an ambiguous match is a deny with that reason, because a publish cannot be
+undone. `default`, `acceptEdits` and `plan` ask. `GUARDS_PUBLISH_ASK=force`
+asks regardless of mode; `GUARDS_PUBLISH_ASK=0` makes every match a hard
+block.
 
 A line containing `guards:synthetic` is dropped from the staged diff
 before scanning, for deliberately fake test fixtures. It does not apply to

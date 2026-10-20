@@ -25,9 +25,11 @@ PW="Tq7vN2xLm9Kd4RzP8wYb"
 openssl ecparam -genkey -name prime256v1 -noout -out "$T/key.pem" 2>/dev/null
 
 pass=0 fail=0
+# Permission mode sent in every payload. Only default/acceptEdits/plan have a person to answer an ask.
+PM_MODE=default
 run() { # run TOOL INPUT_JSON [ENV...] -> deny | ask | allow
   local out d
-  out="$(jq -n --arg t "$1" --argjson i "$2" --arg cwd "$T/repo" '{tool_name:$t, tool_input:$i, cwd:$cwd}' \
+  out="$(jq -n --arg t "$1" --argjson i "$2" --arg cwd "$T/repo" --arg pm "$PM_MODE" '{tool_name:$t, tool_input:$i, cwd:$cwd, permission_mode:$pm}' \
     | env "${@:3}" bash "$HOOK")"
   d="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
   case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
@@ -78,6 +80,26 @@ expect deny  "GUARDS_PUBLISH_ASK=0 restores the hard block" Bash "$(bash_in "gh 
 out="$(jq -n --arg c "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'" --arg cwd "$T/repo" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd}' | bash "$HOOK")"
 msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
 if [[ "$msg" == *"SHAPE"* && "$msg" == *secret-lead-in* && "$msg" != *"$PW"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: ask message names the rule, explains the choice and never echoes the value"; fi
+
+# --- an ask needs a person: in modes with nobody to answer, ambiguous matches deny ---
+# (live finding: in auto mode a command with a fake password ran straight through an ask)
+for PM_MODE in auto bypassPermissions dontAsk ""; do
+  expect deny  "ambiguous match denies in permission mode '${PM_MODE:-unknown}'" Bash "$(bash_in "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'")"
+done
+expect allow "a clean post is still allowed in auto mode" Bash "$(bash_in "gh issue create -R o/r --title t --body 'nothing sensitive here'")"
+for PM_MODE in default acceptEdits plan; do
+  expect ask   "ambiguous match asks in permission mode '$PM_MODE'" Bash "$(bash_in "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'")"
+done
+PM_MODE=auto
+expect ask   "GUARDS_PUBLISH_ASK=force asks even in auto mode" Bash "$(bash_in "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'")" GUARDS_PUBLISH_ASK=force
+out="$(jq -n --arg c "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'" --arg cwd "$T/repo" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd,permission_mode:"auto"}' | bash "$HOOK")"
+msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
+if [[ "$msg" == *"no person to answer"* && "$msg" == *auto* && "$msg" != *"$PW"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: the deny explains that no person could be asked, and never echoes the value"; fi
+PM_MODE=default
+
+# The working directory lives in PWD, a name that matches the PW alias; live testing found a
+# command that merely contained the cwd hard-blocked as an env-value credential.
+expect allow "a post that mentions the working directory is not an env-value hit" Bash "$(bash_in "gh issue comment 3 --body 'logs are in $T/repo/out.txt'")" PWD="$T/repo"
 
 # --- allow: clean posts, non-publish commands, markers, override ---
 expect allow "clean issue body"                    Bash "$(bash_in "gh issue create -R o/r --title t --body 'The login flow fails after the token expires.'")"
