@@ -49,8 +49,7 @@ class Handler(BaseHTTPRequestHandler):
         with open(base + ".path", "w") as f:
             f.write(self.path)
         with open(base + ".hdr", "w") as f:
-            for name, value in self.headers.items():
-                f.write(f"{name}: {value}\n")
+            f.writelines(f"{name}: {value}\n" for name, value in self.headers.items())
         with open(base + ".body", "wb") as f:
             f.write(body)
 
