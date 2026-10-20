@@ -1,5 +1,35 @@
 # Preparing this stack to run server-side
 
+> **Superseded design, kept as history.** Everything below the "Historical
+> notes" line was written when the stack ran three separately hostable guards
+> (secret, PII, injection) as three containers. That is no longer the
+> architecture. The stack is now **one** bundled `guards-unified` container
+> serving secret, PII and injection findings from the same process, so you
+> cannot host one axis and keep the others local.
+>
+> **Current guidance**
+>
+> - The bundle inherits the strictest posture of its parts: treat the whole
+>   service as **loopback-only**. `docker-compose.yml` publishes it as
+>   `127.0.0.1:8700:8700`; that prefix is load-bearing. Never publish it on
+>   `0.0.0.0` or behind a shared load balancer.
+> - The service has no authentication and receives raw tool output, which can
+>   contain the credentials and personal data it exists to catch.
+> - `GUARDS_ENDPOINT` can point at another host, and the hooks will send raw
+>   output there. Do that only for a service you operate under the same
+>   assumptions as a local one. Hosting an implementation of the same endpoint
+>   contract (`POST /v1/scan`, `POST /v1/scan/secret`) elsewhere is a separate
+>   architecture and privacy decision, not something this repository enables.
+> - Open items from the notes below are still open: whether request logging is
+>   disabled, whether scanned text can reach access logs or error traces, and
+>   memory handling after a request. The service's metrics file stores verdicts
+>   only, never the scanned text.
+> - Current behavior is documented in [`../README.md`](../README.md),
+>   [`../../docs/HOOKS.md`](../../docs/HOOKS.md) and
+>   [`../../docs/LIMITS.md`](../../docs/LIMITS.md).
+
+## Historical notes (three-container design)
+
 This file exists so a future agent (or you) can modify this Docker
 Compose stack toward a hosted/multi-tenant deployment **deliberately**,
 not by discovering a half-wired path and guessing the rest. Nothing in
@@ -68,7 +98,6 @@ any hosted deployment — including injection-guard's.
 - Scope any such override to `injection-guard` only, per the table
   above, unless a legal/DPA review has explicitly cleared a different
   architecture for secret-guard/pii-guard.
-- Update the audit wiring too: a hosted tier changes who/what can
-  trigger a `secret_leak_detected`/future `pii_detected`/
-  `injection_detected` event under `gramatr/soc2-coordination`'s
-  `contracts/soc2.yaml` — that repo owns the audit shape, not this one.
+- Update the audit wiring too: a hosted tier changes who and what can
+  trigger a secret, PII or injection audit event; the audit event contract
+  belongs to whoever owns your audit trail, not to this repository.
