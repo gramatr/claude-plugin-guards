@@ -90,6 +90,11 @@ ctx "base64 DSN under a plain key" "{\"conn\": \"$B64DSN\"}" "$B64DSN"
 for benign in "PWD=/usr/bin" "cwd listing for /usr/bin done" 'password: ${DB_PASSWORD}' 'secretName: db-credentials' 'The secret to good tests is isolation.' 'commit 3f2a9c1e5b7d4a6082f1c3e5a7b9d1f3e5a7c9b1 Author: x'; do
   if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: benign altered: $benign"; fail=$((fail + 1)); fi
 done
+# A heading that ends in a keyword and a colon is not a key: the next line's first
+# word is not its value (found live while verifying v0.2.2).
+for benign in $'Rotate the secret:\n  kubectl delete secret old' $'About the token:\n  local: running'; do  # guards:synthetic
+  if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: heading altered: ${benign%%$'\n'*}"; fail=$((fail + 1)); fi
+done
 
 # Large input with a secret: the span split used to be quadratic (232 KB took
 # 19 s, 1 MB 447 s), and the loops stopped after 200 matches, leaving later
