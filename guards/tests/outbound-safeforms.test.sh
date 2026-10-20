@@ -131,6 +131,7 @@ anywhere_has() { # the value in any header or body
 #            body      value in the request body
 #            none      value (plain or Basic) nowhere in the request
 #   ARGV     yes|no    value visible in the client's argv while it runs
+#            (varies: version-dependent, reported but not asserted)
 #   VERBOSE  yes|no    verbose output echoes the value (skip: not asserted)
 #   CMD      run with bash -c; $V holds the client's quiet flag, or its verbose flag
 #            on the verbose run; /slow becomes /fast on the verbose run.
@@ -172,6 +173,10 @@ run_case() {
   if [ "$HAVE_PROC" -eq 1 ]; then
     if [ "$ARGV_SEEN" -ne 1 ]; then
       bad "$id: no client process found to read argv from"
+    elif [ "$argv" = varies ]; then
+      # curl overwrites -u and --oauth2-bearer in its own argv after parsing them
+      # (curl 8.5 does, 7.81 does not), so what a late reader sees is version-dependent.
+      ok "$id: argv visibility varies by client version (this run: $([ "$ARGV_HAS" -eq 1 ] && echo visible || echo blanked))"
     elif [ "$argv" = yes ]; then
       [ "$ARGV_HAS" -eq 1 ]; check "$id: value IS visible in argv" $?
     else
@@ -203,9 +208,9 @@ skip_case() {
 echo "curl"
 run_case curl-var-header curl hdr:Authorization yes yes "variable in a header" \
   'curl $V -H "Authorization: Bearer $TOK" $U/slow'
-run_case curl-oauth2-bearer curl hdr:Authorization yes yes "--oauth2-bearer" \
+run_case curl-oauth2-bearer curl hdr:Authorization varies yes "--oauth2-bearer" \
   'curl $V --oauth2-bearer "$TOK" $U/slow'
-run_case curl-u-userpw curl b64:Authorization yes yes "-u with a variable" \
+run_case curl-u-userpw curl b64:Authorization varies yes "-u with a variable" \
   'curl $V -u "$USERPW" $U/slow'
 run_case curl-K-file curl hdr:Authorization no yes "-K config file" \
   'curl $V -K $F/curl.cfg $U/slow'
