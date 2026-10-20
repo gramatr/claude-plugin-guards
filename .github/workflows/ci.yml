@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      server_ref:
+        description: "guards-unified branch or tag whose app/scan.sh the drift check compares against (default: main)"
+        required: false
+        default: ""
   schedule:
     # Weekly, independent of any code change — catches newly-disclosed
     # CVEs in gitleaks / the vendored secret-guard-core image without
@@ -47,6 +53,20 @@ jobs:
         # Fabricated credential values only; nothing real is read.
         run: bash guards/tests/publish-guard.test.sh
 
+  scan-sh-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the drift check itself (local files, no network)
+        # Identical files pass; a one-character difference fails.
+        run: bash guards/tests/scan-sh-drift.test.sh
+      - name: Vendored scan.sh equals guards-unified app/scan.sh
+        # Fetches the server's file (same tag on a tag build, else main).
+        # Fails on any difference apart from the two-line vendored header.
+        env:
+          SERVER_REF: ${{ inputs.server_ref }}
+        run: bash guards/tests/scan-sh-drift.sh
+
   hadolint:
     runs-on: ubuntu-latest
     steps:
@@ -87,7 +107,7 @@ jobs:
           exit-code: "1"
 
   flag-scheduled-failure:
-    needs: [shellcheck, hadolint, cve-scan]
+    needs: [shellcheck, scan-sh-drift, hadolint, cve-scan]
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     steps:

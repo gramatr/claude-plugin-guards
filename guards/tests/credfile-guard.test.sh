@@ -110,7 +110,7 @@ expect allow "cat .env.example"                   Bash "$(bash_in 'cat .env.exam
 expect allow "ls .ssh (no content)"               Bash "$(bash_in 'ls -la ~/.ssh')"
 expect allow "test -f key"                        Bash "$(bash_in 'test -f ~/.ssh/id_rsa && echo yes')"
 
-# --- ask vs deny (guards-coordination: "not a nanny state") ---
+# --- ask vs deny (ask for ambiguous files, deny only the clear credential stores) ---
 printf '//registry.npmjs.org/:_authToken=not-a-real-token\n' > "$HOME/proj/.npmrc"
 printf '{"resources": []}\n' > "$HOME/proj/terraform.tfstate"
 expect ask   "Read .npmrc asks"                   Read "$(read_in "$HOME/proj/.npmrc")"

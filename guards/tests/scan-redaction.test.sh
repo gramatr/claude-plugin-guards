@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # guards/tests/scan-redaction.test.sh — regression test for the vendored
-# secret-guard-core/scan.sh redaction (guards-coordination#5): a confirmed
+# secret-guard-core/scan.sh redaction: a confirmed
 # secret must never come back unchanged.
 #
 # The bug: the redaction pattern was unquoted, so the secret was treated

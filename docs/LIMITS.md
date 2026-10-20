@@ -156,13 +156,14 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   verified by hand against a live session (SendMessage, the install flow, the
   MCP tool). The `UserPromptSubmit` hook's behavior with a slow service or a
   very long prompt is derived from the code and has not been measured.
-- **The vendored `scan.sh` is synced by hand** from `app/scan.sh` in
-  [guards-unified](https://github.com/gramatr/guards-unified), and neither
-  repository's CI checks that they match. A scanner fix that lands only in
-  guards-unified reaches the local fallback only after a paired sync commit
-  here. As of this change the two files are identical apart from a two-line
-  header; a comment-only fix in guards-unified once sat uncopied for a day,
-  which shows the sync is manual.
+- **The vendored `scan.sh` is copied by hand** from `app/scan.sh` in
+  [guards-unified](https://github.com/gramatr/guards-unified). This repository's
+  CI (`scan-sh-drift`) fails when the copy differs from guards-unified's `main`
+  (or the same tag on a tag build) apart from the two-line header, so a drift
+  cannot go unnoticed. The check still needs the copy to be made: a scanner fix
+  that lands only in guards-unified reaches the local fallback after the paired
+  sync commit here, and until guards-unified's change is merged this check
+  compares against the old file.
 - **Versions move in lockstep,** but each repository's CI cannot see the other,
   so equal `VERSION` files are a release-checklist step.
 - **gitleaks versions** are pinned in two places (the self-heal script and the

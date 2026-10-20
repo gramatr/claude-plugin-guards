@@ -33,7 +33,7 @@ step() { # step LABEL CMD...
   fi
 }
 
-SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction)
+SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift)
 
 if command -v shellcheck >/dev/null 2>&1; then
   echo "lint"
