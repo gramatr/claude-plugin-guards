@@ -108,9 +108,16 @@ is fake.
 ## What the marker covers
 
 Only added lines of a `git commit`'s staged diff, and only the line that carries it.
-Vendor-shaped fakes (AWS ids, `ghp_`, `xoxb-`, `sk-`, JWTs, PEM headers) should be built
-at run time (a prefix plus filler) so the source holds no literal; `mark_synthetic`
-refuses them so the marker cannot hide a real credential.
+A marked line is dropped from the key-name and context rules, but the commit is
+still denied if it matches a sure-thing vendor shape: a private-key header, an AWS
+access key id (`AKIA`/`ASIA`), a GitHub token (`ghp_`, `gho_`, `ghu_`, `ghs_`,
+`ghr_`, `github_pat_`), a Slack token (`xox[abprs]-`), or a Stripe or OpenAI-style
+live key (`sk_live_`, `rk_live_`, `sk-proj-`). The deny names the family and the
+place, never the value. Accepted on a marked line: a matched token that contains
+EXAMPLE or FAKE (the documented AWS example ids), JWT-shaped strings and ordinary
+fake values. Build vendor-shaped fakes at run time (a prefix plus filler) so the
+source holds no literal. `mark_synthetic` is stricter still and refuses these
+shapes and JWTs, so the marker cannot hide a real credential.
 
 ## What never to do
 
