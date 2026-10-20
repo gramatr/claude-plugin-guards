@@ -47,8 +47,14 @@ if [ -z "$PROMPT" ]; then
   exit 0
 fi
 
-RESPONSE="$(jq -n --arg text "$PROMPT" '{text: $text}' 2>/dev/null \
-  | curl -sS --connect-timeout 3 -m 8 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+# Secrets only, so the cheap secret-only route (about 55 ms, no models) scans the
+# prompt; the full route would run the PII and injection models for a finding
+# this hook throws away, and refuses bodies over 64 KiB. The text goes to jq on
+# stdin, never as an argument, because one argument cannot exceed about 128 KB.
+# The route's own cap is 1 MiB, so the prompt is cut at 900000 bytes (the head
+# is what a person types or pastes first).
+RESPONSE="$(printf '%s' "$PROMPT" | head -c 900000 | jq -Rs '{text: .}' 2>/dev/null \
+  | curl -sS --connect-timeout 3 -m 8 -X POST "${GUARDS_ENDPOINT}/v1/scan/secret" \
       -H "Content-Type: application/json" -d @- 2>/dev/null)"
 
 # A non-empty RESPONSE isn't enough on its own -- a truncated body or

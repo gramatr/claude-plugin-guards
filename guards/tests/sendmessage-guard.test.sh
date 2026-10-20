@@ -119,6 +119,23 @@ out="$(hook "$DOWN" '{"to":"a","message":"nothing here"}')"
 out="$(hook "$DOWN" '{"to":"a","message":"clean","content":"c LOCALSECRET456"}')"
 [ "$(jqo "$out" '.hookSpecificOutput.updatedInput.content')" = "c $R" ] && ok || bad "service down: a secret only in content is redacted"
 
+# 8b. service slow: the three fields share a 4 s service budget. The service is
+# asked first about the message (answers in time); by the time the summary and
+# content come up the budget is spent or the answer is late, so those two fields
+# get the local secret-only scan instead of passing through unscanned.
+mkdir -p "$T/slow"
+python3 -I "$HERE/stub-service.py" "$T/slow" 2.5 >/dev/null 2>&1 &
+SLOWPID=$!
+for _ in $(seq 1 50); do [ -s "$T/slow/port" ] && break; sleep 0.1; done
+SLOW="http://127.0.0.1:$(cat "$T/slow/port")"
+out="$(hook "$SLOW" '{"to":"a","message":"m STUBSECRET123","summary":"s LOCALSECRET456","content":"c LOCALSECRET456"}')"
+kill "$SLOWPID" 2>/dev/null
+[ "$(jqo "$out" '.hookSpecificOutput.permissionDecision')" = allow ] && ok || bad "slow service: still allow"
+[ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" = "m $R" ] && ok || bad "slow service: the message was answered by the service in time"
+[ "$(jqo "$out" '.hookSpecificOutput.updatedInput.summary')" = "s $R" ] && ok || bad "slow service: the summary fell back to the local scan"
+[ "$(jqo "$out" '.hookSpecificOutput.updatedInput.content')" = "c $R" ] && ok || bad "slow service: the content fell back to the local scan"
+jqo "$out" '.hookSpecificOutput.additionalContext' | grep -q "ran out of time for the summary or content field" && ok || bad "slow service: the note says which fields only got the local scan"
+
 # 9. service down AND no usable scanner: fields pass through unchanged (open),
 # the hook still answers allow and does not crash
 chmod -x "$SCAN"
