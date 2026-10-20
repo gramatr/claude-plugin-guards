@@ -4,14 +4,12 @@ description: Use when a guard (publish-guard, credfile-guard, sendmessage-guard)
 ---
 
 # Working with the guards
-
 The guards stop credentials from reaching public places. A block is about the
 TEXT you wrote, not about you. Fix the text; never look for a way around the
 guard. The overrides (`GUARDS_ALLOW_*`) belong to the person running the
 session; do not ask for them to get past a fixture or a long message.
 
-The guards MCP server gives you tools (all value-free: none returns a raw
-matched value):
+The guards MCP tools (all value-free: none returns a raw matched value):
 
 | Need | Tool |
 |---|---|
@@ -23,6 +21,7 @@ matched value):
 | Wrong match on a real non-secret | `report_false_positive(rule, redacted_line, context)` |
 
 Prompts with the same steps: `fix_a_block`, `safe_pr_body`, `fake_fixture_checklist`.
+Full reference: `docs/AGENTS-GUIDE.md`.
 
 ## When something is blocked
 
@@ -42,8 +41,7 @@ Prompts with the same steps: `fix_a_block`, `safe_pr_body`, `fake_fixture_checkl
 - Never pass long text inline. `prepare_publication` writes it to a file, scans it
   and returns the exact command: `git commit -F FILE`,
   `gh pr create --body-file FILE`, `gh issue create --body-file FILE`.
-- Name rules, files and line numbers. Never a value, a prefix, a partial, or a
-  rotated one. Avoid "word: value" wording next to credential words.
+- Name rules, files and line numbers, never a value, prefix or partial.
 
 ## Writing fixtures
 
@@ -52,8 +50,7 @@ Prompts with the same steps: `fix_a_block`, `safe_pr_body`, `fake_fixture_checkl
 - Vendor-shaped literals (AWS ids, `ghp_`, `xoxb-`, `sk-`, JWTs, PEM headers) cannot
   be marked: `mark_synthetic` refuses them so the marker cannot hide a real one.
 - A generic fake (a password assignment in a test) may stay literal with the
-  marker on the same line.
-- Never paste a real credential, even a dead one, into a test or a message.
+  marker on the same line. Never paste a real one, even a dead one.
 
 ## If you think the guard is wrong
 

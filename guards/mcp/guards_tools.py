@@ -186,6 +186,7 @@ def _git_root(cwd: str) -> str | None:
 
 # ------------------------------------------------------------ helpers ---
 
+
 def _find_reason(obj):
     if isinstance(obj, dict):
         if isinstance(obj.get("permissionDecisionReason"), str):
@@ -201,7 +202,7 @@ def _find_reason(obj):
 
 _RULE_LIST_RE = re.compile(r"rule\(s\):\s*([A-Za-z0-9_.,\- ]+?)\)")
 # One entry of the hook's "Where" list: "  1. the staged diff, file a/b.py, line 12: <redacted line>"
-_WHERE_RE = re.compile(r"^\s*(\d+)\. (.+?), line (\d+): ", re.M)
+_WHERE_RE = re.compile(r"^\s*(\d+)\. (.+?), line (\d+): ", re.MULTILINE)
 _AMBIGUOUS = {
     "secret-lead-in",
     "url-password",
@@ -227,6 +228,7 @@ _SOURCE_KINDS = (
     ("the staged diff", "staged diff"),
     ("(named by the command)", "named file"),
     ("the command text", "command text"),
+    ("your text", "command text"),
     ("input (JSON on one line)", "tool input"),
 )
 
@@ -369,15 +371,24 @@ def explain_block(message: str) -> dict:
     elif "sendmessage-guard" in low:
         guard = "sendmessage-guard"
         diag = "A secret in an outgoing message was redacted (or the backend was unreachable so only the local scan ran). This is a notice, not a deny."
-        steps = ["Send the shape, not the value.", "Run guards_status if the backend note appears."]
+        steps = [
+            "Send the shape, not the value.",
+            "Run guards_status if the backend note appears.",
+        ]
     elif "mcp-output-guard" in low:
         guard = "mcp-output-guard"
         diag = "Credential material in an MCP tool result was replaced by redaction markers. This is intentional and not an error."
-        steps = ["Work from the redacted result; ask the user for the value out of band if you truly need it."]
+        steps = [
+            "Work from the redacted result; ask the user for the value out of band if you truly need it."
+        ]
     elif "userpromptsubmit" in low or "your prompt" in low:
         guard = "userpromptsubmit-guard"
-        diag = "The user's prompt contained a secret; the guard only noted it (advisory)."
-        steps = ["Do not repeat the value in commits, issues, PRs or files; treat it as exposed and suggest rotation."]
+        diag = (
+            "The user's prompt contained a secret; the guard only noted it (advisory)."
+        )
+        steps = [
+            "Do not repeat the value in commits, issues, PRs or files; treat it as exposed and suggest rotation."
+        ]
     else:
         diag = "This text does not match a known guard message."
         steps = [
@@ -387,7 +398,9 @@ def explain_block(message: str) -> dict:
     steps.append(_NEVER)
     return {
         "guard": guard,
-        "decision": "ask" if asked else ("deny" if guard in ("publish-guard", "credfile-guard") else "notice"),
+        "decision": "ask"
+        if asked
+        else ("deny" if guard in ("publish-guard", "credfile-guard") else "notice"),
         "sources": sorted(kinds) or ["unknown"],
         "where": where,
         "rules": rules,
@@ -416,6 +429,7 @@ def prepare_publication(kind: str, title: str, body: str) -> dict:
     file holds the REDACTED text (the raw value is never written), the
     verdict is "would-redact" and `ready` is false: rewrite those lines to
     describe the shape, then call this again.
+    See docs/AGENTS-GUIDE.md.
     """
     if kind not in _KINDS:
         return {"error": "kind must be commit-message, pr-body or issue-body"}
@@ -693,6 +707,7 @@ def mark_synthetic(path: str, lines: list[int], reason: str, cwd: str = "") -> d
     key header, AKIA/ASIA id, ghp_/gho_/github_pat_, xox*-, sk-, JWT, 40+
     character base64). Build vendor-shaped fakes at run time instead.
     Returns exactly the lines changed, scanner-redacted.
+    See docs/AGENTS-GUIDE.md.
     """
     reason = (reason or "").strip()
     if not reason or len(reason) > 120 or "\n" in reason or "\r" in reason:
@@ -802,6 +817,7 @@ def report_false_positive(rule: str, redacted_line: str, context: str = "") -> d
     the line is (e.g. "test fixture for a login form"). Refuses input that
     still looks like it holds a credential. The public repos have Issues
     disabled, so this does not open one.
+    See docs/AGENTS-GUIDE.md.
     """
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", rule or ""):
         return {

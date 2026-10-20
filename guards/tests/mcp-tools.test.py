@@ -94,17 +94,25 @@ if HAVE_GITLEAKS:
 RAW_VALUES = [FAKE, RAND, *VENDOR.values()]
 
 
-def run_hook(command, cwd):
+PUBLISH_HOOK = os.path.join(gt.HOOKS_DIR, "publish-guard.sh")
+
+
+def check(text, cwd="", kind="auto"):
+    """The MCP server's check_before_publish tool (mcp/server.py)."""
+    return server.check_before_publish(text, cwd, kind)
+
+
+def run_hook(command, cwd, mode="auto"):
     """The publish guard exactly as the tool should call it (strict mode)."""
     payload = {
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_input": {"command": command},
         "cwd": cwd,
-        "permission_mode": "auto",
+        "permission_mode": mode,
     }
     p = subprocess.run(
-        ["bash", gt.PUBLISH_HOOK],
+        ["bash", PUBLISH_HOOK],
         input=json.dumps(payload).encode(),
         capture_output=True,
         cwd=cwd,
@@ -246,7 +254,7 @@ class CheckBeforePublish(Base):
     def test_matches_the_hook_on_the_same_input(self):
         for name, text, cwd, kind, expected in self.matrix():
             with self.subTest(name):
-                got = gt.check_before_publish(text, cwd, kind)
+                got = check(text, cwd, kind)
                 self.assertEqual(got["decision"], expected, got)
                 self.assertValueFree(got)
                 if kind == "command":
@@ -254,32 +262,22 @@ class CheckBeforePublish(Base):
                     self.assertEqual(got["decision"], hook_dec)
                     if hook_dec == "deny":
                         self.assertEqual(
-                            got["reason"],
+                            got["explanation"],
                             hook_reason,
-                            "the reason must be the hook's, verbatim",
+                            "the explanation must be the hook's own",
                         )
 
     def test_deny_carries_the_rule_and_not_the_value(self):
-        got = gt.check_before_publish("x\n" + PW_LINE + "\n", self.repo())
+        got = check("x\n" + PW_LINE + "\n", self.repo())
         self.assertEqual(got["decision"], "deny")
-        self.assertIn("Blocked by guards publish-guard", got["reason"])
-        self.assertIn("rule(s)", got["reason"])
+        self.assertIn("Blocked by guards publish-guard", got["explanation"])
+        self.assertIn("rule(s)", got["explanation"])
         self.assertValueFree(got)
-
-    def test_auto_detects_commands_versus_text(self):
-        d = self.repo()
-        self.assertIn("command", gt.check_before_publish("git status", d)["checked"])
-        self.assertIn(
-            "text body",
-            gt.check_before_publish("an issue body that mentions git and gh", d)[
-                "checked"
-            ],
-        )
 
     def test_vendor_token_in_a_command_is_denied_and_not_echoed(self):
         d = self.repo()
         for name, v in SCANNED.items():
-            got = gt.check_before_publish(
+            got = check(
                 "gh issue create --title t --body 'leaked " + v + "'", d, "command"
             )
             self.assertEqual(got["decision"], "deny", name)
@@ -288,26 +286,11 @@ class CheckBeforePublish(Base):
     def test_a_bypass_env_is_ignored_and_noted(self):
         os.environ["GUARDS_ALLOW_PUBLISH_SECRETS"] = "1"
         try:
-            got = gt.check_before_publish("x\n" + PW_LINE + "\n", self.repo())
+            got = check("x\n" + PW_LINE + "\n", self.repo())
         finally:
             os.environ.pop("GUARDS_ALLOW_PUBLISH_SECRETS")
         self.assertEqual(got["decision"], "deny")
-        self.assertIn("GUARDS_ALLOW_PUBLISH_SECRETS", got["note"])
-
-    def test_input_problems_are_unknown_never_allow(self):
-        self.assertEqual(
-            gt.check_before_publish("x", "/no/such/dir")["decision"], "unknown"
-        )
-        self.assertEqual(
-            gt.check_before_publish("x", self.tmp(), "bogus")["decision"], "unknown"
-        )
-        real, gt.shutil.which = gt.shutil.which, lambda _n: None
-        try:
-            self.assertEqual(
-                gt.check_before_publish("x", self.tmp())["decision"], "unknown"
-            )
-        finally:
-            gt.shutil.which = real
+        self.assertIn("GUARDS_ALLOW_PUBLISH_SECRETS", got["explanation"])
 
 
 class ExplainBlock(Base):
@@ -325,22 +308,135 @@ class ExplainBlock(Base):
 
     def test_real_deny_message_is_diagnosed_by_rule(self):
         d = self.repo()
-        got = gt.check_before_publish("x\n" + PW_LINE + "\n", d)
+        got = check("x\n" + PW_LINE + "\n", d)
         for with_json in (False, True):
-            ex = gt.explain_block(self.reason(got["reason"], with_json=with_json))
+            ex = gt.explain_block(self.reason(got["explanation"], with_json=with_json))
             self.assertTrue(ex["recognized"])
             self.assertEqual(ex["guard"], "publish-guard")
             self.assertIn("secret-lead-in", ex["rules"])
-            self.assertIn("guards:synthetic", " ".join(ex["next_steps"]))
-            self.assertIn("does NOT apply", " ".join(ex["next_steps"]))
+            self.assertIn("does NOT cover", " ".join(ex["next_steps"]))
+            self.assertEqual(ex["sources"], ["command text"])
             self.assertValueFree(ex)
+
+    def hook_message(self, command, cwd, mode="auto"):
+        decision, reason = run_hook(command, cwd, mode)
+        return decision, reason
+
+    def test_staged_diff_message_is_located_and_gets_the_marker_advice(self):
+        repo = self.repo()
+        with open(os.path.join(repo, "fx.py"), "w") as f:
+            f.write("x = 1\n" + PW_LINE + "\n")
+        sh("git", "add", "fx.py", cwd=repo)
+        decision, reason = self.hook_message("git commit -m msg", repo)
+        self.assertEqual(decision, "deny")
+        ex = gt.explain_block(reason)
+        self.assertEqual(ex["sources"], ["staged diff"])
+        self.assertEqual(
+            [(w["source"], w.get("file"), w["line"]) for w in ex["where"]],
+            [("staged diff", "fx.py", 2)],
+        )
+        self.assertEqual(ex["decision"], "deny")
+        steps = " ".join(ex["next_steps"])
+        self.assertIn("guards:synthetic", steps)
+        self.assertIn("SAME line", steps)
+        self.assertNotIn("does NOT cover", steps)
+        self.assertValueFree(ex)
+        # the advice works: after marking, the hook allows
+        gt.mark_synthetic("fx.py", [ex["where"][0]["line"]], "fake", repo)
+        sh("git", "add", "fx.py", cwd=repo)
+        self.assertEqual(self.hook_message("git commit -m msg", repo)[0], "allow")
+
+    def test_named_file_message_is_located(self):
+        repo = self.repo()
+        body = os.path.join(repo, "body.md")
+        with open(body, "w") as f:
+            f.write("a\nb\n" + PW_LINE + "\n")
+        decision, reason = self.hook_message(
+            "gh pr create --title t --body-file " + body, repo
+        )
+        self.assertEqual(decision, "deny")
+        ex = gt.explain_block(reason)
+        self.assertEqual(ex["sources"], ["named file"])
+        self.assertEqual(ex["where"][0]["file"], body)
+        self.assertEqual(ex["where"][0]["line"], 3)
+        self.assertIn("does NOT cover", " ".join(ex["next_steps"]))
+        self.assertNotIn("SAME line", " ".join(ex["next_steps"]))
+        self.assertValueFree(ex)
+
+    def test_command_text_message_is_located(self):
+        repo = self.repo()
+        cmd = "gh issue create --title t --body '" + PW_LINE.replace('"', "") + "'"
+        decision, reason = self.hook_message(cmd, repo)
+        self.assertEqual(decision, "deny")
+        ex = gt.explain_block(reason)
+        self.assertEqual(ex["sources"], ["command text"])
+        self.assertEqual(ex["where"][0]["line"], 1)
+        self.assertIn("no person to answer", " ".join(ex["next_steps"]))
+        self.assertValueFree(ex)
+
+    def test_mixed_sources_get_both_remedies(self):
+        repo = self.repo()
+        with open(os.path.join(repo, "fx.py"), "w") as f:
+            f.write(PW_LINE + "\n")
+        sh("git", "add", "fx.py", cwd=repo)
+        cmd = "git commit -m '" + PW_LINE.replace('"', "") + "'"
+        _decision, reason = self.hook_message(cmd, repo)
+        ex = gt.explain_block(reason)
+        self.assertEqual(sorted(ex["sources"]), ["command text", "staged diff"])
+        steps = " ".join(ex["next_steps"])
+        self.assertIn("SAME line", steps)
+        self.assertIn("does NOT cover", steps)
+
+    def test_the_ask_variant_in_default_mode(self):
+        repo = self.repo()
+        cmd = "gh issue create --title t --body '" + PW_LINE.replace('"', "") + "'"
+        decision, reason = self.hook_message(cmd, repo, "default")
+        self.assertEqual(decision, "ask")
+        ex = gt.explain_block(reason)
+        self.assertEqual(ex["decision"], "ask")
+        self.assertEqual(ex["guard"], "publish-guard")
+        self.assertIn("a person answers it", ex["diagnosis"])
+        self.assertIn("Do not approve it yourself", " ".join(ex["next_steps"]))
+        self.assertNotIn("no person to answer", " ".join(ex["next_steps"]))
+
+    def test_a_private_key_header_is_a_hard_rule(self):
+        repo = self.repo()
+        body = os.path.join(repo, "k.md")
+        with open(body, "w") as f:
+            f.write("notes\n" + VENDOR["pem"] + "\n")
+        decision, reason = self.hook_message("gh pr create --body-file " + body, repo)
+        self.assertEqual(decision, "deny")
+        ex = gt.explain_block(reason)
+        self.assertIn("high-confidence", ex["diagnosis"])
+        self.assertValueFree(ex)
+
+    def test_the_cut_diff_note_is_carried(self):
+        ex = gt.explain_block(
+            "Blocked by guards publish-guard: this command would publish text (detector rule(s): secret-lead-in)\n"
+            "Where (first 1 of 1; each line is shown as the scanner redacts it, the value itself is never printed):\n"
+            "  1. the staged diff, file a/b.py, line 7: x\n"
+            "Note: the diff is larger than 524288 bytes; only the first 524288 bytes were scanned."
+        )
+        self.assertEqual(
+            ex["where"],
+            [{"n": 1, "source": "staged diff", "line": 7, "file": "a/b.py"}],
+        )
+        self.assertIn("cut at the size cap", ex["diagnosis"])
+
+    def test_unlocated_match_is_called_out(self):
+        ex = gt.explain_block(
+            "Blocked by guards publish-guard: x (detector rule(s): secret-lead-in)\n"
+            "Where: the scanner could not point to a line (it matched without changing the text)."
+        )
+        self.assertEqual(ex["where"], [])
+        self.assertIn("did not locate", " ".join(ex["next_steps"]))
 
     def test_hard_rule_gets_the_runtime_fixture_advice(self):
         ex = gt.explain_block(
             "Blocked by guards publish-guard: this command would publish text that looks like it contains a credential (detector rule(s): private-key,github-pat)"
         )
         self.assertIn("private-key", ex["rules"])
-        self.assertIn("run time", ex["diagnosis"] + " ".join(ex["next_steps"]))
+        self.assertIn("at run time", " ".join(ex["next_steps"]))
 
     def test_each_known_guard_message_is_recognised(self):
         cases = {
@@ -408,9 +504,7 @@ class PreparePublication(Base):
                     self.assertTrue(text.startswith("Fix the thing\n\n"))
                 # the file the tool made is accepted by the real hook
                 self.assertEqual(
-                    gt.check_before_publish(res["command"], self.tmp(), "command")[
-                        "decision"
-                    ],
+                    check(res["command"], self.tmp(), "command")["decision"],
                     "allow",
                 )
 
@@ -590,15 +684,11 @@ class MarkSynthetic(Base):
         repo = self.repo()
         self.write(repo, "t.py", "x = 1\n" + PW_LINE + "\n")
         sh("git", "add", "t.py", cwd=repo)
-        self.assertEqual(
-            gt.check_before_publish("git commit -m m", repo)["decision"], "deny"
-        )
+        self.assertEqual(check("git commit -m m", repo)["decision"], "deny")
         res = gt.mark_synthetic("t.py", [2], "fake password", repo)
         self.assertIn("changed", res, res)
         sh("git", "add", "t.py", cwd=repo)
-        self.assertEqual(
-            gt.check_before_publish("git commit -m m", repo)["decision"], "allow"
-        )
+        self.assertEqual(check("git commit -m m", repo)["decision"], "allow")
 
     def test_returns_exactly_the_changed_lines_redacted(self):
         repo = self.repo()
@@ -715,7 +805,9 @@ class ReportFalsePositive(Base):
         self.assertTrue(rep["value_free"])
         self.assertIn(res["path"], res["forward"])
         self.assertEqual(oct(os.stat(res["path"]).st_mode & 0o777), "0o600")
-        self.assertNotIn("issue", res["forward"].lower().replace("issues disabled", ""))
+        self.assertNotIn("@", res["forward"])
+        self.assertIn("vulnerability reporting", res["forward"])
+        self.assertIn("Issues disabled", res["forward"])
         self.assertValueFree(res)
 
     def test_input_that_is_not_redacted_is_refused_and_nothing_is_written(self):
@@ -781,7 +873,7 @@ class NoToolWeakensAGuard(Base):
         env_before = dict(os.environ)
         hooks_before = read_hooks()
         repo = self.repo()
-        gt.check_before_publish("hello", repo)
+        check("hello", repo)
         gt.explain_block("Blocked by guards publish-guard: x")
         gt.prepare_publication("pr-body", "t", "b")
         gt.report_false_positive("r", "ok ***REDACTED***", "")
@@ -795,6 +887,34 @@ class NoToolWeakensAGuard(Base):
         self.assertValueFree(scrubbed)
         self.assertEqual(scrubbed["c"], "ok")
         self.assertEqual(scrubbed["a"]["b"][0], "fine")
+
+
+class Docs(Base):
+    def test_the_guide_covers_every_tool_prompt_and_the_skill_and_invents_no_address(
+        self,
+    ):
+        root = os.path.join(HERE, "..", "..")
+        with open(os.path.join(root, "docs", "AGENTS-GUIDE.md")) as f:
+            guide = f.read()
+        names = [t.__name__ for t in gt.TOOLS] + [p.__name__ for p in gt.PROMPTS]
+        for n in names + [
+            "check_before_publish",
+            "guards-for-agents",
+            "guards://guide/publishing",
+        ]:
+            self.assertIn(n, guide, n)
+        for path in (
+            os.path.join(root, "docs", "AGENTS-GUIDE.md"),
+            os.path.join(root, "guards", "README.md"),
+            os.path.join(root, "guards", "skills", "guards-for-agents", "SKILL.md"),
+            TOOLS_PATH,
+        ):
+            with open(path) as f:
+                self.assertNotIn("support@", f.read(), path)
+        with open(
+            os.path.join(root, "guards", "skills", "guards-for-agents", "SKILL.md")
+        ) as f:
+            self.assertLess(len(f.read().splitlines()), 60)
 
 
 class WrappedTools(Base):

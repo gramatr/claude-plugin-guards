@@ -26,6 +26,7 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | Doc | What it covers |
 |---|---|
 | This file | Overview, install, what each guard does |
+| [`docs/AGENTS-GUIDE.md`](../docs/AGENTS-GUIDE.md) | One page for coding agents and for people who write CLAUDE.md/AGENTS.md: tools, prompts, skill, rules |
 | [`docs/HOOKS.md`](../docs/HOOKS.md) | Per-hook table (matcher, timeout) and the failure-mode matrix |
 | [`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) | Every environment variable the plugin reads |
 | [`docs/LIMITS.md`](../docs/LIMITS.md) | What the guards do not catch |
@@ -543,16 +544,17 @@ that look like they contain a credential. Rules:
 
 ### Agent tools, prompts and skill: `mcp/guards_tools.py`
 
-The same MCP server also gives a coding agent what it needs to work with the
-guards instead of against them. Every tool is value-free: no result contains a
+Alongside `check_before_publish` (above), the same MCP server gives a coding agent
+what it needs to work with the guards instead of against them. The one-page
+reference for agents and for people writing `CLAUDE.md`/`AGENTS.md` is
+[`docs/AGENTS-GUIDE.md`](../docs/AGENTS-GUIDE.md). Every tool is value-free: no result contains a
 raw matched credential value (each string is shape-scrubbed and re-scanned
 before it is returned). None of them disables, bypasses or weakens a guard; the
 `GUARDS_ALLOW_*` overrides stay with the person who starts Claude Code.
 
 | Tool | What it does |
 |---|---|
-| `check_before_publish(text_or_command, cwd)` | Runs `hooks/publish-guard.sh` offline in the strict ("auto") permission mode and returns `allow`/`deny` with the hook's own reason, verbatim. Text is checked as `gh issue create --body-file`. |
-| `explain_block(message)` | Diagnosis and next step for a guard message or decision JSON, by guard, rule and source (command text, file, staged diff). |
+| `explain_block(message)` | Diagnosis and next steps for a guard deny or ask message (or decision JSON): guard, rules, and each located source (command text, named file, staged diff with file and line), with the remedy that fits the source. |
 | `prepare_publication(kind, title, body)` | Writes commit-message, pr-body or issue-body text to a 0600 file under the state directory, scans it, lists the lines the scanner would redact (shown redacted), and returns the command (`git commit -F`, `gh pr create --body-file`, `gh issue create --body-file`). A file with findings holds the redacted text only. |
 | `guards_status()` | Registered hooks, plugin and service versions, whether the service answers, the permission-mode rules, environment overrides that switch a guard off, and degraded modes (no `jq`, no `gitleaks`, service down). |
 | `mark_synthetic(path, lines, reason)` | Appends `guards:synthetic` with the right comment syntax for the file type. Refuses lines shaped like a real credential (PEM header, AKIA/ASIA id, `ghp_`/`gho_`/`github_pat_`, `xox*-`, `sk-`, JWT, 40+ character base64), an empty reason, paths outside the cwd's git repo, and file types with no comment syntax. |
