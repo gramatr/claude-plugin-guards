@@ -359,7 +359,7 @@ SS_WORK="$WORK"
 . "$SCRIPT_DIR/secret-scan-lib.sh"
 if ! secret_scan "$SCAN_INPUT"; then
   if [ "$SS_TIMED_OUT" = 1 ]; then
-    deny "Blocked by guards publish-guard: the local secret scan did not finish in time, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Retry; if the text is very large, publish a shorter one. Very long single lines (minified or generated files, one-line JSON blobs) are the slow case: the scan time grows much faster than the size of such a line. The guards:synthetic marker is for fake fixture lines, not a way past a size limit."
+    deny "Blocked by guards publish-guard: the local secret scan did not finish in time, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Retry; if the text is very large, publish a shorter one. Long lines and long unbroken runs (base64, hashes, bundles) are no longer slow, so the likely causes are a very large input, thousands of matches in one text (each is redacted one at a time), or a loaded machine. Split the text, or commit the large generated part separately. The guards:synthetic marker is for fake fixture lines, not a way past a size limit."
   fi
   deny "Blocked by guards publish-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
 fi

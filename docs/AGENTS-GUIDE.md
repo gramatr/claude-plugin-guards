@@ -64,8 +64,9 @@ Files the tools write go under `$GUARDS_STATE_DIR` (default `~/.local/share/gram
    - **A key name that only names an identifier** (`secret_vault_id`, `token_store_ref`):
      a false positive. Rename or reword it if you can, and `report_false_positive`.
 3. Re-run `check_before_publish` on the same command or text.
-4. Other messages: "did not finish in time" means a very long single line was slow to
-   scan (leave minified or generated files out); "no secret scanner could run" means the
+4. Other messages: "did not finish in time" means the input was very large or held thousands of
+   matches (long lines and long unbroken runs are no longer slow; split the text or commit a
+   large generated file separately); "no secret scanner could run" means the
    install needs repair (`guards_status`, tell the user). Neither is a finding.
 
 An ambiguous match is an ask for a person in default, acceptEdits and plan modes, and a
