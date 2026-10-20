@@ -121,5 +121,148 @@ expect deny  "scanner missing fails closed"        Bash "$(bash_in "gh issue cre
 printf '#!/usr/bin/env bash\nexit 7\n' > "$T/broken.sh"
 expect deny  "scanner crash fails closed"          Bash "$(bash_in "gh issue create --title t --body hello")" GUARDS_SECRET_SCAN="$T/broken.sh"
 
+# --- where the match is: located, value-free explanations -----------------------
+# Every repo below is a throwaway under $T. The hook is run as the agent would
+# see it: auto mode (no person to ask), a session cwd, a command.
+mkrepo() { # mkrepo DIR -- a repo with one commit
+  mkdir -p "$1" && ( cd "$1" && git init -q . && git config user.email t@example.invalid && git config user.name t \
+    && echo base > README.md && git add README.md && git commit -q -m base )
+}
+decide() { # decide CWD COMMAND [ENV...] -> deny|ask|allow; the reason (or notice) lands in $T/last.msg
+  local cwd="$1" cmd="$2" out d
+  shift 2
+  out="$(jq -n --arg c "$cmd" --arg cwd "$cwd" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd,permission_mode:"auto"}' \
+    | env -u GUARDS_ALLOW_PUBLISH_SECRETS "$@" bash "$HOOK")"
+  d="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
+  printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // .hookSpecificOutput.additionalContext // ""' > "$T/last.msg" 2>/dev/null
+  case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
+}
+check() { # check DESC CONDITION-EXIT-STATUS
+  if [ "$2" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: $1"; fi
+}
+want() { # want WANT DESC CWD COMMAND [ENV...]
+  local w="$1" desc="$2" got
+  got="$(decide "${@:3}")"
+  if [ "$got" = "$w" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: $desc (wanted $w, got $got)"; fi
+}
+has() { [[ "$(cat "$T/last.msg")" == *"$1"* ]]; }
+
+LR="$T/loc"; mkrepo "$LR"
+mkdir -p "$LR/src"
+{ echo 'const a = 1;'; echo 'const b = 2;'; printf 'db_password: "%s"\n' "$PW"; echo 'const c = 3;'; printf 'api_secret = "%s"\n' "$PW"; } > "$LR/src/cfg.ts"  # guards:synthetic
+git -C "$LR" add -A
+want deny "unmarked staged lines are denied" "$LR" 'git commit -m "add cfg"'
+has "the staged diff, file src/cfg.ts, line 3: db_password: \"***REDACTED:SECRET***\""; check "message locates the first staged line (file, line number, redacted line)" $?
+has "the staged diff, file src/cfg.ts, line 5: api_secret = \"***REDACTED:SECRET***\""; check "message locates the second staged line" $?
+has "first 2 of 2"; check "message counts the matches" $?
+! has "$PW"; check "message never contains the value (staged diff)" $?
+has "guards:synthetic"; check "message names the marker" $?
+has "added lines of the staged diff of a git commit"; check "message says what the marker covers" $?
+has "NOT cover the command text"; check "message says what the marker does not cover" $?
+has "STARTED"; check "message says the override only works from the starting environment" $?
+has "SHAPE"; check "message keeps the shape advice" $?
+
+# Marker semantics: honoured for added lines of the staged diff, nothing else.
+sed -i 's|$| # guards:synthetic|' "$LR/src/cfg.ts"
+git -C "$LR" add -A
+want allow "the marker on the same line allows the staged line" "$LR" 'git commit -m "add cfg"'
+git -C "$LR" reset -q
+printf 'db_password: "%s"\n' "$PW" > "$LR/src/cfg.ts"  # guards:synthetic
+git -C "$LR" add -A
+want deny  "inline GUARDS_ALLOW_PUBLISH_SECRETS=1 on an unmarked staged line still denies" "$LR" 'GUARDS_ALLOW_PUBLISH_SECRETS=1 git commit -m "add cfg"'
+want allow "the real environment override still works" "$LR" 'git commit -m "add cfg"' GUARDS_ALLOW_PUBLISH_SECRETS=1
+git -C "$LR" reset -q
+rm -f "$LR/src/cfg.ts"
+
+# The marker does not cover the command text or a file named by the command.
+printf 'src/ok.ts\n' > "$LR/clean.txt"; git -C "$LR" add clean.txt
+want deny "a marker in the command text does not excuse a -m message" "$LR" "git commit -m 'DB_PASSWORD=$PW # guards:synthetic'"
+has "the command text (for a git commit this includes the -m message), line 1: "; check "message locates a match in the command text" $?
+! has "$PW"; check "message never contains the value (command text)" $?
+printf 'password: "%s" # guards:synthetic\n' "$PW" > "$LR/msg.txt"
+want deny "a marker in a -F message file does not excuse it" "$LR" 'git commit -F msg.txt'
+has "msg.txt (named by the command), line 1: password: \"***REDACTED:SECRET***\""; check "message locates a match in a named file" $?
+! has "$PW"; check "message never contains the value (named file)" $?
+git -C "$LR" reset -q; rm -f "$LR/clean.txt" "$LR/msg.txt"
+
+# More than 5 matches: only the first 5 are listed.
+{ for i in 1 2 3 4 5 6 7; do printf 'password%s = "%s"\n' "$i" "$PW"; done; } > "$LR/many.ts"  # guards:synthetic
+git -C "$LR" add many.ts
+want deny "seven unmarked lines" "$LR" 'git commit -m many'
+has "first 5 of 7"; check "message caps the list at 5 and says how many there are" $?
+[ "$(grep -c '^  [0-9]\. ' "$T/last.msg")" -eq 5 ]; check "exactly 5 locations are listed" $?
+git -C "$LR" reset -q; rm -f "$LR/many.ts"
+
+# No value leak for the other rule kinds: a private key, a value from the environment.
+cp "$T/key.pem" "$LR/leak.pem"; git -C "$LR" add leak.pem
+want deny "a staged private key" "$LR" 'git commit -m key'
+KEYBODY="$(sed -n 2p "$T/key.pem")"
+! has "$KEYBODY"; check "message never contains private key material" $?
+git -C "$LR" reset -q; rm -f "$LR/leak.pem"
+want deny "a bare value from the session environment in a message" "$LR" "git commit -m 'it printed $PW and failed'" MY_SERVICE_TOKEN="$PW"
+! has "$PW"; check "message never contains an environment value" $?
+
+# --- reporter variants: a marked fixture must not be denied -------------------------
+VR="$T/var"; mkrepo "$VR"; mkdir -p "$VR/src"
+fixture() { printf 'db_password: "%s"%s\n' "$PW" "$1"; }  # guards:synthetic
+fixture ' // guards:synthetic' > "$VR/src/a.ts"
+git -C "$VR" add -A
+want allow "marked fixture: plain commit"                    "$VR" 'git commit -m x'
+want allow "marked fixture: git -C from another cwd"         "/" "git -C $VR commit -m x"
+want allow "marked fixture: cd && commit from another cwd"   "/" "cd $VR && git commit -m x"
+want allow "marked fixture: quoted cd"                       "/" "cd '$VR' && git commit -m x"
+want allow "marked fixture: relative cd"                     "$(dirname "$VR")" "cd $(basename "$VR") && git commit -m x"
+want allow "marked fixture: git -c k=v commit"               "$VR" 'git -c user.name=x commit -m x'
+want allow "marked fixture: --amend"                         "$VR" 'git commit --amend --no-edit'
+want allow "marked fixture: -a"                              "$VR" 'git commit -a -m x'
+want allow "marked fixture: -am"                             "$VR" 'git commit -am x'
+want allow "marked fixture: a message that contains ' -a'"   "$VR" 'git commit -m "use -a to skip it"'
+# CRLF file, # style marker, several files
+fixture ' # guards:synthetic' | sed 's/$/\r/' > "$VR/src/crlf.py"
+fixture ' # guards:synthetic' > "$VR/src/b.py"
+git -C "$VR" add -A
+want allow "marked fixture: CRLF file and # marker"          "$VR" 'git commit -m x'
+# A marked line next to unmarked related lines (the multi-line rules join lines).
+{ echo 'db_password:'; printf '  %s # guards:synthetic\n' "$PW"; echo 'next: 1'; } > "$VR/src/y.yaml"  # guards:synthetic
+git -C "$VR" add -A
+want allow "marked value line below an unmarked key line"    "$VR" 'git commit -m x'
+git -C "$VR" reset -q; rm -f "$VR/src/crlf.py" "$VR/src/b.py" "$VR/src/y.yaml"
+
+# The session cwd is one repo, the commit goes to another: the cwd repo's staged
+# lines are not the commit's. (cd with quotes, git -C with quotes, pushd.)
+OR="$T/other"; mkrepo "$OR"; fixture '' > "$OR/unmarked.ts"; git -C "$OR" add -A
+git -C "$VR" add -A
+want deny  "control: the session's own repo has an unmarked staged line" "$OR" 'git commit -m x'
+want deny  "git -c k=v commit and git --no-pager commit are scanned too" "$OR" 'git -c user.name=x --no-pager commit -m x'
+want allow "cd 'quoted' to the marked repo"                 "$OR" "cd '$VR' && git commit -m x"
+want allow "git -C 'quoted' to the marked repo"              "$OR" "git -C '$VR' commit -m x"
+want allow "pushd to the marked repo"                        "$OR" "pushd $VR >/dev/null && git commit -m x"
+want allow "(cd ...; git commit) subshell"                   "$OR" "(cd $VR; git commit -m x)"
+want allow "GIT_DIR and GIT_WORK_TREE"                       "$OR" "GIT_DIR=$VR/.git GIT_WORK_TREE=$VR git commit -m x"
+want allow "--git-dir and --work-tree"                       "$OR" "git --git-dir=$VR/.git --work-tree=$VR commit -m x"
+git -C "$OR" reset -q
+
+# git add and git commit in one command: the add has not run yet, so the index
+# the hook sees is stale. The add is replayed against a copy of the index.
+SR="$T/stale"; mkrepo "$SR"; mkdir -p "$SR/src"
+fixture '' > "$SR/src/s.ts"; git -C "$SR" add -A
+fixture ' // guards:synthetic' > "$SR/src/s.ts"
+want deny  "control: the index still holds the unmarked version" "$SR" 'git commit -m x'
+want allow "git add -A && git commit sees the marker just added" "$SR" 'git add -A && git commit -m x'
+want allow "git add path && git commit sees the marker just added" "$SR" 'git add src/s.ts && git commit -m x'
+git -C "$SR" reset -q
+fixture '' > "$SR/src/new.ts"
+want deny  "git add -A && git commit scans a new unmarked file" "$SR" 'git add -A && git commit -m x'
+fixture ' // guards:synthetic' > "$SR/src/new.ts"
+want allow "git add -A && git commit with the new file marked" "$SR" 'git add -A && git commit -m x'
+[ -z "$(git -C "$SR" diff --cached --name-only)" ]; check "the replayed add did not touch the real index" $?
+
+# A very large diff: only the first MAX bytes are scanned, and the hook says so.
+BR="$T/big"; mkrepo "$BR"
+for i in $(seq 1 40); do echo "const line$i = $i; // filler text to take up room in the diff"; done > "$BR/big.ts"
+git -C "$BR" add -A
+want allow "a diff over the byte cap is allowed when what is scanned is clean" "$BR" 'git commit -m x' PUBLISH_GUARD_MAX_BYTES=300
+has "only the first 300 bytes were scanned"; check "an oversize diff says it was cut" $?
+
 echo "publish-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -19,7 +19,10 @@ For why the hooks are arranged this way (one rewriter per tool), see the
 | `PreToolUse` | `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | 40 s | Denies (or asks about) `gh` publishes, `gh api` with a body, `git commit` and GitHub MCP writes that carry credentials. |
 | `UserPromptSubmit` | none (all prompts) | `hooks/userpromptsubmit-guard.sh` | 15 s | Adds a note if the prompt contains a secret. Cannot redact or block. |
 
-MCP server: `mcp/server.py`, one tool `scan(text)`. It calls the service's
+MCP server: `mcp/server.py`, with the tools `scan(text)` and
+`check_before_publish(text_or_command, cwd, kind)`, four `guards://guide/...`
+resources and server `instructions` (see "Working with the guards as a coding
+agent" below). `scan` calls the service's
 `POST /v1/scan` with a 15 s client timeout. Anything that is not a real scan
 result comes back as `{"error": ...}`, never as a clean-looking result:
 
@@ -163,6 +166,31 @@ tests are the specification for the points listed.
 - Length: the hook sends the prompt to the secret-only route (`/v1/scan/secret`), never the full route, and passes it to `jq` on stdin, so the operating system's per-argument limit (about 128 KB) does not apply. A 200 KB prompt is sent whole and a credential at its very end gets the note. A prompt past 900000 bytes is cut to that length so the route's 1 MiB cap is never hit; a credential in the first 900000 bytes still gets the note, one after that is not seen (**open**). A service refusal (413) or an outage gives no note (**open**).
 - Latency, measured 2026-10-20 against the live service (guards-unified 0.2.4, `http://127.0.0.1:8700`, one host, CPU image): the whole hook, from process start to exit, six runs each with small fabricated prompts. A 70-byte clean prompt: 199 to 231 ms (median about 209 ms). A 70-byte prompt holding a fabricated token: 210 to 220 ms (median about 214 ms). This is one machine on one day, with prompts far below the sizes where the model cost grows (about 0.25 s per KB per the service docs); larger prompts were not measured and will be slower, up to the 8 s request limit.
 
+**Publish guard** (`publish-guard.test.sh`, throwaway git repositories, local scanner)
+
+- A deny names the rule(s) and a "Where" list: for each of up to 5 matches, the
+  source (the command text, a file the command names, or "the staged diff, file F, line N")
+  and the line as the scanner redacts it. The raw value never appears in the
+  message (checked for a context match, a private key and an environment value).
+- `guards:synthetic` on the same line drops an added line of the staged diff. It
+  does not excuse a `-m` message or a file named by `-F`/`--body-file`/`cat`.
+  `GUARDS_ALLOW_PUBLISH_SECRETS=1` in front of the command does not change the
+  answer; set in the hook's environment it does.
+- The repository is found through `git -C`, `cd`, quoted and relative paths,
+  `pushd`, subshells, `--git-dir`/`--work-tree` and `GIT_DIR`/`GIT_WORK_TREE`,
+  so another repository's staged lines are not scanned instead.
+- `git add ... && git commit` in one command scans what the add will stage
+  (a marker added since the last `git add` counts; a new unmarked file is seen),
+  without touching the real index.
+- `git -c k=v commit` and `git --no-pager commit` are inspected like `git commit`.
+- A diff over `PUBLISH_GUARD_MAX_BYTES` is cut, and the hook says so.
+
+**MCP server** (`mcp-server.test.py`)
+
+- The instructions are at most 150 words and carry the rules and the four resource URIs; a client over stdio receives them with the resources and both tools.
+- The guides state the marker scope and the defaults, and pass the scanner unchanged.
+- `check_before_publish` denies text and commits with the located, value-free explanation, allows a marked staged line, ignores an inline override, reports `inspected: false` for a command that is not a publish, and returns `{"error": ...}`, never an allow, when the hook is missing, crashes or answers garbage.
+
 **Self-heal** (`guards-selfheal.test.sh`, `docker`, `curl`, `git`, `timeout`, `sleep` stubbed)
 
 - Service already healthy: the script still runs `docker compose pull` and `up -d` (both idempotent) and removes nothing; with an unchanged version it prints nothing on stdout.
@@ -170,3 +198,57 @@ tests are the specification for the points listed.
 - A version change across the pull, or a plugin commit behind upstream, produces one `SessionStart` `additionalContext` note.
 - Containers on the old ports 8730-8732 are removed. A container on `:8700` is removed only if it is a `guards-unified` image whose compose file sits under this user's plugin cache; anything else is left alone with a warning.
 - The env file is created empty with mode 600 if absent, and set back to 600 if loosened.
+
+## Working with the guards as a coding agent
+
+The guards are meant to be worked with, not around. What an agent needs to know:
+
+1. **Never put a real credential** in a commit message, PR or issue body,
+   comment or file: not a prefix, a partial, or a rotated one. Describe the
+   shape (length, character classes, which tool produced it).
+2. **Put long messages and bodies in a file** (`git commit -F`, `gh ... --body-file`),
+   and check the text first with the `check_before_publish` tool of the plugin's
+   MCP server. It runs the real publish guard offline and returns allow or deny
+   with the located, value-free explanation.
+3. **`guards:synthetic` on the same line** marks a deliberately fake fixture line.
+   It covers only the added lines of the staged diff of a `git commit`. It does
+   not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
+   bodies, or files named by `--body-file`, `-F` or `cat`.
+4. **`GUARDS_ALLOW_PUBLISH_SECRETS=1` does nothing when typed in front of a
+   command.** The hook reads its own environment, which is the one Claude Code
+   was started from. It is the user's switch, for a reviewed false positive.
+5. **Never disable the guards and never ask the user to.** Report a false
+   positive (which key, which rule) and let the user decide.
+6. **A block says where.** The message lists up to 5 places (the command text, a
+   named file, the staged diff with file and line), each line shown as the
+   scanner redacts it. A key name that only names an identifier of a secret
+   (`secret_vault_id`, `client_secret_bws_id`, `token_store_ref`) is a false
+   positive: rename or reword it if you can, and report it.
+
+The plugin's MCP server carries this so the agent has it without anyone
+pasting it: the rules are in the server `instructions` (they reach the agent's
+system prompt), four resources hold the detail (`guards://guide/publishing`,
+`guards://guide/false-positives`, `guards://guide/hooks`,
+`guards://guide/diagnosing-a-block`), and `check_before_publish` is the tool.
+For projects that want the rules in their own agent instructions, this snippet
+for `CLAUDE.md` or `AGENTS.md` is self-contained:
+
+```markdown
+## Secret guards
+
+This session runs gramatr-guards. It redacts secrets in command and MCP output,
+denies reads of credential files, and blocks commits, PRs, issues and comments
+that look like they contain a credential. Rules:
+
+- Never put a real credential in a commit message, PR or issue body, comment or
+  file. Describe its shape (length, character classes, source), not its value.
+- Put long messages and bodies in a file and check them first with the
+  `check_before_publish` tool of the `guards` MCP server.
+- Mark a deliberately fake fixture line of a commit with `guards:synthetic` on
+  the same line. It covers added lines of a git commit's staged diff only: not
+  the commit message, not PR or issue bodies, not files named by `--body-file`.
+- `GUARDS_ALLOW_PUBLISH_SECRETS=1` typed in front of a command does nothing.
+- Never disable the guards or ask the user to. A block shows the matching line
+  with the value redacted; if it is a false positive (for example a key named
+  `secret_vault_id`), rename or reword it, or report it.
+```
