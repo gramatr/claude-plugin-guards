@@ -16,7 +16,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="${CREDCLASS_LIB:-$HERE/../hooks/credclass-lib.sh}"
 
-T="$(mktemp -d)"
+T="$(mktemp -d)"; T="$(cd "$T" && pwd -P)"   # canonical: macOS keeps temp dirs under a symlinked /var
 trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"
 mkdir -p "$HOME/.ssh" "$HOME/.aws" "$HOME/.kube" "$HOME/proj" "$HOME/.config/gcloud" "$HOME/.docker" "$HOME/.gnupg/private-keys-v1.d"

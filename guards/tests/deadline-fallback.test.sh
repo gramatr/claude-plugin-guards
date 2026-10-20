@@ -52,12 +52,14 @@ cat > "$T/quick.sh" << EOF
 exit 0
 EOF
 RUNS=60
-spurious=0
+spurious=0 noisy=0
 for _ in $(seq 1 "$RUNS"); do
-  out="$(printf '{}' | env PATH="$BIN" "$BASH_BIN" "$T/quick.sh" 2> /dev/null)"
+  out="$(printf '{}' | env PATH="$BIN" "$BASH_BIN" "$T/quick.sh" 2> "$T/quick.err")"
   [ -z "$out" ] || spurious=$((spurious + 1))
+  [ ! -s "$T/quick.err" ] || noisy=$((noisy + 1))
 done
 if [ "$spurious" -eq 0 ]; then ok; else bad "a hook that finished at once was reported as expired $spurious of $RUNS times"; fi
+if [ "$noisy" -eq 0 ]; then ok; else bad "a hook that finished at once wrote to stderr $noisy of $RUNS times (a bash job notice such as 'Terminated')"; fi
 
 # 2. The real credential-file guard on an ordinary read, without timeout.
 payload='{"tool_name":"Read","permission_mode":"default","cwd":"/tmp","tool_input":{"file_path":"/etc/hosts"}}'

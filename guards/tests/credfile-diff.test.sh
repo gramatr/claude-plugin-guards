@@ -26,7 +26,7 @@ HOOKS="$HERE/../hooks"
 GOLDEN="$HERE/credfile-diff.golden"
 OLD_REF="6a6eaca"
 
-T="$(mktemp -d)"
+T="$(mktemp -d)"; T="$(cd "$T" && pwd -P)"   # canonical: macOS keeps temp dirs under a symlinked /var
 trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"
 mkdir -p "$HOME/.ssh" "$HOME/.aws" "$HOME/.kube" "$HOME/proj/sub" "$HOME/.config/gcloud" "$HOME/.docker"
