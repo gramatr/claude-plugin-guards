@@ -196,8 +196,11 @@ KEY_ANY="(${KEY_A}|(${KEYCH}*[_.-])?(${ALIAS})([_.-]${KEYCH}*)?)"
 # [[:space:]] here a sentence ending in "secret:" redacted the first word of
 # the following line (found live, in the Bash output of the v0.2.2 check).
 DELIM='["'"'"']?[[:blank:]]*[:=][[:blank:]]*'
-V_DQ='(\\.|[^"\\]){4,}'
-V_SQ="(\\\\.|[^'\\\\]){4,}"
+# A quoted value stays on its line: quote marks that merely wrap a key word
+# ("token:" in prose) must not swallow every line up to the next quote.
+NLC=$'\n'
+V_DQ="(\\\\[^${NLC}]|[^\"\\\\${NLC}]){4,}"
+V_SQ="(\\\\[^${NLC}]|[^'\\\\${NLC}]){4,}"
 V_BARE='[^[:space:]"'"'"']{4,}'
 
 # --- key <delim> value, in the three quoting styles, for both key families

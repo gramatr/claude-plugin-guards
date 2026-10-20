@@ -92,7 +92,7 @@ for benign in "PWD=/usr/bin" "cwd listing for /usr/bin done" 'password: ${DB_PAS
 done
 # A heading that ends in a keyword and a colon is not a key: the next line's first
 # word is not its value (found live while verifying v0.2.2).
-for benign in $'Rotate the secret:\n  kubectl delete secret old' $'About the token:\n  local: running' $'secret:\n  name: db-creds' $'token:\n  one two three'; do  # guards:synthetic
+for benign in $'Rotate the secret:\n  kubectl delete secret old' $'About the token:\n  local: running' $'secret:\n  name: db-creds' $'token:\n  one two three' $'A heading that ended in "token:" then text\nline two\nand later "secret:" follows here\nlast line'; do  # guards:synthetic
   if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: heading altered: ${benign%%$'\n'*}"; fail=$((fail + 1)); fi
 done
 # The one next-line form that IS a value: a YAML scalar under a line that is only the key and a colon.
