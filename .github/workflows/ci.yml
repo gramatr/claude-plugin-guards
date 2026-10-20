@@ -77,6 +77,9 @@ jobs:
         run: |
           python -m pip install "mcp>=2" httpx
           python guards/tests/mcp-server.test.py
+      - name: MCP agent tools and prompts tests
+        # Real publish-guard and scan.sh on fabricated values in temp repos; HTTP stubbed or closed.
+        run: python -W ignore guards/tests/mcp-tools.test.py
 
   scan-sh-drift:
     runs-on: ubuntu-latest

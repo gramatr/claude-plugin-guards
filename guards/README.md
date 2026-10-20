@@ -541,6 +541,29 @@ that look like they contain a credential. Rules:
   `secret_vault_id`), rename or reword it, or report it.
 ```
 
+### Agent tools, prompts and skill: `mcp/guards_tools.py`
+
+The same MCP server also gives a coding agent what it needs to work with the
+guards instead of against them. Every tool is value-free: no result contains a
+raw matched credential value (each string is shape-scrubbed and re-scanned
+before it is returned). None of them disables, bypasses or weakens a guard; the
+`GUARDS_ALLOW_*` overrides stay with the person who starts Claude Code.
+
+| Tool | What it does |
+|---|---|
+| `check_before_publish(text_or_command, cwd)` | Runs `hooks/publish-guard.sh` offline in the strict ("auto") permission mode and returns `allow`/`deny` with the hook's own reason, verbatim. Text is checked as `gh issue create --body-file`. |
+| `explain_block(message)` | Diagnosis and next step for a guard message or decision JSON, by guard, rule and source (command text, file, staged diff). |
+| `prepare_publication(kind, title, body)` | Writes commit-message, pr-body or issue-body text to a 0600 file under the state directory, scans it, lists the lines the scanner would redact (shown redacted), and returns the command (`git commit -F`, `gh pr create --body-file`, `gh issue create --body-file`). A file with findings holds the redacted text only. |
+| `guards_status()` | Registered hooks, plugin and service versions, whether the service answers, the permission-mode rules, environment overrides that switch a guard off, and degraded modes (no `jq`, no `gitleaks`, service down). |
+| `mark_synthetic(path, lines, reason)` | Appends `guards:synthetic` with the right comment syntax for the file type. Refuses lines shaped like a real credential (PEM header, AKIA/ASIA id, `ghp_`/`gho_`/`github_pat_`, `xox*-`, `sk-`, JWT, 40+ character base64), an empty reason, paths outside the cwd's git repo, and file types with no comment syntax. |
+| `report_false_positive(rule, redacted_line, context)` | Writes a value-free JSON report under the state directory and returns its path and a line for the user to forward (the public repos have Issues disabled). Refuses input that does not look redacted. |
+
+Prompts: `fix_a_block`, `safe_pr_body`, `fake_fixture_checklist`. The plugin
+skill `skills/guards-for-agents/SKILL.md` carries the same rules and triggers
+when an agent hits a block, writes fixtures, or writes commit, PR or issue text.
+Files written by the tools live in `$GUARDS_STATE_DIR` (default
+`~/.local/share/gramatr-guards`). Tests: `guards/tests/mcp-tools.test.py`.
+
 ## Verified live
 
 Two sessions checked the real behaviour instead of assuming it.
@@ -576,7 +599,8 @@ sees) and once with it visible, and once inside the built scanner image if
 Docker is usable. Suites cover the credential-file guard, the publish guard,
 the fast secret path, the Bash hook, the MCP result guard and `scan.sh`
 redaction. There are **no** tests for `sendmessage-guard.sh`,
-`userpromptsubmit-guard.sh`, `guards-selfheal.sh` or `mcp/server.py`.
+`userpromptsubmit-guard.sh`, `guards-selfheal.sh` or the `scan` tool in `mcp/server.py`
+(the agent tools in `mcp/guards_tools.py` have `mcp-tools.test.py`).
 
 ## Server-side or hosted deployment
 

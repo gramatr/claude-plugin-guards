@@ -53,9 +53,12 @@ done
 
 echo "MCP server (HTTP client stubbed)"
 step "mcp-server" "$PY" guards/tests/mcp-server.test.py
+# The agent tools run the real publish-guard and scan.sh: once as CI sees it (no gitleaks), once with.
+step "mcp-tools" env "PATH=$SHADOW" "$PY" -W ignore guards/tests/mcp-tools.test.py
 
 if command -v gitleaks >/dev/null 2>&1; then
   echo "with gitleaks"
+  step "mcp-tools" "$PY" -W ignore guards/tests/mcp-tools.test.py
   for s in "${SUITES[@]}"; do
     step "$s" bash "guards/tests/$s.test.sh"
   done

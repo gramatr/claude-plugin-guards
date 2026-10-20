@@ -51,6 +51,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -69,6 +70,17 @@ Before publishing text, run the check_before_publish tool on it. Read guards://g
 """
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
+
+# Tools and prompts that help an agent work with the guards (check before publishing,
+# explain a block, mark fake fixtures); see guards_tools.py. None of them weakens a guard.
+def _register_agent_tools() -> None:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import guards_tools
+
+    guards_tools.register(mcp)
+
+
+_register_agent_tools()
 
 GUARDS_ENDPOINT = os.environ.get("GUARDS_ENDPOINT", "http://127.0.0.1:8700")
 

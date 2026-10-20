@@ -252,3 +252,19 @@ that look like they contain a credential. Rules:
   with the value redacted; if it is a false positive (for example a key named
   `secret_vault_id`), rename or reword it, or report it.
 ```
+
+## Agent tools that exercise the publish guard
+
+`guards/mcp/guards_tools.py` (registered by `mcp/server.py`) adds tools around the publish guard (see also [AGENTS-GUIDE.md](AGENTS-GUIDE.md)):
+
+- `check_before_publish` (in `mcp/server.py`) runs `hooks/publish-guard.sh` itself in the strict `auto` mode and returns its located, value-free explanation.
+- `prepare_publication` and `mark_synthetic` produce the two forms the hook
+  accepts: text in a file named by `--body-file` or `-F`, and fixture lines in a
+  commit's staged diff carrying `guards:synthetic`. The marker is honoured only
+  in the staged diff, never for command text, bodies or named files.
+- `explain_block`, `guards_status` and `report_false_positive` only read or write
+  local files; no tool sets, clears or suggests a bypass.
+
+Tests: `guards/tests/mcp-tools.test.py` compares `check_before_publish` with the
+hook's decision on the same input across a matrix (clean text, fixture line unmarked and
+marked, command text with a fake credential, `-F` file).
