@@ -77,7 +77,7 @@ authoritative.
 ## The open inconsistency: ask in `auto` mode
 
 The two guards that use Claude Code's `ask` decision now behave the same in
-unattended sessions. This was an open inconsistency; it is closed by #PRNUM
+unattended sessions. This was an open inconsistency; it is closed by #71
 (coordination issue #35, private repo).
 
 - The **publish guard** reads the permission mode. In `auto`, `bypassPermissions`
@@ -89,7 +89,7 @@ unattended sessions. This was an open inconsistency; it is closed by #PRNUM
   the read went through (observed live), so it was not a gate. It now applies
   the same rule: ask in `default`, `acceptEdits` and `plan`, deny elsewhere.
 
-Decision (#PRNUM): ask only where a person can answer. The cost: in `auto`,
+Decision (#71): ask only where a person can answer. The cost: in `auto`,
 `bypassPermissions` and `dontAsk` an agent that legitimately needs a `.env` or
 kubeconfig is denied and cannot be approved in-session; the person must read it
 themselves, or start Claude Code with `GUARDS_CRED_ASK` set to `force` (ask in every mode,
