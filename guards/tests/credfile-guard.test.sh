@@ -172,5 +172,65 @@ expect allow "Glob not inspected"                 Glob '{"pattern":"**/*.pem"}'
 # --- override ---
 GUARDS_ALLOW_CRED_READ=1 expect allow "override env allows read" Read "$(read_in "$HOME/.ssh/id_rsa")"
 
+# --- jq missing: the guard must still decide (an awk parser reads the payload) ---
+# A PATH with every tool except jq. The payloads are built with the real jq
+# first, then fed to the hook under the shadow PATH.
+NOJQ="$T/nojq-bin"
+mkdir -p "$NOJQ"
+for d in /usr/local/bin /usr/bin /bin; do
+  for f in "$d"/*; do
+    n="$(basename "$f")"
+    [ "$n" = jq ] && continue
+    [ -e "$NOJQ/$n" ] || ln -s "$f" "$NOJQ/$n" 2>/dev/null
+  done
+done
+[ -e "$NOJQ/jq" ] && { echo "FAIL: test setup: jq is on the shadow PATH"; fail=$((fail + 1)); }
+
+decision() { # decision OUTPUT -> deny | ask | allow (parsed with the real jq)
+  local d
+  d="$(printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
+  case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
+}
+nojq_payload() { # nojq_payload TOOL INPUT_JSON MODE
+  jq -n --arg t "$1" --argjson i "$2" --arg cwd "$HOME/proj" --arg m "$3" \
+    '{tool_name: $t, tool_input: $i, cwd: $cwd} + (if $m == "none" then {} else {permission_mode: $m} end)'
+}
+expect_nojq() { # expect_nojq WANT DESCRIPTION TOOL INPUT [MODE]
+  local out got
+  out="$(nojq_payload "$3" "$4" "${5:-default}" | env PATH="$NOJQ" bash "$HOOK")"
+  got="$(decision "$out")"
+  if [ "$got" = "$1" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: no jq: $2 (wanted $1, got $got)"; fi
+}
+
+expect_nojq deny  "Read private key"                     Read "$(read_in "$HOME/.ssh/id_rsa")"
+expect_nojq deny  "Read key under an innocuous name"     Read "$(read_in "$HOME/proj/innocuous-name.txt")"
+expect_nojq allow "Read README"                          Read "$(read_in "$HOME/proj/README.md")"
+expect_nojq ask   "Read .env where a person can answer"  Read "$(read_in "$HOME/proj/.env")" default
+expect_nojq deny  "Read .env in auto mode"               Read "$(read_in "$HOME/proj/.env")" auto
+expect_nojq deny  "Grep glob for pem files"              Grep '{"pattern":"x","glob":"*.pem"}'
+expect_nojq deny  "Bash cat of a key"                    Bash "$(jq -n --arg c "cat $HOME/.ssh/id_rsa" '{command:$c}')"
+# the command string carries escaped quotes; they must not end the value early
+expect_nojq deny  "Bash with escaped quotes around a key path" Bash "$(jq -n --arg c "cat \"$HOME/.ssh/id_rsa\" | head -1" '{command:$c}')"
+expect_nojq allow "Bash cat of a harmless file"          Bash "$(jq -n --arg c "cat $HOME/proj/README.md" '{command:$c}')"
+# a key name that only appears inside another string is not a key
+expect_nojq allow "key names inside a command string"    Bash "$(jq -n --arg c "echo '{\"file_path\":\"$HOME/.ssh/id_rsa\"}'" '{command:$c}')"
+# field order must not matter
+expect_nojq deny  "tool_input before the other fields"   Read "$(read_in "$HOME/.aws/credentials")"
+
+# an unreadable payload: with jq it is passed (documented), without jq it is refused
+out="$(printf 'not json at all' | env PATH="$NOJQ" bash "$HOOK")"
+got="$(decision "$out")"
+if [ "$got" = deny ] && [[ "$out" == *"jq is not installed"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: no jq: unreadable payload is refused with an actionable reason (got $got: $out)"; fi
+out="$(printf 'not json at all' | bash "$HOOK")"
+if [ -z "$out" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: with jq: unreadable payload is passed (got: $out)"; fi
+
+# the decision JSON is valid and the reason survives escaping
+out="$(nojq_payload Read "$(read_in "$HOME/.ssh/id_rsa")" default | env PATH="$NOJQ" bash "$HOOK")"
+if printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("Blocked by guards credfile-guard")' >/dev/null 2>&1; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: no jq: deny output is valid JSON with the reason ($out)"; fi
+
+# the override still works without jq
+out="$(nojq_payload Read "$(read_in "$HOME/.ssh/id_rsa")" default | env PATH="$NOJQ" GUARDS_ALLOW_CRED_READ=1 bash "$HOOK")"
+if [ -z "$out" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: no jq: override allows the read ($out)"; fi
+
 echo "credfile-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
