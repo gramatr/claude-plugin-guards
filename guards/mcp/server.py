@@ -308,17 +308,17 @@ def check_before_publish(text_or_command: str, cwd: str = "", kind: str = "auto"
     "inspected": bool, "explanation": str}. On a deny the explanation says where
     each match is (source, file, line) with the line shown as the scanner
     redacts it, and what to do. It never contains the matched value. If the
-    check could not run it returns {"error": ...}: that is not an allow.
+    check could not run it returns {"decision": "unknown", "error": ...}: unknown is never an allow.
     Marker semantics: guards:synthetic only covers added lines of the staged
     diff of a git commit, never the text you pass here.
     """
     if not isinstance(text_or_command, str) or not text_or_command.strip():
-        return {"error": "nothing to check: text_or_command is empty"}
+        return {"decision": "unknown", "error": "nothing to check: text_or_command is empty"}
     if kind not in ("auto", "command", "text"):
-        return {"error": 'kind must be "auto", "command" or "text"'}
+        return {"decision": "unknown", "error": 'kind must be "auto", "command" or "text"'}
     run_cwd = cwd or os.getcwd()
     if not os.path.isdir(run_cwd):
-        return {"error": f"cwd is not a directory: {run_cwd}"}
+        return {"decision": "unknown", "error": f"cwd is not a directory: {run_cwd}"}
     as_command = kind == "command" or (kind == "auto" and bool(_COMMAND_RE.match(text_or_command)))
     if as_command:
         result = _run_hook(text_or_command, run_cwd)
@@ -329,6 +329,8 @@ def check_before_publish(text_or_command: str, cwd: str = "", kind: str = "auto"
             result = _run_hook("gh issue comment 0 --body-file body.txt", tmp)
         if "explanation" in result:
             result["explanation"] = _TEXT_LABEL_RE.sub("your text", result["explanation"]).replace("from this command", "from your text")
+    if "error" in result:
+        result["decision"] = "unknown"  # could not inspect: never an allow
     if os.environ.get("GUARDS_ALLOW_PUBLISH_SECRETS") == "1" and "explanation" in result:
         result["explanation"] += " Note: GUARDS_ALLOW_PUBLISH_SECRETS=1 is set in this environment, so the real hook would allow everything; this check ignored it."
     return result

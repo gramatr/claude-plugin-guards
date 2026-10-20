@@ -51,6 +51,9 @@ jobs:
       - name: fast secret-scan path tests
         # Stub service; proves the fast path is used and every failure falls back.
         run: bash guards/tests/fast-secret-scan.test.sh
+      - name: no-jq tests (every hook with jq hidden from PATH)
+        # Fabricated values only; payloads are built with jq, then the hooks run without it.
+        run: bash guards/tests/no-jq.test.sh
       - name: publish-guard tests
         # Fabricated credential values only; nothing real is read.
         run: bash guards/tests/publish-guard.test.sh

@@ -68,8 +68,10 @@ Prerequisites:
   fast secret path. Without Docker, secret detection still works through the
   local `scan.sh` fallback; PII and injection do not (see
   [`docs/HOOKS.md`](../docs/HOOKS.md)).
-- `jq` and `curl`. Every hook needs `jq`; the credential-file and publish
-  guards **fail open** without it.
+- `jq` and `curl`. Without `jq` the credential-file and publish guards still
+  decide (awk reads the payload), the output and SendMessage hooks withhold or
+  deny what they cannot redact and say to install `jq`, and the prompt hook is
+  silent (advisory). Install it anyway: the vendor-token pass needs it too.
 - `uv`, for the MCP `scan` tool (`.mcp.json` runs it with `uv run --script`).
 - `gitleaks` is optional. If it is missing, the self-heal script downloads
   v8.30.1 for Linux or macOS (x64 or arm64), checks its SHA-256 against the
@@ -363,8 +365,8 @@ How to deal with it:
 
 Other limits: a `Grep` over a whole directory is checked by directory and glob
 name only; a Bash command that reads a key indirectly (a script that cats it, a
-path in a variable, `eval`) is not caught; the hook fails open if `jq` is
-missing or the payload cannot be parsed. Tests:
+path in a variable, `eval`) is not caught; a payload the hook cannot read
+is denied with a reason that says so. Tests:
 `guards/tests/credfile-guard.test.sh` (throwaway keys generated at run time).
 
 ### Pre-publish guard (PreToolUse): `publish-guard.sh`
@@ -443,7 +445,7 @@ or FAKE; it does not apply to command text (a `-m` message), issue or PR
 bodies, or named files (`--body-file`, `-F`, `cat`). Typing
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in front of a command does nothing: the hook
 reads its own environment. If only gitleaks is missing, the built-in passes still run and the
-hook adds a notice. The hook fails open only if `jq` is missing.
+hook adds a notice. Without `jq` it still decides, with the vendor-token pass skipped and a notice.
 
 Because this hook runs in the session's own environment it also turns on
 `SECRET_GUARD_ENV_VALUES=1` for the scanner: the values of environment

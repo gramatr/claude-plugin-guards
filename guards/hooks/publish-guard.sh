@@ -70,16 +70,23 @@ set -uo pipefail
 export SS_LOCAL_TIMEOUT="${SS_LOCAL_TIMEOUT:-15}" SS_ENV_TIMEOUT="${SS_ENV_TIMEOUT:-4}"
 
 [ "${GUARDS_ALLOW_PUBLISH_SECRETS:-0}" = "1" ] && exit 0
-command -v jq >/dev/null 2>&1 || exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRET_SCAN="${GUARDS_SECRET_SCAN:-$(dirname "$SCRIPT_DIR")/vendor/secret-guard-core/scan.sh}"
 MAX_BYTES="${PUBLISH_GUARD_MAX_BYTES:-524288}"
 
 RAW="$(cat)"
-TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)" || exit 0
-CWD="$(printf '%s' "$RAW" | jq -r '.cwd // ""' 2>/dev/null)"
-PERM_MODE="$(printf '%s' "$RAW" | jq -r '.permission_mode // ""' 2>/dev/null)"
+# shellcheck source=guards/hooks/json-lib.sh
+. "$SCRIPT_DIR/json-lib.sh"   # HAVE_JQ, jfield, emit_pre, emit_context: works without jq
+TOOL_NAME="$(jfield tool_name)"
+CWD="$(jfield cwd)"
+PERM_MODE="$(jfield permission_mode)"
+# No jq and a payload that cannot be read without it: the hook cannot tell what the
+# call is, so it refuses rather than let a publish through unchecked.
+if [ "$HAVE_JQ" -eq 0 ] && [ -z "$TOOL_NAME" ]; then
+  emit_pre deny "Blocked by guards publish-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked for credentials. ${NOJQ_INSTALL} (The user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 in the environment Claude Code starts from to bypass.)"
+  exit 0
+fi
 [ -n "$CWD" ] || CWD="$PWD"
 
 WORK="$(mktemp -d)"
@@ -88,8 +95,7 @@ SCAN_INPUT="$WORK/input.txt"
 : > "$SCAN_INPUT"
 
 deny() {
-  jq -n --arg reason "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+  emit_pre deny "$1"
   exit 0
 }
 
@@ -99,14 +105,12 @@ deny() {
 # non-interactive run) is not something this plugin controls or has verified;
 # set GUARDS_PUBLISH_ASK=0 / GUARDS_CRED_ASK=0 to make those runs hard blocks.
 ask() {
-  jq -n --arg reason "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+  emit_pre ask "$1"
   exit 0
 }
 
 notice() {
-  jq -n --arg ctx "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $ctx}}'
+  emit_context PreToolUse "$1"
 }
 
 # Every line handed to the scanner is recorded in META with where it came from
@@ -174,7 +178,7 @@ staged_diff_lines() {
 
 case "$TOOL_NAME" in
   Bash)
-    CMD="$(printf '%s' "$RAW" | jq -r '.tool_input.command // ""' 2>/dev/null)"
+    CMD="$(jfield command)"
     [ -n "$CMD" ] || exit 0
 
     PUBLISH_RE='(^|[^A-Za-z0-9_-])gh[[:space:]]+(issue|pr|release|gist)[[:space:]]+(create|comment|edit|review)([^A-Za-z0-9_-]|$)'
@@ -305,7 +309,11 @@ case "$TOOL_NAME" in
       *create*|*update*|*add_*|*comment*|*push*|*merge*|*review*|*edit*|*post*|*send*|*write*) ;;
       *) exit 0 ;;
     esac
-    printf '%s' "$RAW" | jq -r '.tool_input | tostring' > "$WORK/mcp.txt" 2>/dev/null
+    if [ "$HAVE_JQ" -eq 1 ]; then
+      printf '%s' "$RAW" | jq -r '.tool_input | tostring' > "$WORK/mcp.txt" 2>/dev/null
+    else
+      printf '%s' "$RAW" > "$WORK/mcp.txt"   # without jq the whole payload is scanned: a superset
+    fi
     emit_src "the $TOOL_NAME input (JSON on one line)" "$WORK/mcp.txt"
     LABEL="this $TOOL_NAME call"
     ;;
@@ -469,6 +477,9 @@ fi
 NOTE=""
 if [ "$SS_SOURCE" = "local" ] && grep -q 'gitleaks not found' "$WORK/ss.err" 2>/dev/null; then
   NOTE="publish-guard: gitleaks is not installed, so only the built-in private-key and context checks ran on ${LABEL}. Vendor-token formats were not checked."
+fi
+if [ "$HAVE_JQ" -eq 0 ]; then
+  NOTE="${NOTE:+$NOTE }publish-guard: jq is not installed, so the payload was read without it and the vendored scanner skipped its gitleaks pass, so vendor token formats were not checked. ${NOJQ_INSTALL}"
 fi
 if [ "$DIFF_CAPPED" -eq 1 ]; then
   NOTE="${NOTE:+$NOTE }publish-guard: the diff to be committed is larger than ${MAX_BYTES} bytes; only the first ${MAX_BYTES} bytes were scanned."

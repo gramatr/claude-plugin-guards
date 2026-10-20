@@ -42,6 +42,10 @@ GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 
 RAW="$(cat)"
 
+# Advisory only: without jq the prompt cannot be read or the note built, so the
+# hook stays silent (a line on stderr, shown in debug output) and never blocks.
+command -v jq >/dev/null 2>&1 || { echo "guards userpromptsubmit-guard: jq is not installed; the advisory prompt check is skipped" >&2; exit 0; }
+
 PROMPT="$(printf '%s' "$RAW" | jq -r '.prompt // ""' 2>/dev/null)"
 if [ -z "$PROMPT" ]; then
   exit 0

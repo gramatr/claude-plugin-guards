@@ -88,10 +88,15 @@ TMP_FILES=()
 trap 'rm -f "${TMP_FILES[@]}"' EXIT
 
 RAW="$(cat)"
-TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)"
+# shellcheck source=guards/hooks/json-lib.sh
+. "$SCRIPT_DIR/json-lib.sh"
+TOOL_NAME="$(jfield tool_name)"
 if [ "$TOOL_NAME" != "SendMessage" ]; then
   exit 0
 fi
+# Redaction rewrites the message JSON, which needs jq: deny a message with
+# credential material, allow a clean one with a note (json-lib.sh).
+[ "$HAVE_JQ" -eq 1 ] || nojq_pre_guard sendmessage-guard "$SECRET_SCAN"
 
 MESSAGE="$(printf '%s' "$RAW" | jq -r '.tool_input.message // ""' 2>/dev/null)"
 ORIGINAL_INPUT="$(printf '%s' "$RAW" | jq -c '.tool_input')"

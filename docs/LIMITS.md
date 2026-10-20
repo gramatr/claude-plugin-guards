@@ -168,6 +168,15 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   (deny for the publish and credential-file guards, withhold for the Bash and
   MCP output hooks), listed in [`HOOKS.md`](HOOKS.md). The cost is that a hung
   scanner now blocks a publish or hides one command's output until you retry.
+- **A missing `jq` degrades every hook, visibly.** The publish and
+  credential-file guards still decide (awk reads the payload) but the publish
+  guard skips the gitleaks pass, so vendor-token formats are not checked. The
+  Bash, MCP-result and SendMessage hooks cannot redact without `jq`: a result or
+  message with credential material is withheld or denied with a reason that says
+  to install it, and anything else passes with a note that only the built-in
+  checks ran (no PII or injection notes). The prompt hook is advisory and stays
+  silent. The `check_before_publish` tool answers `unknown`, never allow, when it
+  could not inspect.
 - **Docker is required for PII and injection.** Without it only secret
   detection runs. The service stack is not supported on Windows; Windows is not
   tested.
