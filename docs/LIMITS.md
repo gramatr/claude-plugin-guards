@@ -78,16 +78,17 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   time". The `guards:synthetic` marker is for fake fixtures and removes the line
   from the scan; it is not meant as a way past a size limit. Not fixed: it is in
   the shared `scan.sh`.
-- **The `guards:synthetic` marker lets a real vendor token or private key
-  through a git commit unchecked.** The hook drops every marked added line before
-  scanning, whatever it holds. Verified: a fabricated vendor-token-shaped string
-  and the lines of a throwaway private key, each marked, were allowed; the same
-  lines unmarked were denied. The marker is a statement by the committer that the
-  line is fake, and nothing checks it. A safer rule, not implemented: still scan
-  marked lines, but only for the sure-thing detectors (private-key material and
-  vendor token formats, never the key-name context rules), and deny if one
-  fires. That keeps fixtures with fake password lines working and stops the
-  marker being a way to launder a real key.
+- **The `guards:synthetic` marker is not checked beyond a few vendor shapes.**
+  Before this was fixed the hook dropped every marked added line before scanning,
+  so a fabricated vendor-token-shaped string and the lines of a throwaway private
+  key, each marked, were allowed (verified). Now marked lines are still held
+  against: private-key headers, AWS access key ids (`AKIA`/`ASIA` plus 16),
+  GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), Slack
+  tokens (`xox[abprs]-`), and Stripe and OpenAI-style live keys (`sk_live_`,
+  `rk_live_`, `sk-proj-`), and the commit is denied. A matched token containing
+  EXAMPLE or FAKE (the documented AWS example ids) is accepted. Not in the set,
+  on purpose: JWT-shaped, generic high-entropy and base64 values. So a real
+  credential of another shape on a marked line still passes unchecked.
 - **`git commit` forms the publish guard does not follow:** a pathspec commit
   (`git commit src/a.ts -m x`, which commits the working-tree state of the
   listed paths whatever is staged), `--amend` (only the newly staged changes are

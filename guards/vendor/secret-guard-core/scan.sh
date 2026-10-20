@@ -160,12 +160,22 @@ ctx_describes_secret() {
 ctx_code_shape_cs() {
   local key="$1" before="$2" pfx="$3" val="$4" after="$5"
   local lb="${before##*$'\n'}" la="${after%%$'\n'*}" core="$4" delim="" line
-  local endp='[],;)}]$' codep='[;{}]|=>'
+  local endp='[],;)}]$' codep=';|=>|\)[[:blank:]]*\{'
   while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
   [[ "$pfx" =~ :[[:blank:]]*$ ]] && delim="colon"
   [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && delim="${delim:-spaced}"
   [ -n "$delim" ] || return 1
   line="$lb$pfx$val$la"
+  # The key sits inside a quoted string (JSON string content, a log message, a
+  # shell string): that is text, not code. An opening quote just before the key
+  # that follows a colon or equals sign starts a string value; one that follows
+  # anything else is a quoted key ("token": x) and is not counted.
+  local lq="$lb" dq sq
+  if [[ "$lq" == *[\"\'] ]]; then
+    [[ "$lq" =~ [:=][[:blank:]]*[\"\']$ ]] || lq="${lq%?}"
+  fi
+  dq="${lq//[^\"]/}"; sq="${lq//[^\']/}"
+  if [ $(( ${#dq} % 2 )) -eq 1 ] || [ $(( ${#sq} % 2 )) -eq 1 ]; then return 1; fi
   # a value that ends at a quote sits inside a string (a JSON body, a quoted
   # command), not in code
   [[ "$la" =~ ^[\"\'] ]] && return 1
@@ -181,12 +191,19 @@ ctx_code_shape_cs() {
     return 0
   fi
   [ "$delim" = colon ] || [ "$delim" = spaced ] || return 1
+  # Property position: the key is the first thing on its line, or follows an
+  # opening bracket or a comma (an object literal, an argument list), possibly
+  # after modifier keywords. A key in the middle of a sentence or a log line
+  # ("... INFO retry password: x") is not a property.
+  local prop=0
+  local lbp="${lb%[\"\']}"
+  [[ "$lbp" =~ (^|[\{\(\[,])[[:blank:]]*((readonly|private|public|protected|static|abstract|declare)[[:blank:]]+)*$ ]] && prop=1
   local cue=0
   [[ "$line" =~ $codep ]] && cue=1
   # a type: primitive names anywhere after a colon; others need code around
   if [ "$delim" = colon ]; then
     [[ "$core" =~ ^(string|number|boolean|unknown|any|void|object|never|bigint|symbol)(\[\])?$ ]] && return 0
-    if [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; then
+    if [ "$prop" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; }; then
       [[ "$core" =~ ^(Promise|Record|Array|Map|Set|Partial|Readonly|ReadonlyArray|Omit|Pick)\< ]] && return 0
       [[ "$core" =~ ^([A-Z][a-z]{2,})+(\[\])?$ ]] && return 0
     fi
@@ -200,8 +217,8 @@ ctx_code_shape_cs() {
     [ "$c" = "$k" ] && shaped=1
     [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ ^[a-z]{2,}([A-Z][a-z]{2,})+$ ) ]] && shaped=1
     if [ "$shaped" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ $endp ]]; }; then
-      [ "$delim" = colon ] && return 0
-      [[ "$val" =~ \;$ ]] && return 0
+      [ "$delim" = colon ] && [ "$prop" = 1 ] && return 0
+      [ "$delim" = spaced ] && [[ "$val" =~ \;$ ]] && return 0
     fi
   fi
   return 1
@@ -333,6 +350,37 @@ V_DQ="(\\\\[^${NLC}]|[^\"\\\\${NLC}]){4,}"
 V_SQ="(\\\\[^${NLC}]|[^'\\\\${NLC}]){4,}"
 V_BARE='[^[:space:]"'"'"']{4,}'
 
+# --- Very long unbroken runs: mask them for the context rules ----------------
+# The key patterns start with a run of name characters, so on one long
+# unbroken run (a base64 blob, a hash, a minified bundle without spaces) every
+# start position is tried against the whole run: a 20 KB run took 10 s and the
+# publish guard denied the commit as "did not finish". No key name is that
+# long, so runs of 256+ name characters are swapped for a short placeholder for
+# the context rules and put back afterwards. A value that IS such a run (a
+# long token after a key) is still redacted: the placeholder is a 4+ character
+# value. At most 200 distinct runs are masked per input.
+CTX_RUN_MIN=256
+CTX_RUNS=()
+ctx_mask_runs() {
+  local run i=0
+  CTX_RUNS=()
+  [[ "$CTX_TEXT" == *"~~R"* ]] && return 0
+  while IFS= read -r run; do
+    [ -n "$run" ] || continue
+    CTX_RUNS[i]="$run"
+    CTX_TEXT="${CTX_TEXT//"$run"/"~~R${i}~~"}"
+    i=$((i + 1))
+  done < <(printf '%s' "$CTX_TEXT" | grep -oE "[A-Za-z0-9_.-]{${CTX_RUN_MIN},}" 2>/dev/null | sort -u | head -n 200)
+}
+ctx_unmask_runs() {
+  local i
+  for i in "${!CTX_RUNS[@]}"; do
+    CTX_TEXT="${CTX_TEXT//"~~R${i}~~"/"${CTX_RUNS[i]}"}"
+  done
+  CTX_RUNS=()
+}
+ctx_mask_runs
+
 # --- key <delim> value, in the three quoting styles, for both key families
 for KEYRE in "$KEY_A" "$KEY_B"; do
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
@@ -379,6 +427,8 @@ ctx_plain pgpass-password '(^|[[:space:]])[A-Za-z0-9_.*-]+:[0-9*]+:[A-Za-z0-9_.*
 # --- Key and value on separate lines or in one JSON object
 ctx_plain k8s-env-value '(^|[^A-Za-z0-9_.-])name:[[:space:]]*["'"'"']?'"${KEY_ANY}"'["'"'"']?[[:space:]]+value:[[:space:]]*["'"'"']?' '[^[:space:]"'"'"']{4,}'
 ctx_plain json-key-value '"(name|key)"[[:space:]]*:[[:space:]]*"'"${KEY_ANY}"'"[[:space:]]*,[[:space:]]*"value"[[:space:]]*:[[:space:]]*"' '[^"]{4,}' '"'
+
+ctx_unmask_runs
 
 # --- Vendor token shapes gitleaks' default ruleset lacks (P2)
 ctx_plain azure-client-secret '(^|[^A-Za-z0-9_~.-])' '[A-Za-z0-9_~.-]{3}8Q~[A-Za-z0-9_~.-]{34}'

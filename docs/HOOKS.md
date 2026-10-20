@@ -183,6 +183,7 @@ tests are the specification for the points listed.
   (a marker added since the last `git add` counts; a new unmarked file is seen),
   without touching the real index.
 - `git -c k=v commit` and `git --no-pager commit` are inspected like `git commit`.
+- A marked line is still checked for a private-key header, an AWS access key id, a GitHub, Slack, Stripe or OpenAI-style live key and denied (naming the family, never the value); the documented EXAMPLE ids, values containing EXAMPLE or FAKE, JWT-shaped strings and ordinary fixtures are accepted.
 - A diff over `PUBLISH_GUARD_MAX_BYTES` is cut, and the hook says so.
 
 **MCP server** (`mcp-server.test.py`)
@@ -213,8 +214,11 @@ The guards are meant to be worked with, not around. What an agent needs to know:
    MCP server. It runs the real publish guard offline and returns allow or deny
    with the located, value-free explanation.
 3. **`guards:synthetic` on the same line** marks a deliberately fake fixture line.
-   It covers only the added lines of the staged diff of a `git commit`. It does
-   not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
+   It covers only the added lines of the staged diff of a `git commit`, and not
+   a real vendor credential or key (a private-key header, an AWS access key id,
+   a GitHub, Slack, Stripe or OpenAI-style live key is still denied on a marked
+   line; documented EXAMPLE ids and values containing EXAMPLE or FAKE are fine).
+   It does not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
    bodies, or files named by `--body-file`, `-F` or `cat`.
 4. **`GUARDS_ALLOW_PUBLISH_SECRETS=1` does nothing when typed in front of a
    command.** The hook reads its own environment, which is the one Claude Code

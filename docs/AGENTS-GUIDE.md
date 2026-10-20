@@ -11,8 +11,11 @@ the MCP server's `instructions` and `guards://guide/*` resources, the prompts, a
    file: not a prefix, a partial, or a rotated one. Describe the shape (length,
    character classes, which tool produced it).
 2. **`guards:synthetic` on the same line** marks a deliberately fake fixture line. It
-   covers only the added lines of the staged diff of a `git commit`. It does not cover
-   the command text (so not a `-m` message), `gh issue`/`gh pr` bodies, or files named
+   covers only the added lines of the staged diff of a `git commit`, and not a real
+   vendor credential or key (a private-key header, an AWS access key id, a GitHub,
+   Slack, Stripe or OpenAI-style live key is still denied on a marked line;
+   documented EXAMPLE ids and values containing EXAMPLE or FAKE are fine). It does
+   not cover the command text (so not a `-m` message), `gh issue`/`gh pr` bodies, or files named
    by `--body-file`, `-F` or `cat`.
 3. **Never disable or bypass the guards, and never ask the user to.** Report a false
    positive and let the user decide. `GUARDS_ALLOW_PUBLISH_SECRETS=1` is read from the
@@ -87,6 +90,8 @@ matching line, in the file's comment syntax:
 const sample = { client_secret: "not-a-real-value" }; // guards:synthetic
 ```
 
+A marked line is still checked against vendor-key shapes, so build a fake
+vendor-shaped value at run time or give it an obviously fake form (EXAMPLE, FAKE).
 Rules of thumb: build values at run time when you can; never paste a real token
 "just to see"; never use the marker on a line that could hold a real value. The
 marker removes the line from the scan, so it is a statement by you that the line

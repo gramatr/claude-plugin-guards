@@ -37,7 +37,8 @@
 #
 # MARKER: a line containing `guards:synthetic` is dropped from the added
 # lines of the staged diff before scanning. It exists for deliberately fake
-# test fixtures and makes the intent visible in review. It does NOT apply to
+# test fixtures and makes the intent visible in review. Marked lines are still
+# checked for a few sure-thing vendor shapes (see MARKED_FAMILIES). It does NOT apply to
 # command text (so not a -m message), issue/PR bodies or files named by the
 # command (--body-file, -F, cat).
 #
@@ -148,14 +149,19 @@ staged_diff_lines() {
   local gitdir="$1"; shift
   env "$@" git -C "$gitdir" -c core.quotepath=false diff "${DIFF_ARGS[@]}" -U0 --no-color --no-ext-diff --no-textconv \
       --src-prefix=a/ --dst-prefix=b/ 2>/dev/null \
-    | LC_ALL=C awk -v body="$SCAN_INPUT" -v meta="$META" -v max="$MAX_BYTES" -v capf="$WORK/capped" '
+    | LC_ALL=C awk -v body="$SCAN_INPUT" -v meta="$META" -v max="$MAX_BYTES" -v capf="$WORK/capped" -v marked="$WORK/marked.txt" -v markedmeta="$WORK/marked.meta" '
         /^diff --git / { inhdr = 1; next }
         inhdr && /^\+\+\+ / { path = substr($0, 5); sub(/^b\//, "", path); next }
         /^@@ / { inhdr = 0; s = $0; sub(/^@@ [^+]*\+/, "", s); ln = s + 0; next }
         inhdr { next }
         /^\+/ {
           line = substr($0, 2)
-          if (index(line, "guards:synthetic")) { ln++; next }
+          if (index(line, "guards:synthetic")) {
+            # dropped from the context scan, but kept for the sure-thing check
+            print line >> marked
+            print "the staged diff, file " path "\t" ln >> markedmeta
+            ln++; next
+          }
           total += length(line) + 1
           if (total > max) { print "1" > capf; exit }
           print line >> body
@@ -306,6 +312,42 @@ case "$TOOL_NAME" in
   *) exit 0 ;;
 esac
 
+# A marked line is dropped from the scan above. The marker says "this line is a
+# fake fixture", and nothing checks that. So every marked line is still held
+# against a few sure-thing shapes: a private-key header, an AWS access key id, a
+# GitHub, Slack, Stripe or OpenAI-style live key. A match is denied even though
+# the line is marked. JWT-shaped, high-entropy and base64 values are NOT in this
+# set (fake ones are a normal fixture). A matched token that contains EXAMPLE or
+# FAKE (the documented AWS example ids, for one) is accepted.
+MARKED_FAMILIES=(
+  "private-key header|-----BEGIN [A-Z0-9 ]*PRIVATE KEY"
+  "AWS access key id|(AKIA|ASIA)[A-Z0-9]{16}"
+  "GitHub token|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
+  "Slack token|xox[abprs]-[A-Za-z0-9-]{10,}"
+  "Stripe or OpenAI live key|(sk|rk)_live_[A-Za-z0-9]{16,}|sk-proj-[A-Za-z0-9_-]{20,}"
+)
+marked_hits() { # marked_hits -> lines "family<TAB>where" (never the value)
+  [ -s "$WORK/marked.txt" ] || return 0
+  local fam name re n w
+  for fam in "${MARKED_FAMILIES[@]}"; do
+    name="${fam%%|*}"; re="${fam#*|}"
+    LC_ALL=C grep -noE -- "$re" "$WORK/marked.txt" 2>/dev/null \
+      | { if [ "$name" = "private-key header" ]; then cat; else grep -viE 'example|fake'; fi; } \
+      | while IFS=: read -r n _; do
+          w="$(sed -n "${n}p" "$WORK/marked.meta" | awk -F'\t' '{ print $1 ", line " $2 }')"
+          printf '%s\t%s\n' "$name" "$w"
+        done
+  done
+}
+MARKED_HITS="$(marked_hits | sort -u | head -n 5)"
+if [ -n "$MARKED_HITS" ]; then
+  deny "Blocked by guards publish-guard: a line marked guards:synthetic looks like a REAL vendor credential or key. The marker means 'fake fixture' and is not checked for anything else, so private-key headers, AWS access key ids, GitHub, Slack, Stripe and OpenAI-style live keys are still denied on a marked line.
+
+Where (the value is never printed):
+$(printf '%s\n' "$MARKED_HITS" | awk -F'\t' '{ printf "  %d. %s: %s\n", NR, $2, $1 }')
+What to do: build the fake value at run time in the test (do not write it into the file), or use an obviously fake form: the documented example ids (for example the AWS documentation key ids) or any value that contains the word EXAMPLE or FAKE. A JWT-shaped or ordinary fake fixture value is fine with the marker. If this really is a real credential, remove it, rotate it, and describe its shape only."
+fi
+
 [ -s "$SCAN_INPUT" ] || exit 0
 
 # Secrets only, fast: the warm service's secret-only route plus the local-
@@ -385,7 +427,7 @@ explain() {
   cat <<'EOT'
 What to do:
  1. If the match is only a key NAME (the id or reference of a secret, a token_type) and the value is not a credential, that is a false positive. Rename or reword the key if you can, and report it to the user. Do not retry unchanged.
- 2. A deliberately fake fixture line in a git commit: put the marker guards:synthetic on the SAME line, in that file's comment syntax. It covers only the added lines of the staged diff of a git commit. It does NOT cover the command text (so not a -m message), gh issue/pr bodies, or files named by --body-file/-F/cat.
+ 2. A deliberately fake fixture line in a git commit: put the marker guards:synthetic on the SAME line, in that file's comment syntax. It covers only the added lines of the staged diff of a git commit, and not a real vendor credential or key (a private-key header, an AWS access key id, a GitHub, Slack, Stripe or OpenAI-style live key stays denied on a marked line; the documented EXAMPLE ids and values containing EXAMPLE or FAKE are fine). It does NOT cover the command text (so not a -m message), gh issue/pr bodies, or files named by --body-file/-F/cat.
  3. A message or body: describe the SHAPE only (length, character classes, which tool produced it), never the value or a prefix of it. Put the text in a file and check it first with the guards MCP tool check_before_publish.
  GUARDS_ALLOW_PUBLISH_SECRETS=1 only works when set in the environment Claude Code was STARTED from; putting it in front of a command does nothing. Never disable the guards; ask the user to review a false positive.
 EOT
