@@ -12,8 +12,12 @@
 #   SNIFF_MAX_BYTES  how much of a file the private-key content sniff reads
 #   PRIVATE_KEY_RE   ERE matching a PEM/OpenSSH private-key header
 #   HOME             for ~ and $HOME expansion
-# Needs on PATH: realpath, head, grep, tr.
+# Needs on PATH: head, grep, tr, readlink (realpath -m is used when it works;
+# realpath-lib.sh resolves symlinks without it, as on stock macOS).
 # Defines: resolve_path, sensitive_reason, sensitive_dir_reason, is_ask_class.
+
+# shellcheck source=guards/hooks/realpath-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/realpath-lib.sh" || return 1
 
 # resolve PATH -> absolute, ~ and $HOME expanded, symlinks followed if
 # the target exists. Prints nothing for an empty argument.
@@ -31,7 +35,7 @@ resolve_path() {
     /*) ;;
     *) p="$CWD/$p" ;;
   esac
-  realpath -m -- "$p" 2>/dev/null || printf '%s' "$p"
+  gd_realpath "$p"
 }
 
 # sensitive_reason PATH -> prints a short reason and returns 0 if PATH

@@ -97,6 +97,9 @@ gd_bounded() {
     command -v pkill >/dev/null 2>&1 && pkill -KILL -P "$pid" 2>/dev/null
     kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   wd=$!
+  # Out of the job table, so bash never prints a "Terminated" notice for it
+  # (bash 3.2 does, into the hook's stderr, on every run).
+  disown "$wd" 2>/dev/null
   wait "$pid" 2>/dev/null; rc=$?
   kill "$wd" 2>/dev/null
   command -v pkill >/dev/null 2>&1 && pkill -P "$wd" 2>/dev/null
