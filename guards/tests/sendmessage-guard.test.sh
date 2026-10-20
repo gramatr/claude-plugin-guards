@@ -25,6 +25,7 @@ export HOME="$T/home"; mkdir -p "$HOME"
 mkdir -p "$T/p/guards/hooks" "$T/p/guards/vendor/secret-guard-core" "$T/svc"
 cp "$HOOK_SRC" "$T/p/guards/hooks/sendmessage-guard.sh"
 cp "$HERE/../hooks/deadline-lib.sh" "$T/p/guards/hooks/deadline-lib.sh"
+cp "$HERE/../hooks/json-lib.sh" "$T/p/guards/hooks/json-lib.sh"
 HOOK="$T/p/guards/hooks/sendmessage-guard.sh"
 SCAN="$T/p/guards/vendor/secret-guard-core/scan.sh"
 cat > "$SCAN" <<'SH'

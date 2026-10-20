@@ -328,21 +328,21 @@ class CheckBeforePublish(unittest.TestCase):
         os.environ["GUARDS_PUBLISH_GUARD_HOOK"] = os.path.join(self.tmp, "missing.sh")
         result = server.check_before_publish("hello", kind="text")
         self.assertIn("error", result)
-        self.assertNotIn("decision", result)
+        self.assertEqual(result["decision"], "unknown")
         crash = os.path.join(self.tmp, "crash.sh")
         with open(crash, "w") as f:
             f.write("#!/usr/bin/env bash\nexit 7\n")
         os.environ["GUARDS_PUBLISH_GUARD_HOOK"] = crash
         result = server.check_before_publish("hello", kind="text")
         self.assertIn("error", result)
-        self.assertNotIn("decision", result)
+        self.assertEqual(result["decision"], "unknown")
         junk = os.path.join(self.tmp, "junk.sh")
         with open(junk, "w") as f:
             f.write("#!/usr/bin/env bash\necho 'not json'\n")
         os.environ["GUARDS_PUBLISH_GUARD_HOOK"] = junk
         result = server.check_before_publish("hello", kind="text")
         self.assertIn("error", result)
-        self.assertNotIn("decision", result)
+        self.assertEqual(result["decision"], "unknown")
 
     def test_bad_arguments_are_errors(self):
         self.assertIn("error", server.check_before_publish("   "))

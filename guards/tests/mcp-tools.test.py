@@ -283,6 +283,41 @@ class CheckBeforePublish(Base):
             self.assertEqual(got["decision"], "deny", name)
             self.assertValueFree(got)
 
+    def test_unknown_never_allow_when_it_could_not_inspect(self):
+        d = self.repo()
+        self.assertEqual(check("", d)["decision"], "unknown")
+        self.assertEqual(check("x", "/no/such/dir")["decision"], "unknown")
+        self.assertEqual(check("x", d, "bogus")["decision"], "unknown")
+        os.environ["GUARDS_PUBLISH_GUARD_HOOK"] = os.path.join(d, "missing.sh")
+        try:
+            got = check("gh issue create --title t --body x", d, "command")
+        finally:
+            os.environ.pop("GUARDS_PUBLISH_GUARD_HOOK")
+        self.assertEqual(got["decision"], "unknown")
+        self.assertIn("error", got)
+
+    def test_still_decides_without_jq(self):
+        # a PATH with no jq: the hook reads its payload with awk and still denies
+        shadow = self.tmp()
+        for bindir in ("/usr/local/bin", "/usr/bin", "/bin"):
+            for n in os.listdir(bindir) if os.path.isdir(bindir) else []:
+                if n in ("jq", "gitleaks"):
+                    continue
+                try:
+                    os.symlink(os.path.join(bindir, n), os.path.join(shadow, n))
+                except FileExistsError:
+                    pass
+        old = os.environ["PATH"]
+        os.environ["PATH"] = shadow
+        try:
+            got = check("x\n" + PW_LINE + "\n", self.repo())
+            clean = check("nothing to see", self.repo())
+        finally:
+            os.environ["PATH"] = old
+        self.assertEqual(got["decision"], "deny", got)
+        self.assertEqual(clean["decision"], "allow", clean)
+        self.assertValueFree(got)
+
     def test_a_bypass_env_is_ignored_and_noted(self):
         os.environ["GUARDS_ALLOW_PUBLISH_SECRETS"] = "1"
         try:

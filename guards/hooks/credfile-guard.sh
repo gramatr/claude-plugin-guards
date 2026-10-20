@@ -67,60 +67,9 @@ set -uo pipefail
 
 [ "${GUARDS_ALLOW_CRED_READ:-0}" = "1" ] && exit 0
 
-HAVE_JQ=1
-command -v jq >/dev/null 2>&1 || HAVE_JQ=0
-
 RAW="$(cat)"
-
-# jfield NAME -> the string value of NAME from the hook payload: tool_name, cwd
-# and permission_mode are top-level, everything else is under tool_input. With
-# jq that is a one-liner. Without it, awk walks the JSON string tokens (so an
-# escaped quote inside a command cannot end a value early and a key name that
-# only appears inside another string is never mistaken for a key) and decodes
-# the usual escapes; a \uXXXX escape becomes '?', which cannot matter for the
-# ASCII file names this guard looks at.
-jfield() {
-  if [ "$HAVE_JQ" -eq 1 ]; then
-    case "$1" in
-      tool_name|cwd|permission_mode) printf '%s' "$RAW" | jq -r ".$1 // \"\"" 2>/dev/null ;;
-      *) printf '%s' "$RAW" | jq -r ".tool_input.$1 // \"\"" 2>/dev/null ;;
-    esac
-    return
-  fi
-  printf '%s' "$RAW" | awk -v key="$1" '
-    BEGIN { RS = "\001" }
-    {
-      s = $0; n = length(s); i = 1; want = 0
-      while (i <= n) {
-        c = substr(s, i, 1)
-        if (c != "\"") {
-          if (want && c !~ /[ \t\r\n:]/) want = 0
-          i++; continue
-        }
-        val = ""; j = i + 1
-        while (j <= n) {
-          d = substr(s, j, 1)
-          if (d == "\\") {
-            e = substr(s, j + 1, 1)
-            if (e == "n") val = val "\n"
-            else if (e == "t") val = val "\t"
-            else if (e == "r") val = val "\r"
-            else if (e == "b" || e == "f") val = val " "
-            else if (e == "u") { val = val "?"; j += 4 }
-            else val = val e
-            j += 2; continue
-          }
-          if (d == "\"") break
-          val = val d; j++
-        }
-        if (want) { printf "%s", val; exit }
-        k = j + 1
-        while (substr(s, k, 1) ~ /[ \t\r\n]/) k++
-        if (substr(s, k, 1) == ":" && val == key) want = 1
-        i = j + 1
-      }
-    }'
-}
+# shellcheck source=guards/hooks/json-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/json-lib.sh"   # HAVE_JQ, jfield, emit_pre
 
 TOOL_NAME="$(jfield tool_name)" || exit 0
 CWD="$(jfield cwd)"
@@ -130,17 +79,7 @@ PERM_MODE="$(jfield permission_mode)"
 SNIFF_MAX_BYTES="${CREDFILE_SNIFF_MAX_BYTES:-10485760}"
 PRIVATE_KEY_RE='-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 
-# emit KIND REASON -> the PreToolUse decision JSON (jq when present, else printf
-# with the reason escaped for JSON).
-emit() {
-  if [ "$HAVE_JQ" -eq 1 ]; then
-    jq -n --arg kind "$1" --arg reason "$2" \
-      '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: $kind, permissionDecisionReason: $reason}}'
-  else
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' \
-      "$1" "$(printf '%s' "$2" | awk 'BEGIN { ORS = "" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); print sep $0; sep = "\\n" }')"
-  fi
-}
+emit() { emit_pre "$@"; }
 
 deny() {
   emit deny "$1"

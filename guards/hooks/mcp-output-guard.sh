@@ -43,7 +43,6 @@ set -uo pipefail
 export SS_LOCAL_TIMEOUT="${SS_LOCAL_TIMEOUT:-8}" SS_ENV_TIMEOUT="${SS_ENV_TIMEOUT:-4}"
 
 [ "${GUARDS_MCP_SCAN:-1}" = "0" ] && exit 0
-command -v jq >/dev/null 2>&1 || exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECRET_SCAN="${GUARDS_SECRET_SCAN:-$(dirname "$SCRIPT_DIR")/vendor/secret-guard-core/scan.sh}"
@@ -51,10 +50,15 @@ SKIP_RE="${GUARDS_MCP_SKIP:-^mcp__plugin_gramatr_}"
 MAX_BYTES="${MCP_GUARD_MAX_BYTES:-524288}"
 
 RAW="$(cat)"
-TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)" || exit 0
+# shellcheck source=guards/hooks/json-lib.sh
+. "$SCRIPT_DIR/json-lib.sh"
+TOOL_NAME="$(jfield tool_name)"
 case "$TOOL_NAME" in mcp__*) ;; *) exit 0 ;; esac
 [[ "$TOOL_NAME" =~ $SKIP_RE ]] && exit 0
 [ -f "$SECRET_SCAN" ] || exit 0
+# Redaction rewrites JSON, which needs jq: withhold a result with credential
+# material, pass a clean one with a note (json-lib.sh).
+[ "$HAVE_JQ" -eq 1 ] || nojq_post_guard mcp-output-guard mcp "$SECRET_SCAN"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

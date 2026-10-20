@@ -81,6 +81,14 @@ GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 PII_GUARD_MODE="${PII_GUARD_MODE:-flag}"
 
 RAW="$(cat)"
+# shellcheck source=guards/hooks/json-lib.sh
+. "$SCRIPT_DIR/json-lib.sh"
+if [ "$HAVE_JQ" -eq 0 ]; then
+  # Redaction rewrites JSON, which needs jq: withhold a result with credential
+  # material, pass a clean one with a note (json-lib.sh).
+  [ "$(jfield tool_name)" = "Bash" ] || exit 0
+  nojq_post_guard combined-hook bash "$SECRET_SCAN"
+fi
 
 TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)"
 if [ "$TOOL_NAME" != "Bash" ]; then

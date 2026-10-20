@@ -51,7 +51,12 @@ gd_outcome() {
       ;;
     withhold-mcp)
       msg="guards ${name}: the result of this tool call was withheld because ${why}, so it could not be checked for secrets before the model saw it. Call the tool again."
-      command -v jq >/dev/null 2>&1 && [ -s "$raw" ] || return 0
+      if ! command -v jq >/dev/null 2>&1; then
+        # No jq to match the result's shape: the usual array of text blocks.
+        printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":[{"type":"text","text":"%s"}]}}\n' "$msg"
+        return 0
+      fi
+      [ -s "$raw" ] || return 0
       jq -c --arg n "$msg" '
         .tool_response as $r
         | ([{type: "text", text: $n}]) as $blocks

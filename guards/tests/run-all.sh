@@ -51,6 +51,9 @@ for s in "${SUITES[@]}"; do
   step "$s" env "PATH=$SHADOW" bash "guards/tests/$s.test.sh"
 done
 
+echo "without jq"
+step "no-jq" bash guards/tests/no-jq.test.sh
+
 echo "MCP server (HTTP client stubbed)"
 step "mcp-server" "$PY" guards/tests/mcp-server.test.py
 # The agent tools run the real publish-guard and scan.sh: once as CI sees it (no gitleaks), once with.
