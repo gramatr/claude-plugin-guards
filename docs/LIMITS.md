@@ -207,6 +207,8 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   so equal `VERSION` files are a release-checklist step.
 - **gitleaks versions** are pinned in two places (the self-heal script and the
   vendored Dockerfile) and kept equal by hand.
-- **Known CVEs** in the Go runtime bundled with the pinned gitleaks release are
-  accepted in `.trivyignore` because no fixed gitleaks release exists yet; they
-  are revisited when one is published.
+- **Known CVEs** in the Go modules bundled with the pinned gitleaks release
+  are not suppressed. The scan image builds gitleaks from its tag with fixed
+  `klauspost/compress`, `x/crypto` and `x/text` and a current Go toolchain, and
+  `.trivyignore` is empty. The gitleaks binary the self-heal script downloads
+  for a machine without Docker is the unpatched upstream release.

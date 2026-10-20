@@ -1,48 +1,5 @@
-# Suppressed, NOT silenced-and-forgotten: every ID below is a real,
-# currently-unfixable-by-us finding, confirmed 2026-10-18 when this CI
-# gate was first turned on. They live in the Go runtime / golang.org/x
-# modules bundled inside the upstream ghcr.io/gitleaks/gitleaks:v8.30.1
-# binary (copied into guards/vendor/secret-guard-core/Dockerfile) —
-# v8.30.1 is gitleaks' latest published release (confirmed via GitHub
-# API the same day), so there is no newer tag to bump to yet. Fixes
-# exist in the underlying Go modules; gitleaks just hasn't cut a build
-# against them. Revisit (re-run the scan, drop whichever of these it no longer
-# finds) whenever gitleaks publishes a new release, not on a fixed
-# schedule otherwise. Do not add a new ID here without the same
-# "confirmed upstream-blocked" check — this file is an audit trail,
-# not a way to make a red check go away.
-CVE-2025-47913
-CVE-2026-25679
-CVE-2026-27145
-CVE-2026-32280
-CVE-2026-32281
-CVE-2026-32283
-CVE-2026-33811
-CVE-2026-33814
-CVE-2026-33818
-CVE-2026-39820
-CVE-2026-39821
-CVE-2026-39822
-CVE-2026-39828
-CVE-2026-39829
-CVE-2026-39830
-CVE-2026-39831
-CVE-2026-39832
-CVE-2026-39835
-CVE-2026-39836
-CVE-2026-42499
-CVE-2026-42504
-CVE-2026-42508
-CVE-2026-46595
-CVE-2026-46597
-CVE-2026-56851
-CVE-2026-56852
-CVE-2026-56853
-CVE-2026-56854
-CVE-2026-56858
-CVE-2026-56859
-CVE-2026-56860
-CVE-2026-56862
-CVE-2026-78667
-CVE-2026-78669
-CVE-2026-97031
+# Intentionally empty: no finding is suppressed. The scan image builds gitleaks
+# from its release tag with fixed Go modules (see
+# guards/vendor/secret-guard-core/Dockerfile), so the CVE gate runs unfiltered.
+# Do not add an ID here to turn a red check green: fix the dependency, or open
+# an issue in the coordination repo with the reason and an expiry first.
