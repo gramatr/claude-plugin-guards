@@ -106,6 +106,11 @@ ctx_placeholder() {
 ctx_describes_secret() {
   [[ "$1" =~ (secret|token|credential)s?[_.-]?(name|ref|id|type|path|file|version|count|ttl|namespace|store|manager|provider|url|arn)$ ]] && return 0
   [[ "$1" =~ (secretkeyref|secretref|secretkey_?ref) ]] && return 0
+  # A setting about a credential rather than a credential: the name ends in a
+  # unit, limit, switch or mode word (SCAN_SECRET_MAX_BYTES, a "..._CRED_ASK"
+  # switch, a "..._TOKEN_TIMEOUT" value). Docs and commit messages show these
+  # all the time and their values are numbers or words, never the credential.
+  [[ "$1" =~ [_.-](bytes|size|length|limit|max|min|timeout|secs|seconds|ms|port|depth|mode|ask|enabled|disabled)$ ]] && return 0
   return 1
 }
 
