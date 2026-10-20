@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass that skips PWD/paths (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -95,6 +95,11 @@ CTX_TEXT="$(printf '%s' "$CTX_TEXT" | LC_ALL=C sed -E \
 ctx_placeholder() {
   [[ "$1" =~ ^(\$|\<|\{|%\(|\*\*\*|\.\.\.) ]] && return 0
   [[ "$1" =~ ^(x+|\*+|\.+|-+|_+|true|false|null|none|nil|yes|no|undefined|empty|redacted|changeme|change-me|example|todo|tbd|string|password|secret|token)$ ]] && return 0
+  # An absolute path that exists is a path, not a password. This is what
+  # `env`, `printenv PWD`, `export -p` and a "pwd: /home/..." line print: the
+  # key PWD is a real password alias (ODBC "Pwd=..."), but its value here is
+  # the working directory (found live: those lines were redacted).
+  [[ "$1" == /* ]] && [ -e "$1" ] && return 0
   return 1
 }
 # Keys that merely NAME or describe a secret (secretName, token_type, ...).
