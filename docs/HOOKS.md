@@ -63,9 +63,30 @@ Notes on the matrix:
   can break the tool is worse than none for these two surfaces.
 - The publish guard is the one place that fails **closed**, because a publish
   cannot be undone.
-- What Claude Code does when a hook exceeds its own timeout is not verified here.
-  The hook comments assume it falls back to the original output or input,
-  meaning unredacted; plan on that.
+- **A hook that exceeds its `timeout` fails open.** Verified by experiment
+  (Claude Code 2.1.304, 2026-10-20, repeated twice): Claude Code kills the hook,
+  records its outcome as `cancelled`, and proceeds as if the hook were not
+  there. The tool call goes through the normal permission flow and the model sees
+  no timeout message. This holds even for a hook that would have returned a
+  deny. Any exit status other than 0 or 2 is also a non-blocking error (the tool
+  runs). Only exit 2 or a JSON deny blocks. A hook therefore has to enforce its
+  own deadline below its configured timeout and decide for itself; that work is
+  tracked as a known gap (see [`LIMITS.md`](LIMITS.md)).
+- **An `ask` with no person attached is a deny.** Verified in headless
+  `claude -p` in every permission mode (default, acceptEdits, plan, auto,
+  bypassPermissions, dontAsk): the tool call does not run, the model receives the
+  hook's reason text, and the run records a permission denial. An `ask` even
+  overrides an allow rule and bypassPermissions. Not tested: the prompt in a
+  session with a person attached. Interactive `auto` mode is different: there
+  an ask was observed to be answered by Claude Code itself with no person, which
+  is why the guards deny rather than ask where no person can answer.
+- **Conflicting PreToolUse decisions: deny beats ask beats allow, in any
+  order.** Verified with two hooks on the same Bash call, in either order, in
+  one matcher group or two, and with the first hook the slower one. An `allow`
+  from one hook never overrides another hook's `ask` or `deny`. Hooks with the
+  same matcher run concurrently, so configuration order is not a tiebreaker.
+  A guard with nothing to say should return no decision rather than `allow`, so
+  that it never masks the user's own permission flow.
 - When a scan is cut by a size cap rather than a failure (Bash output past
   256 KB, the older path past 24 KB, SendMessage fields past 24 KB, MCP blocks
   past 512 KB), see [`LIMITS.md`](LIMITS.md). The Bash and SendMessage hooks
