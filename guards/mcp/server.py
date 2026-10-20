@@ -66,7 +66,7 @@ Rules:
 2. guards:synthetic on the SAME line marks a deliberately fake fixture line. It only works for added lines of a git commit's staged diff.
 3. Never disable or bypass the guards, and never ask the user to. Report a false positive (for example a key named secret_vault_id) instead.
 
-Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block.
+Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
 """
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
@@ -171,6 +171,8 @@ Rules for writing text that gets published:
 2. Put long bodies and messages in a file, run check_before_publish on the text, then publish with --body-file or git commit -F.
 3. For fixtures in a commit, see guards://guide/false-positives for the marker. It never covers a message or a body.
 
+Longer guide for agents: docs/AGENTS-GUIDE.md in the plugin repository.
+
 Outcome by permission mode: a private key, a vendor token format or a value from this session's environment is always denied. An ambiguous match (a secret-looking key name next to a value, a URL password, an auth header, ...) is a deny in auto, bypassPermissions and dontAsk, and asks the person in default, acceptEdits and plan. If no scanner can run, or the scan runs out of time, the publish is denied.
 """
 
@@ -181,6 +183,7 @@ The scanner reads a key name that contains a credential word (secret, password, 
 - the credential word followed by a descriptor as the LAST segment: name, ref, id, type, path, file, version, count, ttl, namespace, store, manager, provider, url, arn (secret_name, client_secret_bws_id, clientSecretBwsId, secret_vault_id, token_store_ref, credential_provider_arn, secretKeyRef);
 - a setting about a credential: a name ending in bytes, size, length, limit, max, min, timeout, secs, seconds, ms, port, depth, mode, ask, enabled or disabled; a tokenizer.
 Placeholders are skipped too: values starting with $, <, {, ***, or ..., and words such as true, false, null, none, changeme, example, todo, string.
+Ordinary source code is skipped too: an unquoted value that is a call, a variable, a member chain or a type name on a line of code (a call, an object property whose value is a variable, a field typed as a primitive). A string literal assigned to a credential-named variable, and unquoted values in env files, shell, YAML and INI, are not skipped.
 A name whose last segment is the credential or a value word (AUTH_TOKEN, db_password, api_secret, client_secret_value, secret_key) is redacted. A rule that skips a name never excuses a real value.
 
 When a block is a false positive:

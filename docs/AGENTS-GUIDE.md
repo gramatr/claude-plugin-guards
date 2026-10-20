@@ -68,6 +68,38 @@ Files the tools write go under `$GUARDS_STATE_DIR` (default `~/.local/share/gram
 An ambiguous match is an ask for a person in default, acceptEdits and plan modes, and a
 deny in every other mode. You cannot answer an ask yourself.
 
+## What is already not a false positive
+
+The scanner does not flag, by design: a key that names an identifier or
+reference of a secret (`secret_name`, `client_secret_bws_id`,
+`secret_vault_id`, `token_store_ref`, `credential_provider_arn`), a setting
+about a credential (`..._TIMEOUT`, `..._MODE`), placeholders (`${VAR}`,
+`<token>`, `***`), and ordinary source code where an unquoted value is a call, a variable, a member chain or a type name (a declaration assigned the result of a function, an object property whose value is a variable, a field typed as a primitive). It does flag
+any string literal assigned to a credential-named variable, and unquoted values
+in env files, shell, YAML and INI.
+
+## Fixtures
+
+Deliberately fake fixtures in a commit are fine with the marker on every
+matching line, in the file's comment syntax:
+
+```ts
+const sample = { client_secret: "not-a-real-value" }; // guards:synthetic
+```
+
+Rules of thumb: build values at run time when you can; never paste a real token
+"just to see"; never use the marker on a line that could hold a real value. The
+marker removes the line from the scan, so it is a statement by you that the line
+is fake.
+
+## When the block is wrong
+
+1. Rename or reword if you can (the key, the prose: say "the token (24
+   characters)" rather than writing a credential word, a colon and a word).
+2. Otherwise tell the user: the rule, the redacted line, the source. They decide
+   whether to set the override in the environment Claude Code starts from.
+3. Do not split, encode or otherwise disguise a value to get past the scan.
+
 ## What the marker covers
 
 Only added lines of a `git commit`'s staged diff, and only the line that carries it.

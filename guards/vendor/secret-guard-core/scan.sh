@@ -147,6 +147,74 @@ ctx_describes_secret() {
   return 1
 }
 
+# ctx_code_shape KEY BEFORE PFX VAL AFTER: an UNQUOTED value that is source
+# code, not a credential: a call (getToken(ctx)), an identifier or member chain
+# (accessToken, this.cfg.apiToken), or a type (string, Promise<Token>), on a
+# line that is clearly code. Found live: ordinary TypeScript such as an object
+# property holding a variable, a declaration assigned a function result, or a field typed
+# `string` was redacted. A value that is only a word or number (hunter2), an
+# env/INI/YAML/shell assignment, a CLI flag and any quoted value never qualify,
+# so env-file, INI, YAML and shell assignments with a plain word (or a word
+# with a digit) still redact, as does a string literal assigned to a
+# token-named constant.
+ctx_code_shape_cs() {
+  local key="$1" before="$2" pfx="$3" val="$4" after="$5"
+  local lb="${before##*$'\n'}" la="${after%%$'\n'*}" core="$4" delim="" line
+  local endp='[],;)}]$' codep='[;{}]|=>'
+  while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
+  [[ "$pfx" =~ :[[:blank:]]*$ ]] && delim="colon"
+  [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && delim="${delim:-spaced}"
+  [ -n "$delim" ] || return 1
+  line="$lb$pfx$val$la"
+  # `= await fn(...)`, `= new Foo(...)`: the word itself is a keyword
+  [[ "$core" =~ ^(await|new|typeof|yield)$ && "$la" =~ ^[[:blank:]]+[A-Za-z_\$] ]] && return 0
+  # a call: the value runs straight into an opening parenthesis
+  [[ "$val" =~ ^[A-Za-z_\$][A-Za-z0-9_\$.?!]*\( ]] && return 0
+  local ident='^[A-Za-z_$][A-Za-z0-9_$]*([?!]?\.[A-Za-z_$][A-Za-z0-9_$]*)*[?!]?$'
+  # after a declaration or modifier keyword (const, readonly, private, ...)
+  local kw='(const|let|var|readonly|private|public|protected|final|val|static|abstract|declare|async|await|return|def)'
+  if [[ "$lb" =~ (^|[^A-Za-z0-9_\$.-])(export[[:space:]]+)?${kw}([[:space:]]+${kw})*[[:space:]]+$ ]] \
+    && [[ "$core" =~ $ident || "$core" =~ ^[A-Za-z_\$][A-Za-z0-9_\$.\<\>\[\],\|\&]*$ ]]; then
+    return 0
+  fi
+  [ "$delim" = colon ] || [ "$delim" = spaced ] || return 1
+  local cue=0
+  [[ "$line" =~ $codep ]] && cue=1
+  # a type: primitive names anywhere after a colon; others need code around
+  if [ "$delim" = colon ]; then
+    [[ "$core" =~ ^(string|number|boolean|unknown|any|void|object|never|bigint|symbol)(\[\])?$ ]] && return 0
+    if [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; then
+      [[ "$core" =~ ^(Promise|Record|Array|Map|Set|Partial|Readonly|ReadonlyArray|Omit|Pick)\< ]] && return 0
+      [[ "$core" =~ ^[A-Z][A-Za-z0-9]*(\[\])?$ ]] && return 0
+    fi
+  fi
+  # a variable or member chain: needs a separator (so a plain word such as
+  # hunter2 never qualifies) or to repeat the key, and code punctuation or a
+  # trailing , ; ) }
+  if [[ "$core" =~ $ident ]]; then
+    local k="${key,,}" c="${core,,}" shaped=0
+    k="${k//[_.-]/}"; c="${c//[_.-]/}"
+    [ "$c" = "$k" ] && shaped=1
+    [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ [a-z][A-Z] ) ]] && shaped=1
+    if [ "$shaped" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ $endp ]]; }; then
+      [ "$delim" = colon ] && return 0
+      [[ "$val" =~ \;$ ]] && return 0
+    fi
+  fi
+  return 1
+}
+
+# The patterns above are case-sensitive (a PascalCase type name, a camelCase
+# variable); the caller runs with nocasematch on, so switch it off here.
+ctx_code_shape() {
+  local nc=0 rc=1
+  shopt -q nocasematch && nc=1
+  shopt -u nocasematch
+  ctx_code_shape_cs "$@" && rc=0
+  [ "$nc" = 1 ] && shopt -s nocasematch
+  return $rc
+}
+
 # ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID [QUOTE]
 # QUOTE (" or '): the rule's value opens with that quote; see the wrapped-key
 # check below.
@@ -192,6 +260,7 @@ ctx_redact() {
       fi
     fi
     if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
+      || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
       # ("Query-string tokens: `access_token=`") is prose, not a value.

@@ -367,6 +367,10 @@ if [ -n "$RULES" ]; then
 fi
 
 # explain: the located lines plus what to do about them. Never contains a value.
+# The MCP tools (guards/mcp/server.py: check_before_publish, explain_block, ...)
+# pass this text through verbatim and parse its section headings ("Where",
+# "What to do"), so keep it value-free and keep the wording stable; change both
+# sides and publish-guard.test.sh together.
 explain() {
   if [ -n "$WHERE" ]; then
     local shown="$WHERE_TOTAL"

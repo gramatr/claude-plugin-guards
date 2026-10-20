@@ -201,6 +201,8 @@ tests are the specification for the points listed.
 
 ## Working with the guards as a coding agent
 
+The longer version of this section is [`docs/AGENTS-GUIDE.md`](AGENTS-GUIDE.md).
+
 The guards are meant to be worked with, not around. What an agent needs to know:
 
 1. **Never put a real credential** in a commit message, PR or issue body,
