@@ -86,6 +86,11 @@ deny() {
   exit 0
 }
 
+# resolve_path, sensitive_reason, sensitive_dir_reason, is_ask_class. Without
+# it nothing can be classified, so refuse rather than let the call through.
+# shellcheck source=guards/hooks/credclass-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh" 2>/dev/null || deny "Blocked by guards credfile-guard: its classification library credclass-lib.sh is missing or unreadable next to the hook ($(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh), so this call cannot be checked and is denied. Reinstall or update the guards plugin."
+
 # The payload could not be read at all and there is no jq to say why: the guard
 # cannot tell what the call is, so it refuses rather than guess.
 if [ "$HAVE_JQ" -eq 0 ] && [ -z "$TOOL_NAME" ]; then
@@ -111,90 +116,7 @@ HUMAN=0
 case "$PERM_MODE" in default|acceptEdits|plan) HUMAN=1 ;; esac
 [ "${GUARDS_CRED_ASK:-1}" = "force" ] && HUMAN=1
 
-# resolve PATH -> absolute, ~ and $HOME expanded, symlinks followed if
-# the target exists. Prints nothing for an empty argument.
-resolve_path() {
-  local p="$1"
-  [ -n "$p" ] || return 0
-  case "$p" in
-    \~) p="$HOME" ;;
-    \~/*) p="$HOME/${p#\~/}" ;;
-    '$HOME'|'${HOME}') p="$HOME" ;;
-    '$HOME/'*) p="$HOME/${p#'$HOME/'}" ;;
-    '${HOME}/'*) p="$HOME/${p#'${HOME}/'}" ;;
-  esac
-  case "$p" in
-    /*) ;;
-    *) p="$CWD/$p" ;;
-  esac
-  realpath -m -- "$p" 2>/dev/null || printf '%s' "$p"
-}
-
-# sensitive_reason PATH -> prints a short reason and returns 0 if PATH
-# is credential material, else returns 1. PATH must already be resolved.
-sensitive_reason() {
-  local p="$1" base lower
-  base="${p##*/}"
-  lower="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
-
-  case "$p" in
-    */.ssh/*)
-      case "$lower" in
-        *.pub|known_hosts|known_hosts.old|config|authorized_keys|authorized_keys2) ;;
-        *) printf 'SSH key material under ~/.ssh'; return 0 ;;
-      esac ;;
-    */.aws/credentials) printf 'AWS credentials file'; return 0 ;;
-    */.kube/config|*/.kube/*.kubeconfig) printf 'kubeconfig'; return 0 ;;
-    */.config/gcloud/*credentials*|*/.config/gcloud/*.json) printf 'gcloud credentials'; return 0 ;;
-    */.docker/config.json) printf 'docker registry auth'; return 0 ;;
-    */.gnupg/private-keys-v1.d/*|*/.gnupg/secring.*) printf 'GPG private keyring'; return 0 ;;
-  esac
-
-  case "$lower" in
-    .netrc|_netrc) printf '.netrc credentials'; return 0 ;;
-    .pgpass) printf '.pgpass credentials'; return 0 ;;
-    .git-credentials) printf 'git credential store'; return 0 ;;
-    .npmrc|.pypirc) printf 'package-registry token file'; return 0 ;;
-    kubeconfig|*.kubeconfig) printf 'kubeconfig'; return 0 ;;
-    .env.example|.env.sample|.env.template|.env.dist|*.env.example|*.env.sample|*.env.template) ;;
-    .env|.env.*|*.env) printf 'environment file (.env)'; return 0 ;;
-    id_rsa|id_dsa|id_ecdsa|id_ed25519) printf 'SSH private key'; return 0 ;;
-    *.p12|*.pfx|*.jks|*.keystore|*.kdbx) printf 'keystore / password database'; return 0 ;;
-    *.tfstate|*.tfstate.backup) printf 'terraform state (contains secrets)'; return 0 ;;
-    *service-account*.json|*serviceaccount*.json|*credentials*.json|*client_secret*.json)
-      printf 'service-account / client-secret JSON'; return 0 ;;
-  esac
-
-  # Content sniff, any name. grep -q: nothing is printed.
-  if [ -f "$p" ] && [ -r "$p" ]; then
-    if head -c "$SNIFF_MAX_BYTES" -- "$p" 2>/dev/null | grep -qaE -e "$PRIVATE_KEY_RE"; then
-      printf 'file contains a private key'; return 0
-    fi
-  fi
-  return 1
-}
-
-# sensitive_dir_reason DIR -> for Grep/Bash over a whole credential dir.
-sensitive_dir_reason() {
-  case "$1/" in
-    */.ssh/|*/.aws/|*/.kube/|*/.gnupg/|*/.config/gcloud/|*/.docker/)
-      printf 'credential directory'; return 0 ;;
-  esac
-  return 1
-}
-
-# Private keys and credential stores are never worth reading: DENY. Config
-# files that merely CONTAIN credentials (a .env you are debugging) are ASK.
-# GUARDS_CRED_ASK=0 makes everything a hard deny, and so does a permission mode
-# with no person to answer the prompt (see ask() above).
 ASK_MSG=""
-is_ask_class() {
-  case "$1" in
-    "environment file (.env)"|"kubeconfig"|"package-registry token file"|"terraform state (contains secrets)"|"glob targets .env files") return 0 ;;
-  esac
-  return 1
-}
-
 block() {
   if { [ "${GUARDS_CRED_ASK:-1}" = "1" ] || [ "${GUARDS_CRED_ASK:-1}" = "force" ]; } && [ "$HUMAN" -eq 1 ] && is_ask_class "$1"; then
     # Remember it and keep checking: a later deny-class path must still win.
