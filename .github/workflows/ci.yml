@@ -89,6 +89,34 @@ jobs:
         # Real publish-guard and scan.sh on fabricated values in temp repos; HTTP stubbed or closed.
         run: python -W ignore guards/tests/mcp-tools.test.py
 
+  outbound-parse:
+    # The outbound command parser is POSIX awk; awks differ silently (mawk has no
+    # regex intervals, one-true-awk and busybox read `word (expr)` as a call).
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        awk: [gawk, mawk, busybox awk]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the awks
+        run: sudo apt-get update && sudo apt-get install -y gawk mawk busybox
+      - name: Outbound parser tests (${{ matrix.awk }})
+        # Fabricated values only, built at run time; no network.
+        env:
+          AWKBIN: ${{ matrix.awk }}
+        run: bash guards/tests/outbound-parse.test.sh
+
+  outbound-parse-macos:
+    # macOS ships one-true-awk. Minimal on purpose: same test, the system awk.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outbound parser tests (macOS awk)
+        env:
+          AWKBIN: awk
+        run: bash guards/tests/outbound-parse.test.sh
+
   scan-sh-drift:
     runs-on: ubuntu-latest
     steps:
