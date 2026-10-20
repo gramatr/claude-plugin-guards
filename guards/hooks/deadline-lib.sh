@@ -85,15 +85,21 @@ gd_bounded() {
   fi
   bash "$script" < "$in" > "$out" 2> "$err" &
   pid=$!
-  ( sleep "$secs"; : > "$flag"
+  # The watchdog does nothing if the run already finished (kill -0 fails):
+  # without that check, the cleanup below killing its `sleep` let it fall
+  # through to the next line and plant the expiry flag, so a run that
+  # finished in time was reported as a timeout (a random deny on stock macOS,
+  # which has no `timeout`).
+  ( sleep "$secs"; kill -0 "$pid" 2>/dev/null || exit 0
+    : > "$flag"
     command -v pkill >/dev/null 2>&1 && pkill -TERM -P "$pid" 2>/dev/null
     kill -TERM "$pid" 2>/dev/null; sleep 1
     command -v pkill >/dev/null 2>&1 && pkill -KILL -P "$pid" 2>/dev/null
     kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   wd=$!
   wait "$pid" 2>/dev/null; rc=$?
-  command -v pkill >/dev/null 2>&1 && pkill -P "$wd" 2>/dev/null
   kill "$wd" 2>/dev/null
+  command -v pkill >/dev/null 2>&1 && pkill -P "$wd" 2>/dev/null
   [ -e "$flag" ] && return 124
   return "$rc"
 }
