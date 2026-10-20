@@ -293,11 +293,11 @@ def explain_block(message: str) -> dict:
         if "did not finish in time" in low:
             diag = (
                 "The local scan ran out of time, so the publish was denied fail-closed "
-                "(this is not a finding). Very long single lines (minified or generated "
-                "files, one-line JSON) are the slow case."
+                "(this is not a finding). The input was very large or held thousands of "
+                "matches; long lines and long unbroken runs are no longer slow."
             )
             steps = [
-                "Leave such a file out of the commit, or split the long lines; publish a shorter text.",
+                "Split the text, or commit the large generated part separately; publish a shorter text.",
                 "guards:synthetic is for fake fixture lines, not a way past a size limit.",
                 "Run guards_status to see whether the service is down.",
             ]

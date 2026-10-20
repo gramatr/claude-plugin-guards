@@ -66,7 +66,7 @@ Rules:
 2. guards:synthetic on the SAME line marks a deliberately fake fixture line. It only works for added lines of a git commit's staged diff.
 3. Never disable or bypass the guards, and never ask the user to. Report a false positive (for example a key named secret_vault_id) instead.
 
-Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block.
+Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
 """
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
@@ -171,6 +171,8 @@ Rules for writing text that gets published:
 2. Put long bodies and messages in a file, run check_before_publish on the text, then publish with --body-file or git commit -F.
 3. For fixtures in a commit, see guards://guide/false-positives for the marker. It never covers a message or a body.
 
+Longer guide for agents: docs/AGENTS-GUIDE.md in the plugin repository.
+
 Outcome by permission mode: a private key, a vendor token format or a value from this session's environment is always denied. An ambiguous match (a secret-looking key name next to a value, a URL password, an auth header, ...) is a deny in auto, bypassPermissions and dontAsk, and asks the person in default, acceptEdits and plan. If no scanner can run, or the scan runs out of time, the publish is denied.
 """
 
@@ -181,12 +183,13 @@ The scanner reads a key name that contains a credential word (secret, password, 
 - the credential word followed by a descriptor as the LAST segment: name, ref, id, type, path, file, version, count, ttl, namespace, store, manager, provider, url, arn (secret_name, client_secret_bws_id, clientSecretBwsId, secret_vault_id, token_store_ref, credential_provider_arn, secretKeyRef);
 - a setting about a credential: a name ending in bytes, size, length, limit, max, min, timeout, secs, seconds, ms, port, depth, mode, ask, enabled or disabled; a tokenizer.
 Placeholders are skipped too: values starting with $, <, {, ***, or ..., and words such as true, false, null, none, changeme, example, todo, string.
+Ordinary source code is skipped too: an unquoted value that is a call, a variable, a member chain or a type name on a line of code (a call, an object property whose value is a variable, a field typed as a primitive). A string literal assigned to a credential-named variable, and unquoted values in env files, shell, YAML and INI, are not skipped.
 A name whose last segment is the credential or a value word (AUTH_TOKEN, db_password, api_secret, client_secret_value, secret_key) is redacted. A rule that skips a name never excuses a real value.
 
 When a block is a false positive:
 1. On a key NAME: rename or reword the key if you can, and tell the user which key and which rule. Do not retry the same text.
 2. Prose that names a credential word followed by a colon and a word reads as a key and a value. Reword: say "the token (24 characters)" instead.
-3. A deliberately fake fixture line in a git commit: add `guards:synthetic` on the SAME line, in that file's comment syntax. It covers ONLY the added lines of the staged diff of a git commit. It does not cover the command text or a -m message, gh issue/pr bodies, or files named by --body-file, -F or cat. A line without the marker next to a marked one is still scanned.
+3. A deliberately fake fixture line in a git commit: add `guards:synthetic` on the SAME line, in that file's comment syntax. It covers ONLY the added lines of the staged diff of a git commit, and not a real vendor credential or key: a private-key header, an AWS access key id, a GitHub, Slack, Stripe (sk_live_, rk_live_) or OpenAI (sk-proj-) key on a marked line is still denied. Documented example ids and any value containing EXAMPLE or FAKE are accepted; build other fake values at run time. JWT-shaped and ordinary fake values are fine. It does not cover the command text or a -m message, gh issue/pr bodies, or files named by --body-file, -F or cat. A line without the marker next to a marked one is still scanned.
 4. Do not split, encode or otherwise disguise a value to get past the scan, and do not publish a real credential at all.
 5. GUARDS_ALLOW_PUBLISH_SECRETS=1 is read from the environment Claude Code was STARTED from. Putting it in front of a command (`GUARDS_ALLOW_PUBLISH_SECRETS=1 git commit ...`) does nothing, and you cannot set it for the session. Never disable the guards or ask the user to; report the false positive and let them decide.
 """
@@ -215,7 +218,7 @@ A publish-guard block has three parts: the detector rule(s), a "Where" list, and
 2. Read the rule. secret-lead-in: a key name with a credential word next to a value. generic-api-key: a high-entropy value next to a key-like name. url-password, url-query-secret, auth-header, cookie-header, cli-password-flag, netrc-password, pgpass-password, k8s-env-value, json-key-value: a credential-shaped context. private-key-fallback or a private-key rule: key material (always denied). env-value: a value that is in this session's own environment (always denied). Other rule names are vendor token formats (always denied).
 3. Decide: is it a real credential (remove it and describe the shape), a key NAME that only names an identifier (rename or report it), or a deliberately fake fixture line in a git commit (add the marker on the same line)? See guards://guide/false-positives for what the marker covers.
 4. After changing the text, run check_before_publish on it. It runs the same hook offline and returns the same located explanation, never the value.
-5. "the local secret scan did not finish in time": the input was too slow to scan. Very long single lines (minified or generated files, one-line JSON) are the slow case; leave them out of the commit or split them.
+5. "the local secret scan did not finish in time": the input was too large or too match-heavy to scan within the limit (long lines and long unbroken runs are not the problem any more; thousands of matches in one text are). Split the text, or commit a large generated file separately.
 6. "no secret scanner could run": the service is unreachable and the local scanner is missing. Tell the user; do not work around it.
 7. "Where: the scanner could not point to a line": a rule matched without changing the text. Report it to the user with the rule name.
 

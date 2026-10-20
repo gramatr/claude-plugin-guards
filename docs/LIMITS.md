@@ -69,15 +69,25 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
 - **The publish guard reads at most 512 KB** per named file and of the staged
   diff (`PUBLISH_GUARD_MAX_BYTES`); it says so when it cuts a diff, and nothing
   past the cut is scanned.
-- **A very long single line makes the local scan slow, and the publish guard
-  denies when it runs out of time (15 s).** The context pass takes much more than
-  linear time on one huge line: in one measurement on a shared host, a 20 KB
-  line took 11 s and 100 KB in three lines took 60 s, while 200 KB of ordinary
-  short lines took about half a second. A minified or generated file, or a
-  one-line JSON blob, in a commit can therefore be denied with "did not finish in
-  time". The `guards:synthetic` marker is for fake fixtures and removes the line
-  from the scan; it is not meant as a way past a size limit. Not fixed: it is in
-  the shared `scan.sh`.
+- **A very long unbroken run of name characters used to make the local scan
+  slow; the publish guard denied at its 15 s limit.** The cause was a base64
+  blob, a hash or a bundle without spaces: the context pass took far more than
+  linear time on one such run (a 20 KB run took about 10 s). The shared
+  `scan.sh` now masks runs of 256 or more name characters for the context rules
+  (20 KB: 0.06 s), and a secret after one, or a long run as a key's value, is
+  still redacted. Other pathological shapes may remain; a scan that still runs
+  out of time is denied, not allowed.
+- **The `guards:synthetic` marker is not checked beyond a few vendor shapes.**
+  Before this was fixed the hook dropped every marked added line before scanning,
+  so a fabricated vendor-token-shaped string and the lines of a throwaway private
+  key, each marked, were allowed (verified). Now marked lines are still held
+  against: private-key headers, AWS access key ids (`AKIA`/`ASIA` plus 16),
+  GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), Slack
+  tokens (`xox[abprs]-`), and Stripe and OpenAI-style live keys (`sk_live_`,
+  `rk_live_`, `sk-proj-`), and the commit is denied. A matched token containing
+  EXAMPLE or FAKE (the documented AWS example ids) is accepted. Not in the set,
+  on purpose: JWT-shaped, generic high-entropy and base64 values. So a real
+  credential of another shape on a marked line still passes unchecked.
 - **`git commit` forms the publish guard does not follow:** a pathspec commit
   (`git commit src/a.ts -m x`, which commits the working-tree state of the
   listed paths whatever is staged), `--amend` (only the newly staged changes are

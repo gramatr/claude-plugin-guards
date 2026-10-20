@@ -264,5 +264,47 @@ git -C "$BR" add -A
 want allow "a diff over the byte cap is allowed when what is scanned is clean" "$BR" 'git commit -m x' PUBLISH_GUARD_MAX_BYTES=300
 has "only the first 300 bytes were scanned"; check "an oversize diff says it was cut" $?
 
+# --- the marker is not a way to commit a real vendor credential or key ----------
+# Marked lines are dropped from the context scan but still held against a few
+# sure-thing shapes. Every value is built at run time; none is written here.
+MR="$T/marked"; mkrepo "$MR"
+mark_commit() { # mark_commit LINE -- stage one marked line in a fresh file
+  printf '%s // guards:synthetic\n' "$1" > "$MR/fx.ts"
+  git -C "$MR" add -A
+}
+rnd() { head -c 300 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+HDR="$(printf -- '-----BEGIN %s-----' "$(printf 'EC %s' 'PRIVATE KEY')")"
+mark_commit "const pem = '$HDR';"
+want deny "a marked private-key header is denied" "$MR" 'git commit -m fx'
+has "marked guards:synthetic looks like a REAL vendor credential or key"; check "message says a marked line looks like a real credential" $?
+has "the staged diff, file fx.ts, line 1: private-key header"; check "message names the file, line and family" $?
+! has "BEGIN"; check "message does not echo the matched header" $?
+GHT="gh$(printf 'p')_$(rnd 36)"
+mark_commit "const t = \"$GHT\";"
+want deny "a marked GitHub-token-shaped value is denied" "$MR" 'git commit -m fx'
+has "GitHub token"; check "message names the GitHub family" $?
+! has "$GHT"; check "message never contains the marked token" $?
+mark_commit "const a = \"AKIA$(rnd 16 | tr 'a-z' 'A-Z')\";"
+want deny "a marked AWS-access-key-id-shaped value is denied" "$MR" 'git commit -m fx'
+mark_commit "const s = \"xoxb-$(rnd 24)\";"
+want deny "a marked Slack-token-shaped value is denied" "$MR" 'git commit -m fx'
+mark_commit "const k = \"sk_live_$(rnd 24)\";"
+want deny "a marked live-key-shaped value is denied" "$MR" 'git commit -m fx'
+mark_commit "const k = \"sk-proj-$(rnd 30)\";"
+want deny "a marked sk-proj-shaped value is denied" "$MR" 'git commit -m fx'
+mark_commit "const a = \"AKIAIOSFODNN7EXAMPLE\";"
+want allow "the documented AWS example id is accepted on a marked line" "$MR" 'git commit -m fx'
+mark_commit "const a = \"AKIA$(rnd 8 | tr 'a-z' 'A-Z')FAKE$(rnd 4 | tr 'a-z' 'A-Z')\";"
+want allow "a marked value containing FAKE is accepted" "$MR" 'git commit -m fx'
+mark_commit "const j = \"eyJhbGciOiJIUzI1NiJ9.$(rnd 30).$(rnd 40)\";"
+want allow "a marked JWT-shaped string is accepted" "$MR" 'git commit -m fx'
+mark_commit "const o = { client_secret: \"$(rnd 20)\" };"
+want allow "a marked ordinary fixture is accepted" "$MR" 'git commit -m fx'
+printf 'const t = "%s"\n' "$GHT" > "$MR/fx.ts"; git -C "$MR" add -A
+if command -v gitleaks >/dev/null 2>&1; then
+  want deny "control: the same token unmarked is denied by the normal scan" "$MR" 'git commit -m fx'
+fi
+git -C "$MR" reset -q
+
 echo "publish-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

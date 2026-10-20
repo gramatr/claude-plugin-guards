@@ -436,7 +436,10 @@ person is attached); `GUARDS_PUBLISH_ASK=0` makes every match a hard deny.
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the environment Claude Code starts from
 bypasses the guard for a reviewed false positive. A line carrying
 `guards:synthetic` is dropped from the staged diff for deliberately fake
-fixtures; it does not apply to command text (a `-m` message), issue or PR
+fixtures, but a marked line is still held against vendor-key shapes (a
+private-key header, AWS access key id, GitHub, Slack, Stripe, OpenAI-style live
+key) and the commit is denied if one matches, unless the value contains EXAMPLE
+or FAKE; it does not apply to command text (a `-m` message), issue or PR
 bodies, or named files (`--body-file`, `-F`, `cat`). Typing
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in front of a command does nothing: the hook
 reads its own environment. If only gitleaks is missing, the built-in passes still run and the
@@ -490,6 +493,8 @@ client would).
 
 ## Working with the guards as a coding agent
 
+The longer version of this section is [`docs/AGENTS-GUIDE.md`](../docs/AGENTS-GUIDE.md).
+
 The guards are meant to be worked with, not around. What an agent needs to know:
 
 1. **Never put a real credential** in a commit message, PR or issue body,
@@ -500,8 +505,11 @@ The guards are meant to be worked with, not around. What an agent needs to know:
    MCP server. It runs the real publish guard offline and returns allow or deny
    with the located, value-free explanation.
 3. **`guards:synthetic` on the same line** marks a deliberately fake fixture line.
-   It covers only the added lines of the staged diff of a `git commit`. It does
-   not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
+   It covers only the added lines of the staged diff of a `git commit`, and not
+   a real vendor credential or key (a private-key header, an AWS access key id,
+   a GitHub, Slack, Stripe or OpenAI-style live key is still denied on a marked
+   line; documented EXAMPLE ids and values containing EXAMPLE or FAKE are fine).
+   It does not cover the command text (so not a `-m` message), `gh issue`/`gh pr`
    bodies, or files named by `--body-file`, `-F` or `cat`.
 4. **`GUARDS_ALLOW_PUBLISH_SECRETS=1` does nothing when typed in front of a
    command.** The hook reads its own environment, which is the one Claude Code

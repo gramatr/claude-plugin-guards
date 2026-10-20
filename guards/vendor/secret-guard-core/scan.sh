@@ -147,6 +147,94 @@ ctx_describes_secret() {
   return 1
 }
 
+# ctx_code_shape KEY BEFORE PFX VAL AFTER: an UNQUOTED value that is source
+# code, not a credential: a call (getToken(ctx)), an identifier or member chain
+# (accessToken, this.cfg.apiToken), or a type (string, Promise<Token>), on a
+# line that is clearly code. Found live: ordinary TypeScript such as an object
+# property holding a variable, a declaration assigned a function result, or a field typed
+# `string` was redacted. A value that is only a word or number (hunter2), an
+# env/INI/YAML/shell assignment, a CLI flag and any quoted value never qualify,
+# so env-file, INI, YAML and shell assignments with a plain word (or a word
+# with a digit) still redact, as does a string literal assigned to a
+# token-named constant.
+ctx_code_shape_cs() {
+  local key="$1" before="$2" pfx="$3" val="$4" after="$5"
+  local lb="${before##*$'\n'}" la="${after%%$'\n'*}" core="$4" delim="" line
+  local endp='[],;)}]$' codep=';|=>|\)[[:blank:]]*\{'
+  while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
+  [[ "$pfx" =~ :[[:blank:]]*$ ]] && delim="colon"
+  [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && delim="${delim:-spaced}"
+  [ -n "$delim" ] || return 1
+  line="$lb$pfx$val$la"
+  # The key sits inside a quoted string (JSON string content, a log message, a
+  # shell string): that is text, not code. An opening quote just before the key
+  # that follows a colon or equals sign starts a string value; one that follows
+  # anything else is a quoted key ("token": x) and is not counted.
+  local lq="$lb" dq sq
+  if [[ "$lq" == *[\"\'] ]]; then
+    [[ "$lq" =~ [:=][[:blank:]]*[\"\']$ ]] || lq="${lq%?}"
+  fi
+  dq="${lq//[^\"]/}"; sq="${lq//[^\']/}"
+  if [ $(( ${#dq} % 2 )) -eq 1 ] || [ $(( ${#sq} % 2 )) -eq 1 ]; then return 1; fi
+  # a value that ends at a quote sits inside a string (a JSON body, a quoted
+  # command), not in code
+  [[ "$la" =~ ^[\"\'] ]] && return 1
+  # `= await fn(...)`, `= new Foo(...)`: the word itself is a keyword
+  [[ "$core" =~ ^(await|new|typeof|yield)$ && "$la" =~ ^[[:blank:]]+[A-Za-z_\$] ]] && return 0
+  # a call: the value runs straight into an opening parenthesis
+  [[ "$val" =~ ^[A-Za-z_\$][A-Za-z0-9_\$.?!]*\( ]] && return 0
+  local ident='^[A-Za-z_$][A-Za-z0-9_$]*([?!]?\.[A-Za-z_$][A-Za-z0-9_$]*)*[?!]?$'
+  # after a declaration or modifier keyword (const, readonly, private, ...)
+  local kw='(const|let|var|readonly|private|public|protected|final|val|static|abstract|declare|async|await|return|def)'
+  if [[ "$lb" =~ (^|[^A-Za-z0-9_\$.-])(export[[:space:]]+)?${kw}([[:space:]]+${kw})*[[:space:]]+$ ]] \
+    && [[ "$core" =~ $ident || "$core" =~ ^[A-Za-z_\$][A-Za-z0-9_\$.\<\>\[\],\|\&]*$ ]]; then
+    return 0
+  fi
+  [ "$delim" = colon ] || [ "$delim" = spaced ] || return 1
+  # Property position: the key is the first thing on its line, or follows an
+  # opening bracket or a comma (an object literal, an argument list), possibly
+  # after modifier keywords. A key in the middle of a sentence or a log line
+  # ("... INFO retry password: x") is not a property.
+  local prop=0
+  local lbp="${lb%[\"\']}"
+  [[ "$lbp" =~ (^|[\{\(\[,])[[:blank:]]*((readonly|private|public|protected|static|abstract|declare)[[:blank:]]+)*$ ]] && prop=1
+  local cue=0
+  [[ "$line" =~ $codep ]] && cue=1
+  # a type: primitive names anywhere after a colon; others need code around
+  if [ "$delim" = colon ]; then
+    [[ "$core" =~ ^(string|number|boolean|unknown|any|void|object|never|bigint|symbol)(\[\])?$ ]] && return 0
+    if [ "$prop" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; }; then
+      [[ "$core" =~ ^(Promise|Record|Array|Map|Set|Partial|Readonly|ReadonlyArray|Omit|Pick)\< ]] && return 0
+      [[ "$core" =~ ^([A-Z][a-z]{2,})+(\[\])?$ ]] && return 0
+    fi
+  fi
+  # a variable or member chain: needs a separator (so a plain word such as
+  # hunter2 never qualifies) or to repeat the key, and code punctuation or a
+  # trailing , ; ) }
+  if [[ "$core" =~ $ident ]]; then
+    local k="${key,,}" c="${core,,}" shaped=0
+    k="${k//[_.-]/}"; c="${c//[_.-]/}"
+    [ "$c" = "$k" ] && shaped=1
+    [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ ^[a-z]{2,}([A-Z][a-z]{2,})+$ ) ]] && shaped=1
+    if [ "$shaped" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ $endp ]]; }; then
+      [ "$delim" = colon ] && [ "$prop" = 1 ] && return 0
+      [ "$delim" = spaced ] && [[ "$val" =~ \;$ ]] && return 0
+    fi
+  fi
+  return 1
+}
+
+# The patterns above are case-sensitive (a PascalCase type name, a camelCase
+# variable); the caller runs with nocasematch on, so switch it off here.
+ctx_code_shape() {
+  local nc=0 rc=1
+  shopt -q nocasematch && nc=1
+  shopt -u nocasematch
+  ctx_code_shape_cs "$@" && rc=0
+  [ "$nc" = 1 ] && shopt -s nocasematch
+  return $rc
+}
+
 # ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID [QUOTE]
 # QUOTE (" or '): the rule's value opens with that quote; see the wrapped-key
 # check below.
@@ -192,6 +280,7 @@ ctx_redact() {
       fi
     fi
     if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
+      || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
       # ("Query-string tokens: `access_token=`") is prose, not a value.
@@ -261,6 +350,37 @@ V_DQ="(\\\\[^${NLC}]|[^\"\\\\${NLC}]){4,}"
 V_SQ="(\\\\[^${NLC}]|[^'\\\\${NLC}]){4,}"
 V_BARE='[^[:space:]"'"'"']{4,}'
 
+# --- Very long unbroken runs: mask them for the context rules ----------------
+# The key patterns start with a run of name characters, so on one long
+# unbroken run (a base64 blob, a hash, a minified bundle without spaces) every
+# start position is tried against the whole run: a 20 KB run took 10 s and the
+# publish guard denied the commit as "did not finish". No key name is that
+# long, so runs of 256+ name characters are swapped for a short placeholder for
+# the context rules and put back afterwards. A value that IS such a run (a
+# long token after a key) is still redacted: the placeholder is a 4+ character
+# value. At most 200 distinct runs are masked per input.
+CTX_RUN_MIN=256
+CTX_RUNS=()
+ctx_mask_runs() {
+  local run i=0
+  CTX_RUNS=()
+  [[ "$CTX_TEXT" == *"~~R"* ]] && return 0
+  while IFS= read -r run; do
+    [ -n "$run" ] || continue
+    CTX_RUNS[i]="$run"
+    CTX_TEXT="${CTX_TEXT//"$run"/"~~R${i}~~"}"
+    i=$((i + 1))
+  done < <(printf '%s' "$CTX_TEXT" | grep -oE "[A-Za-z0-9_.-]{${CTX_RUN_MIN},}" 2>/dev/null | sort -u | head -n 200)
+}
+ctx_unmask_runs() {
+  local i
+  for i in "${!CTX_RUNS[@]}"; do
+    CTX_TEXT="${CTX_TEXT//"~~R${i}~~"/"${CTX_RUNS[i]}"}"
+  done
+  CTX_RUNS=()
+}
+ctx_mask_runs
+
 # --- key <delim> value, in the three quoting styles, for both key families
 for KEYRE in "$KEY_A" "$KEY_B"; do
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
@@ -307,6 +427,8 @@ ctx_plain pgpass-password '(^|[[:space:]])[A-Za-z0-9_.*-]+:[0-9*]+:[A-Za-z0-9_.*
 # --- Key and value on separate lines or in one JSON object
 ctx_plain k8s-env-value '(^|[^A-Za-z0-9_.-])name:[[:space:]]*["'"'"']?'"${KEY_ANY}"'["'"'"']?[[:space:]]+value:[[:space:]]*["'"'"']?' '[^[:space:]"'"'"']{4,}'
 ctx_plain json-key-value '"(name|key)"[[:space:]]*:[[:space:]]*"'"${KEY_ANY}"'"[[:space:]]*,[[:space:]]*"value"[[:space:]]*:[[:space:]]*"' '[^"]{4,}' '"'
+
+ctx_unmask_runs
 
 # --- Vendor token shapes gitleaks' default ruleset lacks (P2)
 ctx_plain azure-client-secret '(^|[^A-Za-z0-9_~.-])' '[A-Za-z0-9_~.-]{3}8Q~[A-Za-z0-9_~.-]{34}'
