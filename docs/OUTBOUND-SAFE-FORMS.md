@@ -27,8 +27,8 @@ variables the caller already has; `FILE` is a file with owner-only permissions.
 | Case id | Client | Form | Arrives | In argv | Verbose echo | Verdict |
 |---|---|---|---|---|---|---|
 | `curl-var-header` | curl | `-H "Authorization: Bearer $TOKEN"` | header | yes | yes | works; value visible in argv and with `-v` |
-| `curl-oauth2-bearer` | curl | `--oauth2-bearer "$TOKEN"` | header | varies by curl version | yes | works; curl 7.81 leaves the value in argv, curl 8.5 blanks it after startup; visible with `-v` either way |
-| `curl-u-userpw` | curl | `-u "$USERPW"` | header (Basic) | varies by curl version | yes | works; curl 7.81 leaves the value in argv, curl 8.5 blanks it after startup; visible with `-v` either way |
+| `curl-oauth2-bearer` | curl | `--oauth2-bearer "$TOKEN"` | header | visible on curl 7.81, hidden on 8.5.0 | yes | works; newer curl blanks the argument after startup (briefly visible); visible with `-v` either way |
+| `curl-u-userpw` | curl | `-u "$USERPW"` | header (Basic) | visible on curl 7.81, hidden on 8.5.0 | yes | works; newer curl blanks the argument after startup (briefly visible); visible with `-v` either way |
 | `curl-K-file` | curl | `-K FILE` with `header = "Authorization: Bearer ..."` in it | header | no | yes | safe form |
 | `curl-K-stdin` | curl | `-K - < FILE` | header | no | yes | safe form |
 | `curl-curlrc` | curl | `CURL_HOME=DIR curl ...` with `DIR/.curlrc` | header | no | yes | safe form |

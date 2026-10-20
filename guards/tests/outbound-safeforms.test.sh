@@ -176,7 +176,7 @@ run_case() {
     elif [ "$argv" = varies ]; then
       # curl overwrites -u and --oauth2-bearer in its own argv after parsing them
       # (curl 8.5 does, 7.81 does not), so what a late reader sees is version-dependent.
-      ok "$id: argv visibility varies by client version (this run: $([ "$ARGV_HAS" -eq 1 ] && echo visible || echo blanked))"
+      ok "$id: argv visibility varies by client version (argv: $([ "$ARGV_HAS" -eq 1 ] && echo visible || echo hidden) on $(curl --version | awk 'NR==1{print $1, $2}'))"
     elif [ "$argv" = yes ]; then
       [ "$ARGV_HAS" -eq 1 ]; check "$id: value IS visible in argv" $?
     else
