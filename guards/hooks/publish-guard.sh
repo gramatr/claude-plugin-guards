@@ -60,6 +60,7 @@ MAX_BYTES="${PUBLISH_GUARD_MAX_BYTES:-524288}"
 RAW="$(cat)"
 TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)" || exit 0
 CWD="$(printf '%s' "$RAW" | jq -r '.cwd // ""' 2>/dev/null)"
+PERM_MODE="$(printf '%s' "$RAW" | jq -r '.permission_mode // ""' 2>/dev/null)"
 [ -n "$CWD" ] || CWD="$PWD"
 
 WORK="$(mktemp -d)"
@@ -200,12 +201,25 @@ HARD=0
 for r in $SS_RULES; do
   case "$AMBIGUOUS" in *" $r "*) ;; *) HARD=1 ;; esac
 done
-if [ -n "$RULES" ] && [ "$HARD" -eq 0 ] && [ "${GUARDS_PUBLISH_ASK:-1}" = "1" ]; then
-  ask "guards publish-guard: ${LABEL} may contain a credential (detector rule(s): ${RULES}). Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and rewrite the text to describe the shape only (length, character classes, which tool produced it); nothing real belongs in a public repo, issue, PR, comment or commit, not even a rotated one."
+# An ask only protects anything if a PERSON answers it. In auto, bypassPermissions
+# and dontAsk modes (or any mode this hook does not recognise) Claude Code resolves
+# it without one: verified live in auto mode, where a command carrying a fake
+# password ran straight through an ask. A publish cannot be undone, so with no
+# person to ask the ambiguous match is a deny. GUARDS_PUBLISH_ASK=force asks
+# regardless of mode (for an operator who knows a person is attached).
+HUMAN=0
+case "$PERM_MODE" in default|acceptEdits|plan) HUMAN=1 ;; esac
+[ "${GUARDS_PUBLISH_ASK:-1}" = "force" ] && HUMAN=1
+MODE_NOTE=""
+if [ -n "$RULES" ] && [ "$HARD" -eq 0 ] && { [ "${GUARDS_PUBLISH_ASK:-1}" = "1" ] || [ "${GUARDS_PUBLISH_ASK:-1}" = "force" ]; }; then
+  if [ "$HUMAN" -eq 1 ]; then
+    ask "guards publish-guard: ${LABEL} may contain a credential (detector rule(s): ${RULES}). Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and rewrite the text to describe the shape only (length, character classes, which tool produced it); nothing real belongs in a public repo, issue, PR, comment or commit, not even a rotated one."
+  fi
+  MODE_NOTE=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so an ambiguous match is blocked instead of asked]"
 fi
 
 if [ -n "$RULES" ]; then
-  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES}). Do not include the value, not even a prefix, a partial, or a rotated/dead one. Describe the SHAPE only: length, character classes, which tool or command produced it. Put real material nowhere in a public repo, issue, PR, comment or commit. If this is a reviewed false positive, the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 in the environment Claude Code starts from; for deliberately fake fixtures in a commit, put 'guards:synthetic' on the same line."
+  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Describe the SHAPE only: length, character classes, which tool or command produced it. Put real material nowhere in a public repo, issue, PR, comment or commit. If this is a reviewed false positive, the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 in the environment Claude Code starts from; for deliberately fake fixtures in a commit, put 'guards:synthetic' on the same line."
 fi
 
 if [ "$SS_SOURCE" = "local" ] && grep -q 'gitleaks not found' "$WORK/ss.err" 2>/dev/null; then
