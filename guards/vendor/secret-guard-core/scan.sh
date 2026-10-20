@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths, same-line key delimiters (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -191,7 +191,11 @@ ALIAS='pw|pwd|pass|creds?|pat|client-key-data'
 KEY_A="${KEYCH}*(${KW})${KEYCH}*"
 KEY_B="(^|[^A-Za-z0-9_.-])(${KEYCH}*[_.-])?(${ALIAS})([_.-]${KEYCH}*)?"
 KEY_ANY="(${KEY_A}|(${KEYCH}*[_.-])?(${ALIAS})([_.-]${KEYCH}*)?)"
-DELIM='["'"'"']?[[:space:]]*[:=][[:space:]]*'
+# Blanks only, never newlines: a line that ends in "secret:" or "token:" is a
+# heading, not a key, and the next line's first word is not its value. With
+# [[:space:]] here a sentence ending in "secret:" redacted the first word of
+# the following line (found live, in the Bash output of the v0.2.2 check).
+DELIM='["'"'"']?[[:blank:]]*[:=][[:blank:]]*'
 V_DQ='(\\.|[^"\\]){4,}'
 V_SQ="(\\\\.|[^'\\\\]){4,}"
 V_BARE='[^[:space:]"'"'"']{4,}'
