@@ -47,7 +47,7 @@
 # reliably "overlapping copies of the same text" (an earlier version
 # of this script assumed they were, and copied `message`'s redacted
 # text onto all three) — confirmed wrong by a real bug report
-# (gramatr/claude-plugin-guards#25): `summary` is a short,
+# (a user report): `summary` is a short,
 # independently-authored label (the caller's example: ~38 chars) while
 # `message` is the long body, and blanket-copying the longer field's
 # redacted text into `summary` blew past its own schema's `maximum:

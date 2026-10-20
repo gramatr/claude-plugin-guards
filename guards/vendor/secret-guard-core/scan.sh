@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths, same-line key delimiters plus the narrow YAML next-line value (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# VENDORED COPY of app/scan.sh in https://github.com/gramatr/guards-unified, kept in sync by hand.
+# Change it there first, then copy it here; no automated check compares the two.
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -261,7 +261,7 @@ shopt -u nocasematch
 # text (no gitleaks, no further decoding); if a secret is found, the whole
 # token is redacted. Cheap by construction: hex digests (git hashes, sha256)
 # are skipped without decoding, binary decodes (images, archives) are dropped
-# by a printable-ratio test, and at most 25 tokens of 44-4096 characters are
+# by a printable-ratio test, and at most 25 tokens of 44-65536 characters are
 # tried per scan. SECRET_GUARD_B64=0 turns it off.
 if [ "${SECRET_GUARD_B64:-1}" = "1" ] && [ -z "${SECRET_GUARD_B64_DEPTH:-}" ]; then
   b64_tmp="$(mktemp)"

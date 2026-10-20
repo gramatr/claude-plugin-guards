@@ -75,7 +75,7 @@ jobs:
         run: docker build -t secret-guard-core:ci guards/vendor/secret-guard-core
       - name: Redaction regression test (runs scan.sh inside the built image)
         # Throwaway keys generated at run time; a confirmed secret must
-        # never come back unchanged (guards-coordination#5).
+        # never come back unchanged.
         run: SCAN_IMAGE=secret-guard-core:ci bash guards/tests/scan-redaction.test.sh
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0

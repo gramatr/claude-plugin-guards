@@ -3,8 +3,8 @@
 # write tools): BLOCKS commands that would publish credential material.
 #
 # WHY: a live secret key was quoted in the body of a public GitHub issue
-# (guards-unified#18, since deleted); nothing in the plugin looked at
-# outbound text. Redaction after the fact cannot help once something is
+# (the issue and its repository have since been deleted); nothing in the
+# plugin looked at outbound text. Redaction after the fact cannot help once something is
 # published, and GitHub push protection only knows vendor token formats
 # and does not scan issue bodies at all.
 #
@@ -17,12 +17,12 @@
 # --input, `cat FILE`, gist files) -- otherwise `--body-file x.md` would
 # be a trivial bypass. For GitHub MCP write tools the whole tool_input.
 #
-# HOW: the plugin's vendored scan.sh, run locally. Not the guards-unified
-# service: it is slow on large text (its injection model is CPU-bound),
-# and a publish check must not depend on a network daemon being up. That
-# scan.sh includes the gitleaks pass, the private-key pass and the
-# context-aware pass (secret-word lead-ins, URL passwords, Authorization
-# headers).
+# HOW: the secret-only scan in secret-scan-lib.sh: the guards-unified
+# service's secret-only route first (the PII and injection models are not
+# involved), then the vendored scan.sh for the passes that need this
+# process's environment. If the service is down, slow or too old, the full
+# local scan.sh runs (gitleaks, the private-key pass and the context-aware
+# pass), so a publish check never depends on the service being up.
 #
 # ON A FINDING: DENY (never silently redact: a mangled post still
 # publishes and hides the mistake). The message names the rule IDs, never

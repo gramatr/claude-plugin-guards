@@ -1,564 +1,516 @@
 # gramatr-guards — Claude Code plugin
 
-Wires [secret-guard](https://github.com/gramatr/secret-guard),
-[injection-guard](https://github.com/gramatr/injection-guard), and
-[pii-guard](https://github.com/gramatr/pii-guard) into Claude Code's
-`PostToolUse` hook for Bash, plus a self-healing `SessionStart` hook
-that keeps the backend running — **and** an MCP server (`mcp/server.py`)
-exposing one `scan` tool, backed by
-[guards-unified](https://github.com/gramatr/guards-unified), for any
-MCP-capable caller.
+Secret, PII and prompt-injection guards for Claude Code. The plugin wires
+seven hooks and one MCP server into a session. They catch credentials in
+tool output, agent-to-agent messages, MCP results, credential files and
+outbound publishes (issues, PRs, commits).
 
-## Three independent axes, one call
+The detection logic lives in the
+[guards-unified](https://github.com/gramatr/guards-unified) service, one
+container that bundles the secret, PII and injection detectors behind
+`POST /v1/scan` and `POST /v1/scan/secret`. This repository is the thin
+Claude Code side: hooks, an MCP `scan` tool, and a self-heal script that
+keeps the container running. For what changed between versions, read
+guards-unified's
+[CHANGELOG.md](https://github.com/gramatr/guards-unified/blob/main/CHANGELOG.md).
+For the service's API and the secret-detection rules, read its
+[docs](https://github.com/gramatr/guards-unified/tree/main/docs) and README.
 
-secret-guard, pii-guard, and injection-guard protect against three
-unrelated things — credential leaks, personal-data leaks, and
-jailbreak/override attempts — and none of them depends on or needs
-input from the others. `combined-hook.sh` sequences all three
-internally, but that's a workaround for one specific Claude Code
-limitation (`PostToolUse` hooks matched on the same event run in
-parallel with *undefined* resolution order when more than one tries to
-rewrite the same output — see that script's own comments), not a
-statement that the three guards are coupled.
+**One hard rule, everything else best effort.** The only control that must be
+fast, synchronous and strict is "no secrets": secrets are redacted or blocked.
+PII and prompt-injection findings are best-effort notices; they never change
+the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 
-The MCP server (`mcp/server.py`) exposes exactly **one** tool, `scan`,
-backed by `guards-unified`'s single `POST /v1/scan` endpoint — which
-already runs all three detectors unconditionally on the same text and
-returns a per-finding result for each, in one response. An earlier
-version of this file exposed `scan_secrets`/`scan_pii`/
-`classify_injection` as three separate tools against three separate
-daemons; that made sense when the backend *was* three separate
-daemons, and stopped making sense once the backend became one call
-that already answers all three questions at once — splitting it back
-into three client-side calls would only add round trips a caller never
-wanted (a caller asking about injection risk also wants to know about
-leaked secrets in the same content; there's no real use case for only
-checking one axis). This also closes out injection-guard's own README
-roadmap item, "MCP server front-end for explicit tool-call access (vs.
-automatic hook-based gating only)."
+## Documentation map
 
-Same scope caveats apply as the hook path: the injection finding is
-jailbreak/override detection, not a reliable control for indirect
-injection (6% recall on real tool-output injections — see
-injection-guard's `RESEARCH-SPIKE-classification.md`). The PII finding
-covers Presidio's entity set only, not all PII. The tool returns an
-explicit `{"error": ...}` rather than a false "clean" result if the
-backend is unreachable — unlike the hooks, which fail open by design,
-a caller that explicitly asked for a scan result should not be told
-something is clean when it was never actually checked.
+| Doc | What it covers |
+|---|---|
+| This file | Overview, install, what each guard does |
+| [`docs/HOOKS.md`](../docs/HOOKS.md) | Per-hook table (matcher, timeout) and the failure-mode matrix |
+| [`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) | Every environment variable the plugin reads |
+| [`docs/LIMITS.md`](../docs/LIMITS.md) | What the guards do not catch |
+| [`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md) | Where the guards were tightened or loosened, and why |
 
-## Outbound protection: redacting agent-to-agent message leaks
+## The seven hooks
 
-`hooks/sendmessage-guard.sh` is a `PreToolUse` hook matched on
-`SendMessage` — it scans an outgoing agent-to-agent message **before**
-it's sent and, if it contains a secret or PII finding, **redacts and
-allows** the call rather than blocking it outright — the same posture
-secret-guard/pii-guard already use for incoming content (exact-span
-redaction), now applied on the way out, because `guards-unified`'s
-`redacted_text` gives the same exact-span guarantee for an outgoing
-message that it already gives for tool output. This is a different
-trust boundary than the `PostToolUse` hooks above: those protect
-content coming *into* this session's context; this one protects
-content this session is about to send *out*, to a different agent,
-possibly a different user, possibly logged or relayed elsewhere.
+| # | Event and matcher | Script | What it does |
+|---|---|---|---|
+| 1 | `SessionStart` | `bin/guards-selfheal.sh` | Starts and updates the guards-unified container; installs gitleaks if missing |
+| 2 | `PostToolUse` on `Bash` | `hooks/combined-hook.sh` | Redacts secrets in stdout and stderr; notes PII and injection |
+| 3 | `PostToolUse` on `mcp__.*` | `hooks/mcp-output-guard.sh` | Redacts secrets in MCP tool results |
+| 4 | `PreToolUse` on `SendMessage` | `hooks/sendmessage-guard.sh` | Redacts secrets in outgoing agent-to-agent messages; notes PII |
+| 5 | `PreToolUse` on `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | Denies (or asks about) reads of credential files before any content exists |
+| 6 | `PreToolUse` on `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | Denies (or asks about) publishes that carry credentials |
+| 7 | `UserPromptSubmit` | `hooks/userpromptsubmit-guard.sh` | Adds a note when your own prompt contains a secret. Advisory only |
 
-- Redacts **every** text-bearing copy of the message, not just the
-  field named `message` — confirmed by harvesting a real `SendMessage`
-  `PreToolUse` payload: `tool_input` also carries `summary` (documented
-  as "not transmitted" to the recipient, but it can still land in
-  local logs/transcripts) and `content` (an undocumented field that
-  turned out to be a **truncated preview** of the same text). Patching
-  only `message` while leaving a secret sitting in `content` would be
-  an incomplete fix with false confidence — worse than doing nothing,
-  because it would look safe. All three are overwritten with the same
-  redacted text.
-- Uses `hookSpecificOutput.updatedInput` + `permissionDecision: "allow"`
-  + `additionalContext` together — confirmed working by actually
-  triggering a real `SendMessage` call and checking the `PostToolUse`
-  capture of what was actually executed, not assumed from docs (this
-  exact combination was explicitly unconfirmed in Claude Code's own
-  hooks reference at the time of writing).
-- **Must remain the only `PreToolUse` hook matched on `SendMessage`
-  (or on a broad `*` that also matches it).** Confirmed by testing,
-  not assumed: with a second `PreToolUse` hook also registered on the
-  same event — even one that emitted no output at all — `updatedInput`
-  was silently dropped and the original, unredacted message went
-  through unchanged. Same "undefined resolution order across multiple
-  hooks on one event" problem Claude Code's docs already warn about
-  for `PostToolUse`'s `updatedToolOutput`, now confirmed to apply here
-  too. If this ever needs to coexist with another `PreToolUse` hook on
-  `SendMessage`, they must be combined into one script — the same
-  reason `combined-hook.sh` exists for the Bash `PostToolUse` case.
-- Both the `secret` and `pii` findings are redacted here — a different
-  policy than a user's own prompt to their own agent (where PII isn't
-  acted on, because it's the user's own data in their own
-  conversation). The recipient of a `SendMessage` call is a different
-  agent, possibly a different party entirely.
-- The `injection` finding is deliberately ignored for this decision —
-  the message is authored by the sending agent itself, not forwarded
-  untrusted content, so "is this an injection attempt" isn't the
-  relevant question for an outbound send.
-- **Degrades, does not block, when the backend is unreachable** (changed
-  in `1411d2b`, from an earlier version that denied outright in this
-  case — this section previously described that older, now-incorrect
-  behavior; corrected 2026-10-19). Falls back to the same vendored
-  local `scan.sh`/gitleaks secret-only scan `combined-hook.sh` uses for
-  its own backend-unreachable case: secrets still get real, local
-  redaction via `updatedInput`; only PII scanning (which needs
-  `guards-unified`'s loaded Presidio model) is unavailable until the
-  backend is back. Verified live, 2026-10-19 — see "Verified live:
-  secret redaction across every surface" below.
+Plus an MCP server (`mcp/server.py`, started with `uv run --script`) that
+exposes one tool, `scan`.
 
-## Inbound awareness: flagging a secret in your own prompt — NOT prevention
+Matchers, timeouts and what each hook does when the service is down are in
+[`docs/HOOKS.md`](../docs/HOOKS.md).
 
-`hooks/userpromptsubmit-guard.sh` is a `UserPromptSubmit` hook. **Read
-this section before assuming it protects anything** — it is advisory
-only, by deliberate choice, not the blocking control an earlier
-version of this hook was.
-
-- **The secret still reaches the model and gets sent to the API,
-  exactly as typed.** If it contains a secret, this hook adds an
-  `additionalContext` note alongside the unchanged prompt — it does
-  not stop, redact, or undo the submission. If the value is a real,
-  live credential, treat it as exposed the moment it was typed and
-  rotate it; the note arriving afterward changes nothing about that.
-- **Why there's no middle ground: confirmed directly against Claude
-  Code's own hooks docs, not assumed.** `UserPromptSubmit` has no way
-  to rewrite or remove part of a prompt — "can't replace the prompt;
-  it only injects `additionalContext` alongside it." So the real
-  choice for this event was always binary: block the whole prompt
-  outright, or let it through unchanged with a note. This hook does
-  the latter, on purpose — it is not a failed attempt at redaction.
-  An earlier version of this hook blocked instead; that tradeoff was
-  deliberately reversed with explicit confirmation of what it gives
-  up (see this repo's PR history for both decisions).
-- **Secret findings only.** PII is explicitly out of scope — it's the
-  user's own data in their own conversation. The injection finding is
-  out of scope too: this is the user's own direct instruction to their
-  own agent, not forwarded untrusted content.
-- **`additionalContext` is written as a factual statement, not an
-  imperative instruction** — the same discipline `sendmessage-guard.sh`
-  already follows, since imperative phrasing in a field that feeds
-  back into the model's own context is exactly the shape a
-  prompt-injection defense watches for.
-- Fails open on backend-unreachable, same as before — simpler to
-  reason about now, since this hook never blocks anything regardless:
-  unreachable just means no note gets added.
-
-## Verified live: secret redaction across every surface (2026-10-19)
-
-Prompted by a direct question — "prove secrets never go through
-unredacted, across every surface, not just one" — rather than answer
-from the code or from memory, each hooked surface was tested live
-against a real, synthetic GitHub-PAT-shaped value
-(`ghp_16C7e42F292c6912E7710c838347Ae178B4a` — fake, never a real
-credential, never needs rotation), both with `guards-unified` running
-normally and with it killed outright (`docker stop
-docker-guards-unified-1`) to force each hook's backend-unreachable
-fallback path for real, not assumed from a comment.
-
-| Surface | Backend up | Backend killed |
-|---|---|---|
-| `PostToolUse:Bash` (tool output) | Redacted — real `echo` of the fake secret came back as `***REDACTED:SECRET***` | Still redacted — same result, via local `scan.sh`/gitleaks fallback |
-| `PreToolUse:SendMessage` (agent-to-agent) | Redacted — `updatedInput.message` came back with `***REDACTED:SECRET***`, confirmed via a crafted `PreToolUse` payload piped directly into `sendmessage-guard.sh` | Still redacted — same result, `permissionDecisionReason` explicitly named the local-only fallback path |
-| `UserPromptSubmit` (the user's own prompt) | **Not redacted — reaches the model exactly as typed, by design.** See the section above: this is architecturally impossible to fix at this hook, not a gap in effort. | N/A — this hook never scans the backend at all for this decision |
-
-Reproduce the `PostToolUse` case yourself: run a Bash command whose
-output contains a secret-shaped string and read back what actually
-came through. Reproduce the `PreToolUse:SendMessage` case without
-sending anything real:
-
-```bash
-jq -n '{
-  tool_name: "SendMessage",
-  tool_input: { to: "test", message: "secret: ghp_16C7e42F292c6912E7710c838347Ae178B4a" }
-}' | bash guards/hooks/sendmessage-guard.sh
-```
-
-The `updatedInput.message` field in the output is what Claude Code
-would actually use for the tool call — if it shows the raw value, the
-redaction path is broken; if it shows `***REDACTED:SECRET***`, it
-isn't. This is the whole mechanism, reduced to one command — no live
-backend, no real recipient, no side effects, required to check it.
-
-## Architecture
-
-### One combined hook, not three
-
-`hooks/combined-hook.sh` is the **only** `PostToolUse` hook this plugin
-registers — confirmed directly against
-[Claude Code's hooks docs](https://code.claude.com/docs/en/hooks)
-before building this: multiple hooks matched on the same event run **in
-parallel**, each receiving the same original (unmodified) tool output,
-and the resolution order when more than one hook returns
-`updatedToolOutput` for the same call is **explicitly undefined** by
-the docs ("it doesn't say which one wins"). The docs' own
-recommendation: "use one hook that performs the rewrite." Confirmed
-this same constraint applies to `PreToolUse`'s `updatedInput` too, not
-just `PostToolUse` — see `sendmessage-guard.sh`'s own comments for how
-that was found.
-
-This script makes **one** call to `guards-unified`'s single
-`POST /v1/scan` — which already runs secret, PII, and injection
-detection unconditionally on the same original text and returns all
-three results in one response — applies the redaction, prepends the
-injection warning banner if flagged, and emits exactly one final
-result. It used to make three separate sequential calls to three
-separate daemons; that collapsed into one call once `guards-unified`
-shipped (see
-`docs/scope/ship-private-marketplace-plugin-2026-10-18.md`, Unit U1).
-
-### Bash-only for v1
-
-The `updatedToolOutput` schema is **per tool**, and only Bash's shape
-is confirmed from the docs — a structured object, not a bare string:
-
-```json
-{"stdout": "...", "stderr": "...", "interrupted": false, "isImage": false}
-```
-
-"A value that doesn't match the tool's output schema is ignored and the
-original output is used" — each sibling repo's own standalone
-`adapters/claude-code/hook.sh` returns a bare string for
-`updatedToolOutput`, which means **those standalone adapters would have
-silently no-op'd the whole time** if ever wired into a real
-`settings.json`, before this was found. This plugin's `combined-hook.sh`
-emits the correct structured shape and exits 0 (pass through) for any
-non-Bash tool, rather than guess at Read/Grep/WebFetch's exact shapes
-and ship something that silently no-ops the same way. See "Known
-limitations."
-
-### One Docker Compose stack, not three manual installs
-
-`docker/docker-compose.yml` runs all three guards as containers —
-`secret-guard` now ships a thin HTTP wrapper (`vendor/secret-guard-core/
-server.py` + `Dockerfile`) around its own `scan.sh` purely for interface
-consistency with its siblings (no model to keep resident, so no
-performance reason to containerize it — this is about one stack, one
-shape, not three different setups). `pii-guard` and `injection-guard`
-already shipped their own Dockerfiles; `injection-guard`'s lean `:cpu`
-ghcr.io image is the default here (see that repo's README — the ~5x
-GPU latency win doesn't matter for a synchronous hook, and it avoids a
-~4.7GB pull of unused CUDA runtime).
-
-**Every port-publish in that compose file is `127.0.0.1:PORT:PORT`,
-never bare `PORT:PORT`** — this is the one line that must never be
-"simplified" without reading `docker/SERVER-SIDE.md` first; secret-guard
-and pii-guard's own READMEs are explicit that neither may ever be
-network-reachable, even inside our own boundary.
-
-### Self-heal, not a one-shot installer
-
-`bin/guards-selfheal.sh` runs on every `SessionStart` — same idempotent
-"check state, fix if needed" pattern as grāmatr's own
-`statusline-selfheal.js`. Docker-first: if `docker` + `docker compose`
-are usable, it builds/starts the Compose stack above and verifies each
-service answers its own `/health` on `127.0.0.1`, not just that the
-container is "Up" — found by testing, not assumed: a container can be
-reported running with its port-publish silently missing if it was
-created during an earlier failed bind (see the migration note below).
-
-**Migrating off previous architectures**: the self-heal script does a
-one-time migration from either state a machine could be in before this
-consolidation — the original `uv tool install` + `systemd --user`
-bare-metal daemons (disabled, same as before), and now also the old
-three-container Docker stack (`secret-guard`/`pii-guard`/
-`injection-guard` on `8732`/`8731`/`8730`), torn down in favor of the
-single `guards-unified` container on `:8700`. Found by testing, not
-assumed: the old stack's ports don't conflict with `:8700`, so without
-this migration a machine that already ran it would end up with four
-containers across two architectures, not a clean upgrade.
-
-**Non-Docker fallback is now secret-detection only.** The old bare-metal
-path ran `injection-guard-daemon`/`pii-guard-daemon` as standalone
-`systemd --user` services so combined-hook.sh could still reach them on
-a non-Docker machine. That path is retired: combined-hook.sh now talks
-to `guards-unified` as one service, which has no non-Docker equivalent
-(it's one process bundling all three models/tools, not three
-independently-installable daemons). On a machine without Docker, secret
-detection still works via combined-hook.sh's own local `scan.sh`
-fallback (no daemon, no network dependency); PII and injection detection
-require Docker. See `docs/scope/ship-private-marketplace-plugin-2026-10-18.md`,
-Units U1/U2, for why PII/injection don't get an equivalent fallback —
-both need actual loaded models to produce a result, so there's no cheap
-local path for them the way gitleaks gives secrets.
-
-### The HF_TOKEN problem
-
-`guards-unified`'s injection finding needs a Hugging Face token that has
-accepted Llama Prompt Guard 2's gated license. This **cannot be
-automated** — accepting someone else's license is inherently a manual,
-per-user step. `guards-selfheal.sh` checks for
-`~/.config/gramatr-guards/injection-guard.env` (must contain
-`HF_TOKEN=...`) and warns clearly if it's missing, rather than silently
-starting a container whose injection finding will never successfully
-load the model (the secret and PII findings don't need it and work
-regardless).
+What you will see: a redacted secret is replaced by the literal marker
+`***REDACTED:SECRET***`. A PII note starts with "pii-guard flagged possible
+PII"; an injection warning starts with "injection-guard flagged this content".
+Both are prepended to the Bash output. A rewritten MCP result comes with a
+"guards mcp-output-guard: redacted credential material" note naming the
+detector rules, never a value.
 
 ## Install
+
+Prerequisites:
+
+- Claude Code with plugin support.
+- `docker` with `docker compose`, for PII and injection detection and for the
+  fast secret path. Without Docker, secret detection still works through the
+  local `scan.sh` fallback; PII and injection do not (see
+  [`docs/HOOKS.md`](../docs/HOOKS.md)).
+- `jq` and `curl`. Every hook needs `jq`; the credential-file and publish
+  guards **fail open** without it.
+- `uv`, for the MCP `scan` tool (`.mcp.json` runs it with `uv run --script`).
+- `gitleaks` is optional. If it is missing, the self-heal script downloads
+  v8.30.1 for Linux or macOS (x64 or arm64), checks its SHA-256 against the
+  release checksum file, and installs it to `~/.local/bin`. Other platforms get
+  a warning and the built-in passes only.
+- For the injection finding only: a Hugging Face token whose account has
+  accepted the Llama Prompt Guard 2 license (below).
 
 ```
 claude plugin marketplace add gramatr/claude-plugin-guards
 claude plugin install guards
 ```
 
-Then start (or restart) a Claude Code session — the `SessionStart` hook
-runs the self-heal automatically.
+Then start (or restart) a Claude Code session; the `SessionStart` hook runs the
+self-heal automatically. To confirm the hooks are registered, use `/hooks`.
 
-### Verified for real — this exact install flow, not just the scripts standalone
+### The HF_TOKEN requirement
 
-This was never actually run end to end until it was — confirmed from
-real, literal output, not assumed to work because the pieces worked
-individually (see `docs/scope/ship-private-marketplace-plugin-2026-10-18.md`,
-Unit U3):
+The injection finding needs a Hugging Face token that has accepted Llama
+Prompt Guard 2's gated license. Accepting someone else's license is a manual,
+per-user step, so it cannot be automated. Put `HF_TOKEN=<your token>` in
+`~/.config/gramatr-guards/injection-guard.env`. The self-heal script creates
+that file empty (mode 0600) if it is missing and warns. Without a token the
+secret and PII findings work normally and the injection finding does not
+(the model cannot load).
 
-```
-$ claude plugin marketplace add gramatr/claude-plugin-guards
-✔ Successfully added marketplace: gramatr-guards (declared in user settings)
+### Stopping and uninstalling
 
-$ claude plugin install guards
-✔ Successfully installed plugin: guards@gramatr-guards (scope: user)
-```
-
-`${CLAUDE_PLUGIN_ROOT}` resolved to a real cache path in both the hook
-and the MCP server — confirmed from the session's own debug log, not a
-literal `${CLAUDE_PLUGIN_ROOT}` string surviving into what actually
-ran:
+Remove the plugin from Claude Code's `/plugin` menu, then stop the containers
+it started:
 
 ```
-[DEBUG] Hooks: SessionStart:startup [bash /home/research3/.claude/plugins/cache/gramatr-guards/guards/90f9d4c0d597/bin/guards-selfheal.sh] (plugin guards@gramatr-guards) finished with status 0 (489ms)
+docker compose -f <plugin dir>/docker/docker-compose.yml down   # stops guards-unified and watchtower
 ```
 
-`guards-selfheal.sh` ran successfully on `SessionStart` and auto-started
-`guards-unified` itself. The `scan` MCP tool, called from inside that
-real installed session (not a standalone `uv run`), against a crafted
-string containing both a secret and PII, returned:
+Optional cleanup: `~/.config/gramatr-guards/`, `~/.local/share/gramatr-guards/`
+(metrics and the self-heal lock), and the downloaded `~/.local/bin/gitleaks`.
+Environment variables that disable single guards are listed in
+[`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md).
 
-```json
-{
-  "findings": [
-    {"type": "secret", "verdict": "found", "reason_code": ["SECRET_GITHUB-PAT"], "...": "..."},
-    {"type": "pii", "verdict": "found", "reason_code": ["PII_EMAIL_ADDRESS"], "...": "..."},
-    {"type": "injection", "verdict": "clean", "reason_code": null, "...": "..."}
-  ],
-  "redacted_text": "contact <EMAIL_ADDRESS> and here is a token ***REDACTED:SECRET***"
-}
+## Architecture
+
+### Where the work happens
+
+- **Secrets** are scanned in two places. The warm service answers
+  `POST /v1/scan/secret` (about 55 ms). The vendored `scan.sh` then runs
+  locally for the passes that need this process's environment. If the service
+  is down, too slow (2 s), too old to have the route, or returns an error, the
+  full local `scan.sh` runs instead (with gitleaks if installed). Protection
+  never depends on the service being up. The shared code is
+  `hooks/secret-scan-lib.sh`; the Bash hook (fast path), the MCP result guard
+  and the publish guard all use it.
+- **PII and injection** need the loaded models, so they exist only in the
+  service (`POST /v1/scan`). There is no local fallback for them.
+- `guards/vendor/secret-guard-core/scan.sh` is a copy of
+  `app/scan.sh` in guards-unified, kept in sync by hand. There is no automated
+  drift check. Every change to the scanner needs a paired sync commit here.
+
+### One rewriter per tool
+
+Claude Code runs several hooks matched on the same event in parallel, and its
+documentation leaves the winner undefined when more than one returns
+`updatedToolOutput`. So exactly one `PostToolUse` hook rewrites each tool's
+output: `combined-hook.sh` for `Bash`, `mcp-output-guard.sh` for `mcp__.*`. The
+matchers are disjoint. The same problem was observed for `PreToolUse`:
+`sendmessage-guard.sh` must stay the only `PreToolUse` hook that matches
+`SendMessage`, because with a second one registered `updatedInput` was silently
+dropped. `credfile-guard.sh` and `publish-guard.sh` match `Bash` but never
+return `updatedInput`.
+
+### Why Read, Grep and WebFetch output is not rewritten
+
+Claude Code publishes the `updatedToolOutput` shape for `Bash` only, and a
+value that does not match a tool's schema is silently ignored. A rewrite hook
+there would look protected and leak. The credential-file guard denies the read
+up front instead; other content those tools return is unscanned.
+
+### The Docker stack
+
+`docker/docker-compose.yml` runs two services:
+
+- `guards-unified`: image `ghcr.io/gramatr/guards-unified:cpu`, published on
+  `127.0.0.1:8700` only, 4 GB memory limit, 16 CPUs ceiling, metrics volume at
+  `~/.local/share/gramatr-guards/metrics`, `HF_TOKEN` from the env file above.
+- `watchtower` (pinned `nickfedor/watchtower:1.23.1`): polls the registry every
+  5 minutes and swaps in a newer `guards-unified` image without a Claude Code
+  restart. It is scoped by label to the `guards-unified` container. It needs
+  `/var/run/docker.sock`, which is root-equivalent on the host; the trust
+  boundary is "this pinned image is maintained". The floating `:cpu` tag means
+  a published image reaches your machine within minutes. To pin a version,
+  change the tag and remove the watchtower service.
+
+The loopback-only publish line is deliberate; read
+[`docker/SERVER-SIDE.md`](docker/SERVER-SIDE.md) before changing it. The
+service has no authentication and receives raw tool output, so never expose it.
+
+The metrics volume holds one JSON line per finding (timestamp, type, verdict,
+reason code), never the scanned text, and is never transmitted. The writer is
+the server, not the hooks.
+
+`vendor/secret-guard-core/{Dockerfile,server.py}` is a standalone gitleaks
+wrapper image. It is **not** part of the running stack; CI builds it only to run
+the redaction regression test inside it and to scan it.
+
+### What the self-heal does on every session start
+
+`bin/guards-selfheal.sh` is idempotent and always exits 0. It installs gitleaks
+if missing; compares the installed plugin commit with `main` (a note appears in
+the session if it is behind); and, if Docker is usable, takes a lock, creates
+the env file and the metrics directory (`chmod 777`, so the container's
+non-root user can write), removes only provably stale containers holding port
+8700 (an image of this project whose compose file lives under the plugin
+cache), pulls the image (240 s limit), runs `docker compose up -d` and polls
+`/health` for up to 30 s. A version change of the running image is reported to
+the session. The hook's own timeout is 270 s. An unmanaged container that
+holds port 8700 is deliberately not removed; clean it up by hand.
+
+## What each guard does
+
+### Bash output (PostToolUse): `combined-hook.sh`
+
+Runs after every Bash call. stdout and stderr are scanned separately. Secrets
+are redacted. PII and injection are noted without changing the text. Only the
+Bash output shape `{stdout, stderr, interrupted, isImage}` is rewritten.
+
+The default path (`GUARDS_FAST_BASH=1`) does two things at once:
+
+1. **Secrets, always and fast.** Up to `SECRET_MAX_BYTES` (256 KB) go through
+   the secret-scan library. Bytes past the cap are not scanned; a warning is
+   prepended and the remainder is returned unchanged.
+2. **PII and injection flags, best effort.** Only the first `FLAG_MAX_BYTES`
+   (2 KB) are sent to the full `POST /v1/scan`, in parallel with the secret
+   scan. The wait budget is `FLAG_BUDGET` seconds, by default
+   `0.25 + 0.3 * KB` (0.85 s for 2 KB). A late or failed answer is dropped
+   without notice. An injection warning is shown only for a "malicious" verdict
+   scoring at least `INJECTION_MIN_SCORE` (0.95).
+
+The models cost roughly 0.3 s per KB and are not made faster by parallel
+requests, which is why they see a prefix only. Measured end to end, with flags
+on the hook is not always under one second (see [`docs/LIMITS.md`](../docs/LIMITS.md)).
+`FLAG_MAX_BYTES` and `FLAG_BUDGET` are read by this hook, not by the server.
+
+`GUARDS_FAST_BASH=0` and `PII_GUARD_MODE=redact` select the older single-call
+path: the first `SCAN_MAX_BYTES` (24 KB) go to `/v1/scan`, and PII is replaced
+too (`redact`). The old path is also the fallback if the library or every
+scanner is unavailable.
+
+PII is flagged, not redacted, by default because the PII model produced false
+positives on engineering output (a tool name tagged as a person, a git remote
+tagged as an email address, a timestamp tagged as a phone number). Secrets are
+always redacted.
+
+### MCP result guard (PostToolUse): `mcp-output-guard.sh`
+
+Redacts secrets in an MCP tool's result before the model sees it. Claude Code
+passes MCP replacement output through with no schema validation, so the hook is
+deliberately conservative. It rewrites only recognised shapes and returns the
+same shape: an array of `{"type":"text","text":...}` blocks, an object with
+such a `content` array (other fields preserved), or a bare string. Images,
+resources and unknown wrappers pass through untouched. Each text block is
+scanned on its own, using the same secret-scan library as the Bash hook
+(service first, local `scan.sh` otherwise). It fails open on any error.
+
+- A text block larger than `MCP_GUARD_MAX_BYTES` (512 KB) is skipped silently
+  and arrives unredacted.
+- Tools whose name matches `GUARDS_MCP_SKIP` (default `^mcp__plugin_gramatr_`)
+  are not scanned: grāmatr's own server returns session tokens by design.
+  The plugin's own `scan` tool is scanned like any other.
+- `GUARDS_MCP_SCAN=0` disables the hook.
+
+**Verified status:** verified live on 2026-10-19 (the plugin's own `scan` tool
+echoes its input, which made a convenient seed). The payload shape was
+originally taken from a session transcript rather than from a documented
+example, so re-verify after a Claude Code upgrade that changes MCP result
+handling. Tests: `guards/tests/mcp-output-guard.test.sh`.
+
+### Outbound messages (PreToolUse): `sendmessage-guard.sh`
+
+Scans an agent-to-agent `SendMessage` **before** it is sent. A message goes to a
+different agent, possibly a different user, possibly logged elsewhere, so this
+protects what leaves the session.
+
+- `message`, `summary` and `content` are each scanned independently (they are
+  not copies of each other; `content` is a truncated preview and `summary` is
+  limited to 200 characters). Each scan covers the first `SCAN_MAX_BYTES`
+  (24 KB) of a field, and the hook says so when it truncated what it scanned.
+  After redaction, `summary` is cut to 200 characters.
+- Secrets are redacted. PII is flagged in `additionalContext` and left in place
+  by default; `PII_GUARD_MODE=redact` replaces it. Injection findings are
+  ignored on purpose: the sending agent wrote the message.
+- It returns `permissionDecision: "allow"` together with `updatedInput` and
+  `additionalContext` only when something changed (a secret, PII, or a
+  truncated summary); otherwise it exits silently.
+- **When the service is unreachable it degrades, it does not block.** Each field
+  gets a local secret-only scan, and the hook returns `allow` with the updated
+  input and a note that PII scanning was unavailable. In this branch the hook
+  returns `allow` even when nothing was found.
+- It has no automated test. To check the redaction path without sending
+  anything, build a fake value at run time and pipe a crafted payload in:
+
+```bash
+FAKE="$(printf 'A%.0s' {1..40})"
+jq -n --arg m "password: $FAKE" \
+  '{tool_name:"SendMessage", tool_input:{to:"test", message:$m}}' \
+  | bash guards/hooks/sendmessage-guard.sh
 ```
 
-`combined-hook.sh` was also confirmed firing automatically in that same
-fresh session — a real `Bash` command containing a test secret came
-back redacted with no manual intervention.
+`updatedInput.message` in the output is what Claude Code would use for the
+call. If it still shows the value, the redaction path is broken.
 
-## Server-side / hosted deployment
+### Your own prompt (UserPromptSubmit): `userpromptsubmit-guard.sh`
 
-**Not enabled by anything in this repo.** If you're considering running
-any of these guards reachable over a network — even inside our own
-infrastructure boundary — read `docker/SERVER-SIDE.md` first. The short
-version: it's architecturally fine for `injection-guard`, and explicitly
-not fine for `secret-guard`/`pii-guard` per their own READMEs, for
-reasons that don't go away just because the network boundary is ours.
+**Advisory only. It protects nothing.** If your prompt contains a secret, the
+hook adds an `additionalContext` note next to the prompt. The prompt is
+submitted exactly as typed and the secret reaches the model and the API. If it
+is a real credential, treat it as exposed the moment you typed it and rotate it.
 
-## Credential-file guard (PreToolUse)
+This is a limit of the hook protocol, not a choice of effort: `UserPromptSubmit`
+cannot rewrite or remove part of a prompt. The only options are to block the
+whole prompt or to add a note. An earlier version blocked; that was reversed
+because blocking every prompt that tripped a detector was judged too costly.
+The note is written as a statement of fact rather than an instruction, so it
+does not look like injected text.
 
-`hooks/credfile-guard.sh` denies reads of credential material *before any
-content is produced*, for the `Read`, `Grep` and `Bash` tools. Redaction
-after the fact is only a backstop: it sees Bash output only, and can miss
-keys in odd shapes (escaped newlines, truncated PEM).
+Only the secret finding is used. PII and injection are ignored (it is your own
+data and your own instruction). The hook scans the whole prompt with the full
+`/v1/scan` (10 s limit). With the service down, and for very long prompts that
+exceed the limit, no note appears. It has no local fallback and no tests.
 
-Denied: SSH private keys (not `*.pub`, `known_hosts`, `config`),
-`~/.aws/credentials`, kubeconfigs, gcloud and docker credential files,
-`.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`, `.pypirc`, `.env` and
-`.env.*` (not `.env.example`/`.sample`/`.template`), keystores,
-`*.tfstate`, service-account / client-secret JSON, and **any readable file
-whose content has a PEM/OpenSSH private-key header, whatever its name**
-(sniffed with `grep -q`, never printed). For Bash, only commands that
-print file content (`cat`, `head`, `sed`, `grep`, `base64`, `python`, ...)
-that name a sensitive path are denied; `ssh -i key host` and
-`ssh-keygen -l -f key` use a key without printing it and are allowed.
+### Credential-file guard (PreToolUse): `credfile-guard.sh`
 
-**Deny or ask.** Private keys and credential stores are always a hard deny.
-Files that merely *contain* credentials but are routinely needed for debugging
-(`.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state) go to the human
-through Claude Code's built-in permission prompt (`ask`) instead, because
-blocking them stops ordinary work. The agent cannot answer that prompt, so it
-is not a bypass the agent can type for itself. `GUARDS_CRED_ASK=0` makes every
-match a hard deny. In `auto` mode an ask is answered by Claude Code's own
-approval logic, not a person (verified live: a `.env` read went through
-without a prompt); that is the autonomy level that mode chooses, and reading a
-file is not irreversible the way a publish is, so these still ask. Use
-`GUARDS_CRED_ASK=0` if you want a hard deny there. What Claude Code does with an ask when no human is attached
-(a non-interactive run) is not verified: use `GUARDS_CRED_ASK=0` there.
+Denies reads of credential material **before** any content is produced, for the
+`Read`, `Grep` and `Bash` tools.
 
-Limits: a `Grep` over a whole directory is checked by directory and glob
-name only; a Bash command that reads a key indirectly is not caught; the
-hook fails open if `jq` is missing. Override with
-`GUARDS_ALLOW_CRED_READ=1` in the environment Claude Code starts from.
-Tests: `guards/tests/credfile-guard.test.sh` (throwaway keys generated at
-run time, run in CI).
+**Always denied:** SSH private keys under `~/.ssh` (not `*.pub`, `known_hosts`,
+`config`, `authorized_keys`), `~/.aws/credentials`, gcloud credential files,
+`~/.docker/config.json`, GPG private keyrings, `.netrc`, `.pgpass`,
+`.git-credentials`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`, keystores
+(`*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`), service-account and
+client-secret JSON files, whole credential directories, and **any readable
+regular file whose content has a PEM/OpenSSH private-key header, whatever its
+name** (see "False positives" below).
 
-## Pre-publish guard (PreToolUse)
+**Ask (hard deny with `GUARDS_CRED_ASK=0`):** files that merely contain
+credentials but are often needed for debugging: `.env` and `.env.*` (not
+`.env.example`, `.sample`, `.template`, `.dist`), kubeconfig, `.npmrc`,
+`.pypirc`, and terraform state. These go to the human through Claude Code's
+permission prompt. A deny-class match in the same call still wins.
 
-`hooks/publish-guard.sh` blocks commands that would publish credential
-material: `gh issue|pr|release|gist create|comment|edit|review`, `gh api`
-calls that carry a body, `git commit` (the message **and** the added lines
-of the staged diff), and GitHub MCP write tools. It scans the whole
-command including heredoc bodies, plus the contents of any file the
-command names (`--body-file`, `-F body=@file`, `--input`, `$(cat file)`,
-gist files), so a body file is not a bypass.
+For `Bash`, only commands that print file content (`cat`, `head`, `tail`,
+`sed`, `awk`, `grep`, `base64`, `xxd`, `strings`, `python`, ...) and name a
+sensitive path are checked. Globs are expanded (20 matches per glob, 60 tokens
+per command). `ssh -i key host`, `ssh-keygen -l -f key`, `test -f key` and
+`ls ~/.ssh` use or inspect a key without printing it and are allowed.
 
-It uses the vendored `scan.sh` locally (gitleaks, the private-key pass,
-and the context-aware pass for secret-word lead-ins, URL/DSN passwords and
-Authorization headers), not the guards-unified service: a publish check
-should not depend on a network daemon, and the service is slow on large
-text. On a finding it **denies** (it never silently redacts a post) and
-names the detector rules, never a value, and tells the agent to describe
-the *shape* only. If the scanner cannot run at all it fails closed; if
-only gitleaks is missing the built-in passes still run, with a notice.
+**Auto mode.** An `ask` is only a gate if a person answers it. In `auto` mode
+Claude Code answers it with its own approval logic: a `.env` read went through
+without a prompt (verified live). The publish guard handles this differently
+(it denies; see below). What Claude Code does with an `ask` when no human is
+attached at all is not verified. If you want a hard deny in `auto` or in
+unattended runs, set `GUARDS_CRED_ASK=0`. See
+[`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md) for why the two guards differ.
 
-**Deny or ask.** Sure things (a private key, a vendor token format gitleaks
-recognises, a value from this session's own environment) are hard blocks.
-Matches that come from a key name or URL shape next to a value also fire on
-text that merely *documents* such things, so those go to the human through
-Claude Code's built-in permission prompt (`ask`), with the rule names and no
-value. Only a human can approve, so it is not a bypass the agent can type for
-itself. **An ask only protects anything if a person answers it.** In `auto`,
-`bypassPermissions` and `dontAsk` modes (or a mode the hook does not
-recognise) Claude Code resolves it without one. Verified live in `auto` mode:
-a command carrying a fake password ran straight through an `ask`. So the
-hook reads `permission_mode` from its input and, when no person can answer,
-an ambiguous match is a deny with that reason, because a publish cannot be
-undone. `default`, `acceptEdits` and `plan` ask. `GUARDS_PUBLISH_ASK=force`
-asks regardless of mode; `GUARDS_PUBLISH_ASK=0` makes every match a hard
-block.
+**False positives from the private-key content sniff.** The sniff reads the
+first `CREDFILE_SNIFF_MAX_BYTES` (10 MiB) of every readable regular file a
+command names, whatever the file's name. A document that merely quotes a
+private-key header, such as a design note, a test fixture or this kind of
+documentation, is therefore denied as "file contains a private key". This hits
+Bash commands too, because glob arguments are expanded before the check: a
+command like `grep -r pattern docs/*` or `cat *.md` is denied if any one
+expanded file contains such a header, even though you did not name it.
 
-A line containing `guards:synthetic` is dropped from the staged diff
-before scanning, for deliberately fake test fixtures. It does not apply to
-command text or issue/PR bodies. `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the
-environment Claude Code starts from bypasses the guard for a reviewed false
-positive. Limits: only commands that name a publish verb are inspected;
-it covers Claude Code sessions with the plugin, not the GitHub web UI.
-**Speed.** Both this hook and the MCP guard use `hooks/secret-scan-lib.sh`:
-they ask the warm guards-unified service for the secret-only answer
-(`POST /v1/scan/secret`, about 55 ms) and then run the vendored `scan.sh`
-with `SECRET_GUARD_SKIP_GITLEAKS=1` for the passes that need this process's
-environment (about 40 ms, no gitleaks start-up). If the service is down, too
-slow (2 s), too old to have the route, or answers an error, they run the full
-local `scan.sh` with gitleaks instead, so protection never depends on the
-service. Measured on a 2 KB command: 314 ms before, 95 ms with an instant
-stub service, 323 ms when the service is down. The PII and prompt-injection
-models are never involved: they cost about 0.25 s per KB, are flag-only, and
-secrets must not wait on them.
+How to deal with it:
 
-Because this hook runs in the session's own environment, it also turns
-on `SECRET_GUARD_ENV_VALUES=1` for the scanner: the values of environment
-variables whose names look secret (`*TOKEN*`, `*PASSWORD*`, `*SECRET*`, ...)
-are exact-match redacted, which is the only way to catch a bare value with
-no key name or prefix. The backend-down fallback in `combined-hook.sh` does
-the same.
-Tests: `guards/tests/publish-guard.test.sh`.
+1. Name the files you mean instead of a glob, and leave the offending file out.
+2. Do not write a literal key header into documents. Describe the shape ("a PEM
+   private-key header line") or build fixture text at run time in the test.
+3. As a last resort, `GUARDS_ALLOW_CRED_READ=1` in the environment Claude Code
+   starts from turns the whole guard off for that session. There is no per-call
+   bypass, by design: anything the agent could type for itself would also work
+   for a prompt-injected agent.
 
-## MCP result guard (PostToolUse)
+Other limits: a `Grep` over a whole directory is checked by directory and glob
+name only; a Bash command that reads a key indirectly (a script that cats it, a
+path in a variable, `eval`) is not caught; the hook fails open if `jq` is
+missing or the payload cannot be parsed. Tests:
+`guards/tests/credfile-guard.test.sh` (throwaway keys generated at run time).
 
-`hooks/mcp-output-guard.sh` redacts secrets in an MCP tool's result before
-the model sees it. Claude Code passes MCP replacement output through with
-no schema validation, so the hook is deliberately conservative: it rewrites
-only recognised shapes and returns the same shape (an array of
-`{"type":"text","text":...}` content blocks, an object with such a
-`content` array, or a bare string). Images, resources and unknown wrappers
-pass through untouched, so a wrong guess cannot corrupt a result. It uses
-the vendored `scan.sh` locally (secrets only; PII and injection stay with
-the Bash path's service call, to avoid a service round trip on every MCP
-call), and fails open on any error. `GUARDS_MCP_SKIP` (extended regex on
-the tool name) excludes tools whose results legitimately carry credentials
-the session needs; the default skips grāmatr's own server, which returns
-session tokens by design. `GUARDS_MCP_SCAN=0` disables it. The payload shape
-was taken from the session transcript, not from a documented example:
-verify live after enabling. Tests: `guards/tests/mcp-output-guard.test.sh`.
+### Pre-publish guard (PreToolUse): `publish-guard.sh`
 
-## Bash output hook: the hot path
+Blocks commands that would publish credential material. Redaction after the
+fact cannot help once something is public, and GitHub push protection knows
+only vendor token formats and does not scan issue bodies.
 
-`hooks/combined-hook.sh` runs on **every** Bash call, so its latency is felt on
-all work. Measured on the running service before this change, the single
-`/v1/scan` call cost 229 ms at 1 KB, 5.4 s at 24 KB and 23 s at 100 KB (the
-hook took 10.4 s on 24 KB of output), almost all of it the PII and
-prompt-injection models at about 0.25 s per KB. Those models are flag-only
-and are not made faster by parallel requests. It also only ever scanned the
-first 24 KB, so a secret later in a larger output was returned unredacted.
+**What it covers**
 
-The default path (`GUARDS_FAST_BASH=1`) now does two things:
+- `gh issue|pr|release|gist` with `create`, `comment`, `edit` or `review`.
+- `gh api ...` when the call carries a body flag (`-f`, `-F`, `--field`,
+  `--raw-field`, `--input`).
+- `git commit`, including `git -C <dir> commit`: the command text (the message)
+  **and** the added lines of the staged diff (`--cached`; the working tree
+  against `HEAD` when `-a`/`--all` is used), minus lines containing
+  `guards:synthetic`. Each file or diff is capped at `PUBLISH_GUARD_MAX_BYTES`
+  (512 KB).
+- GitHub MCP write tools: tools whose name matches `mcp__.*github.*` **and**
+  contains one of `create`, `update`, `add_`, `comment`, `push`, `merge`,
+  `review`, `edit`, `post`, `send`, `write`. The whole `tool_input` is scanned.
 
-1. **Secrets, always and fast.** `secret-scan-lib.sh`: the service's
-   secret-only route (about 55 ms) plus the local-environment passes, over up
-   to `SECRET_MAX_BYTES` (256 KB, was 24 KB). Any failure falls back to the
-   full local `scan.sh`. This never waits on the models.
-2. **PII and injection flags, best effort.** The first `FLAG_MAX_BYTES`
-   (2 KB) only, run in parallel with the secret scan, abandoned after a
-   budget that scales with the bytes sent (0.25 s + 0.3 s per KB, so 0.85 s
-   for 2 KB; override with `FLAG_BUDGET`) and dropped silently if the service
-   is slow or down. The models cost about 0.3 s per KB: 2 KB takes about
-   0.62 s, 3 KB about 0.94 s, so `FLAG_MAX_BYTES=3072` gives about 90% of
-   outputs full coverage at the cost of staying right at one second.
-   Set `FLAG_MAX_BYTES=0` to skip them entirely. Injection or PII text later
-   in a long output is not flagged; that is the cost of keeping the hook
-   fast.
+The scanned text is the full command (heredoc bodies included) plus the
+contents of any file the command names (`--body-file`, `--notes-file`,
+`--input`, `-F`/`-f` file arguments, `cat FILE`, gist files), so a body file is
+not a bypass.
 
-Safeguards: `GUARDS_FAST_BASH=0` restores the previous single-call behavior
-exactly; `PII_GUARD_MODE=redact` also uses the previous path; if the library
-is missing or no scanner can run, the hook uses the previous path instead of
-skipping the scan. Tests: `guards/tests/combined-hook.test.sh` (a stub
-service with a slow model scan proves secrets never wait on it).
+**What it does not cover.** `git push` itself is not inspected: only the commit
+is. A secret that is already committed is not caught at push time. Also not
+covered: `curl` or other posters, scripts that publish indirectly, non-GitHub
+MCP tools (GitLab, Jira, Slack, ...), and the GitHub web UI. See
+[`docs/LIMITS.md`](../docs/LIMITS.md).
+
+**Decision.** On a finding it never rewrites the text and never echoes a
+value; the message names the detector rules and tells the agent to describe the
+*shape* only.
+
+| Finding | `default`, `acceptEdits`, `plan` | `auto`, `bypassPermissions`, `dontAsk`, or unknown mode |
+|---|---|---|
+| Sure thing: a private key, a vendor token format gitleaks recognises, a value from this session's own environment, a base64-wrapped secret | deny | deny |
+| Ambiguous match from a key name or URL shape (secret-word lead-in, URL password, auth or cookie header, CLI password flag, `.netrc`/`.pgpass`, k8s or JSON name/value pair, Azure/gcloud/bcrypt shapes, generic API key) | **ask** (rule names, no value) | **deny** |
+| No scanner could run (service unreachable and `scan.sh` missing or failed) | deny | deny |
+
+Why deny where no person is present: in `auto` mode Claude Code resolves an
+`ask` without a person, and an `ask` was seen to let a command carrying a fake
+password run straight through. A publish cannot be undone, so the hook reads
+`permission_mode` from its input and denies instead. The deny message says that
+the mode has no person to answer.
+
+`GUARDS_PUBLISH_ASK=force` asks regardless of mode (for an operator who knows a
+person is attached); `GUARDS_PUBLISH_ASK=0` makes every match a hard deny.
+`GUARDS_ALLOW_PUBLISH_SECRETS=1` in the environment Claude Code starts from
+bypasses the guard for a reviewed false positive. A line carrying
+`guards:synthetic` is dropped from the staged diff for deliberately fake
+fixtures; it does not apply to command text, issue or PR bodies, or named
+files. If only gitleaks is missing, the built-in passes still run and the
+hook adds a notice. The hook fails open only if `jq` is missing.
+
+Because this hook runs in the session's own environment it also turns on
+`SECRET_GUARD_ENV_VALUES=1` for the scanner: the values of environment
+variables whose names look secret (`*TOKEN*`, `*PASSWORD*`, ...) are
+exact-match redacted. That is the only way to catch a bare value with no key
+name or prefix. Values shorter than 8 characters, placeholders, existing file
+paths, and names ending in `_FILE`, `_PATH`, `_DIR`, `_URL`, `_NAME`, `_ID`
+and similar are skipped.
+
+Writing about secrets trips the guard too. Pass commit messages and PR bodies
+through files, describe shapes rather than values, and mark deliberately fake
+fixture lines `guards:synthetic`. Tests: `guards/tests/publish-guard.test.sh`.
+
+### The MCP `scan` tool: `mcp/server.py`
+
+Exposes one tool, `scan(text)`, for any MCP-capable caller. It posts to
+`POST {GUARDS_ENDPOINT}/v1/scan` (15 s limit) and returns the service's JSON:
+a finding each for `secret`, `pii` and `injection`, plus `redacted_text` (secrets
+and then PII redacted; injection never alters text). If the service is
+unreachable it returns `{"error": ...}` instead of a false "clean": a caller
+that explicitly asked for a scan should not be told something is clean when it
+was never checked. Scanning a secret with this tool returns the secret inside
+the finding's `detail`; the MCP result guard redacts that on the way back
+because the tool is not in the default skip list. The tool and the full
+server have no automated tests; verified live in an installed session.
+
+## Verified live
+
+Two sessions checked the real behaviour instead of assuming it.
+
+Secret redaction across every hooked surface (2026-10-19), with the service up
+and with the container stopped to force each fallback:
+
+| Surface | Service up | Service stopped |
+|---|---|---|
+| `PostToolUse:Bash` | Redacted | Still redacted, through the local `scan.sh` |
+| `PreToolUse:SendMessage` | Redacted | Still redacted, the reason names the local-only fallback |
+| `UserPromptSubmit` | **Not redacted: reaches the model as typed, by design** | No note at all |
+
+The marketplace install flow (`claude plugin marketplace add ...`,
+`claude plugin install guards`) was run end to end: the hook ran with
+`${CLAUDE_PLUGIN_ROOT}` resolved, the self-heal started the container, and the
+`scan` tool returned a secret finding and a PII finding for a crafted string.
+The self-heal's measured run time when the container was already up was about
+0.5 s.
+
+The credential-file guard, the publish guard (including the `auto`-mode deny)
+and the MCP result guard were each verified live as well. Nothing here is a
+substitute for running the test suites; see the next section.
+
+## Tests
+
+```bash
+bash guards/tests/run-all.sh
+```
+
+This runs every suite twice, once with gitleaks hidden from `PATH` (what CI
+sees) and once with it visible, and once inside the built scanner image if
+Docker is usable. Suites cover the credential-file guard, the publish guard,
+the fast secret path, the Bash hook, the MCP result guard and `scan.sh`
+redaction. There are **no** tests for `sendmessage-guard.sh`,
+`userpromptsubmit-guard.sh`, `guards-selfheal.sh` or `mcp/server.py`.
+
+## Server-side or hosted deployment
+
+**Not enabled by anything in this repo.** If you consider running the service
+reachable over a network, even inside your own boundary, read
+[`docker/SERVER-SIDE.md`](docker/SERVER-SIDE.md) first. Setting
+`GUARDS_ENDPOINT` to a remote URL sends raw tool output, which can contain the
+secrets you are trying to protect, to that host.
 
 ## Versioning
 
-This plugin and the `guards-unified` service are one product shipped as two
+This plugin and the guards-unified service are one product shipped as two
 packages, so **they carry the same version and the same tag**, cut together:
-`vX.Y.Z` on both repos. The version is in the `VERSION` file at the root of this
-repo. Plugin installs track `main` and are identified by commit (that is what
-`/plugin` shows), so the tag here is a label; a CI check
+`vX.Y.Z` on both repositories. The version is in the `VERSION` file at the root
+of this repository. Plugin installs track `main` and are identified by commit
+(that is what `/plugin` shows), so the tag here is a label; a CI check
 (`.github/workflows/tag-check.yml`) fails if a pushed tag does not equal
-`VERSION`. Before tagging a release, confirm `VERSION` is the same in both repos.
-
-## Known limitations
-
-- **Docker is the only path to PII/injection detection now.** Its only
-  hard requirement is a working `docker` + `docker compose` on the
-  host. Without it, only secret detection works (via combined-hook.sh's
-  local `scan.sh` fallback) — see "Non-Docker fallback" above.
-- **Windows not supported at all for `guards-unified`** — secret
-  detection still works there (no daemon needed), PII/injection stages
-  fail open.
-- **Output redaction covers Bash and MCP tool results only.** Read/Grep/WebFetch's `updatedToolOutput` shapes aren't documented, and a wrong shape is silently ignored, so those results are never rewritten. Credential files are instead blocked *before* they are read by `credfile-guard.sh` (see "Credential-file guard"); everything else those tools return is unscanned. MCP results are redacted by `mcp-output-guard.sh` (see below).
-- **Vendored hook scripts** (`hooks/*.sh`, `vendor/secret-guard-core/scan.sh`) must be manually synced if their source repos change — no automated sync exists yet.
-- **secret-guard's `gitleaks`/`jq` dependencies are checked, never auto-installed** — a system package manager assumption felt too risky to make silently; the self-heal script warns and fails open instead.
+`VERSION`. Before tagging a release, confirm `VERSION` is the same in both
+repositories. The release recipe is in guards-unified's
+[`docs/RELEASING.md`](https://github.com/gramatr/guards-unified/blob/main/docs/RELEASING.md).
 
 ## Why this exists
 
-Built after a real session-long pattern: secrets and PII surfacing in
-raw Bash tool output, caught (in shadow-mode, logging-only) by an
-existing grāmatr hook (`bash-output-scan.js`) during this very build.
-secret-guard, injection-guard, and pii-guard are the dedicated,
-purpose-built versions of that same idea — redaction and
-classification, not just logging — bundled here so they're one
-plugin install away rather than three separate manual setups.
+Built after a real session-long pattern: secrets and PII surfacing in raw Bash
+tool output. The guards redact and classify, rather than only logging, and are
+bundled so they are one plugin install away.
 
 ## License
 
-MIT for this repository's own code — see `LICENSE`. This repo never
-bundles or ships model weights itself; it's a thin hook/MCP client
-that talks to `guards-unified`'s `:8700` API.
+MIT for this repository's own code; see `LICENSE`. This repository never
+bundles or ships model weights; it is a thin hook and MCP client for the
+guards-unified API on port 8700.
 
-**guards-unified** (the backend these hooks call) directly loads
-`meta-llama/Llama-Prompt-Guard-2-86M` for the injection-detection axis,
-which carries its own redistribution obligations under Meta's Llama 4
-Community License — "Built with Llama" attribution, a required NOTICE
-file, and a bundled copy of the license text. That obligation belongs
-to, and is satisfied in, `guards-unified`'s own repo (`LICENSE`,
-`NOTICE`, `THIRD_PARTY_LICENSES/`, and its runtime `GET /about`
-endpoint) and `injection-guard`'s (same pattern, original source) —
-not duplicated here, since this repo doesn't distribute the weights or
-the loading code, only an `HTTP` client to a service that does. If
-you're redistributing a build of this plugin together with a
-pre-pulled `guards-unified` image (rather than letting users `docker
-pull` it themselves per the install instructions above), you inherit
-that obligation directly — see `guards-unified`'s README for what's
-required.
+**guards-unified** (the backend these hooks call) loads
+`meta-llama/Llama-Prompt-Guard-2-86M` for the injection axis, which carries its
+own redistribution obligations under Meta's Llama 4 Community License ("Built
+with Llama" attribution, a NOTICE file, a bundled copy of the license text).
+That obligation belongs to, and is satisfied in, guards-unified's repository
+(`LICENSE`, `NOTICE`, `THIRD_PARTY_LICENSES/`, and its runtime `GET /about`
+endpoint), not duplicated here. If you redistribute a build of this plugin
+together with a pre-pulled guards-unified image, you inherit that obligation
+directly; see guards-unified's README for what is required.

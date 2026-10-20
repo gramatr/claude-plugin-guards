@@ -5,7 +5,7 @@
 # is the control for "an agent printed a private key into the session":
 # redaction after the fact (combined-hook.sh) is a backstop, not a
 # guarantee — it only sees Bash output, it can miss keys in odd shapes
-# (escaped newlines, truncated PEM, see guards-coordination#5/#10), and
+# (escaped newlines, truncated PEM), and
 # it cannot see Read or Grep output at all.
 #
 # WHY PRE-TOOL DENY AND NOT POST-TOOL REWRITE FOR Read/Grep: Claude

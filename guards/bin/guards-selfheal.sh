@@ -4,8 +4,7 @@
 # Docker-first: manages guards-unified as a single-service
 # `docker compose` stack (guards/docker/docker-compose.yml) — one
 # container, one API (:8700), replacing the old three-container
-# secret-guard/pii-guard/injection-guard stack. Same consolidation
-# already shipped and CI-verified in gramatr/platform-guards#1.
+# secret-guard/pii-guard/injection-guard stack.
 #
 # Idempotent "check state, fix if needed" run every session start —
 # same pattern as grāmatr's own statusline-selfheal.js and the original
@@ -45,8 +44,7 @@ IMAGE_UPDATE_NOTE=""
 #
 # gitleaks gets an actual auto-install attempt, not just a warning —
 # this was leaving the secret-axis fallback silently unavailable on a
-# machine that never happened to have gitleaks already (confirmed on
-# dgx-spark-01). jq is left warn-only: it's a hard dependency of THIS
+# machine that never happened to have gitleaks already. jq is left warn-only: it's a hard dependency of THIS
 # script too (every call below pipes through jq), so a machine
 # actually missing it would already be failing loudly elsewhere, not
 # just in the fallback path. ---
@@ -205,7 +203,7 @@ migrate_from_previous_architecture() {
 # e.g. a bare `docker run`) is still holding :8700, the new `up -d`
 # fails to bind the port -- silently, from this script's perspective,
 # since that failure path already just logs a warning and returns 1.
-# Confirmed on dgx-spark-01: a bare `docker run --name guards-unified`
+# Confirmed on a shared Linux host: a bare `docker run --name guards-unified`
 # container (zero compose labels) held the port for hours while the
 # actually-current compose project sat in `Created` state, never
 # started, serving nothing.
@@ -273,8 +271,7 @@ reconcile_port_8700() {
 
 ensure_docker_stack() {
   # guards-unified runs as a non-root user (fixed UID/GID 1000) as of
-  # that repo's own fix for this exact problem (see
-  # gramatr/guards-unified#4) -- a bind-mounted directory Docker
+  # that repo's own fix for this exact problem -- a bind-mounted directory Docker
   # auto-creates on first run comes back owned by root, which silently
   # breaks every metrics write (confirmed by testing there: the scan
   # itself still succeeds, fail-open, but zero lines land, no loud
@@ -282,7 +279,7 @@ ensure_docker_stack() {
   # exactly -- host-portable, and costs nothing real since this
   # directory only ever holds metrics with no scanned text.
   # Confirmed by testing, not hypothetical: a machine that ran the OLD
-  # root-based guards-unified image before gramatr/guards-unified#4 has
+  # root-based guards-unified image before that fix has
   # the WHOLE $GRAMATR_GUARDS_DIR chain owned by root, not just the
   # metrics leaf -- Docker's own `mkdir -p` for the bind mount ran as
   # root and created every missing path component as root. mkdir -p as

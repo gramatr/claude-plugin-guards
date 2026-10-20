@@ -280,7 +280,7 @@ scan_and_redact() {
 # This hook runs on EVERY Bash call, so the latency of the secret scan is felt
 # on all work. Measured on the running service: the full /v1/scan costs
 # 229 ms at 1 KB, 5.4 s at 24 KB and 23 s at 100 KB, almost all of it the PII
-# and prompt-injection models (about 0.25 s per KB, flag-only, not helped by
+# and prompt-injection models (about 0.3 s per KB, flag-only, not helped by
 # parallel requests). Secrets are what must be trapped, so:
 #   1. Secrets: the service's secret-only route (about 55 ms) plus the local-
 #      environment passes, via secret-scan-lib.sh, over up to SECRET_MAX_BYTES

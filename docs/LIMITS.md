@@ -1,0 +1,170 @@
+# What the guards do not catch
+
+This plugin reduces the chance that a credential, personal data or an injected
+instruction reaches the model, a teammate or a public repository. It is not a
+guarantee. This page lists the known gaps so you can decide what else you need.
+Each item says whether a setting changes it.
+
+The design rule behind most of these: **secrets are the one hard rule**, kept
+fast and strict. PII and prompt-injection are best-effort notices that never
+change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
+
+## Coverage gaps (what is never looked at)
+
+- **Read, Grep and WebFetch output is not scanned.** Claude Code publishes the
+  output shape for `Bash` only, and a wrong shape is silently ignored. The
+  credential-file guard denies reads of credential files up front; everything
+  else those tools return reaches the model unchecked.
+- **Tool inputs are mostly not scanned.** Only `SendMessage` input and the
+  publish verbs (see below) are checked. A secret written with `Write` or
+  `Edit`, sent with `curl`, or passed to a tool the guards do not name is not
+  looked at.
+- **A secret typed in your own prompt cannot be removed by a hook.**
+  `UserPromptSubmit` can only block the whole prompt or add a note, and this
+  plugin adds a note. The prompt reaches the model and the API as typed. If the
+  value is real, rotate it.
+- **The publish guard does not cover `git push`.** It inspects `git commit`
+  (message and staged diff) but not what is pushed, so a secret that is already
+  in a commit is not caught at push time. It also does not cover `curl` or other
+  posters, scripts that publish indirectly, non-GitHub MCP tools (GitLab, Jira,
+  Slack, mail and similar), or the GitHub web UI. It inspects only commands
+  that name `gh issue|pr|release|gist` with `create|comment|edit|review`, a
+  `gh api` call with a body flag, `git commit`, and MCP tools whose name
+  contains `github` and a write verb.
+- **Only recognised MCP result shapes are rewritten**: an array of
+  `{"type":"text","text":...}` blocks, an object with such a `content` array, or
+  a bare string. Images, resources and unknown wrappers pass through unscanned,
+  by design (a wrong guess could corrupt a result).
+- **grāmatr's own MCP tools are skipped by default**
+  (`GUARDS_MCP_SKIP=^mcp__plugin_gramatr_`) because they return session tokens
+  by design. Change the variable to scan them; you will then see those tokens
+  redacted.
+- **Indirect reads of credential files.** The credential-file guard checks the
+  paths a command or tool names. A script that reads a key, a path held in a
+  variable, or `eval` is not caught. A `Grep` over a whole directory is checked
+  by directory and glob name only.
+- **Only Claude Code sessions with the plugin installed** are covered, not a
+  terminal outside Claude Code.
+
+## Size and position limits
+
+- **PII and injection are flagged on the first 2 KB of a Bash output only**
+  (`FLAG_MAX_BYTES`). Personal data or an injected instruction later in a long
+  output is never flagged. This is the price of keeping the hook fast: the
+  models cost roughly 0.3 s per KB, and splitting the work in parallel made
+  them slower, not faster. `FLAG_MAX_BYTES` is read by the hook, not the
+  server. Raising it costs latency; `0` turns the flags off.
+- **Secrets are scanned in the first 256 KB of each Bash stream only**
+  (`SECRET_MAX_BYTES`). The rest is returned unscanned, with a warning
+  prepended.
+- **The older single-call path scans only the first 24 KB** (`SCAN_MAX_BYTES`)
+  and says so. `SendMessage` has the same 24 KB cap per field.
+- **MCP text blocks over 512 KB are skipped silently** (`MCP_GUARD_MAX_BYTES`)
+  and arrive unredacted, with no note.
+- **The plugin's own `scan` MCP tool posts the whole text to the server's
+  `/v1/scan`**, which refuses bodies over 64 KiB with HTTP 413 (guards-unified
+  #17, released after 0.2.3). The tool then returns its `{"error": ...}` shape,
+  never a "clean" result, but its wording says the backend is unreachable,
+  which is misleading for a 413.
+- **The publish guard reads at most 512 KB** per named file and of the staged
+  diff (`PUBLISH_GUARD_MAX_BYTES`).
+- **Very large inputs with thousands of matches are slow.** A timeout in the
+  scanner keeps the original text rather than withholding it, so a scan that
+  runs out of time is a leak, not a block. This was a deliberate choice; see
+  [`TRADEOFFS.md`](TRADEOFFS.md).
+- **The credential-file content sniff reads only the first 10 MiB** of a file
+  (`CREDFILE_SNIFF_MAX_BYTES`).
+
+## What the detectors can and cannot recognise
+
+- **A bare high-entropy value with no key name, prefix or context** is not
+  detectable by any rule. The only defence is `SECRET_GUARD_ENV_VALUES=1`, which
+  the hooks turn on for the scanner they run locally: it redacts the exact
+  values of environment variables with secret-looking names. That does not see
+  values that are not in the session environment, values under 8 characters,
+  placeholders, or values that are existing file paths. The container cannot see
+  your environment at all.
+- **Access-key and client IDs are not redacted by default**
+  (`SECRET_GUARD_REDACT_KEY_IDS=1` changes that). They are semi-public
+  identifiers; the secret half is the boundary.
+- **Encodings:** the scanner has a base64 decoding pass (up to 25 candidate
+  tokens per scan). Other encodings, such as hex, URL encoding or compression,
+  are not decoded. A secret split across several tool calls or messages is not
+  reassembled.
+- **Context rules trade precision for recall.** They key on what a value is
+  next to (a key name, URL password, header, command-line flag). That produces
+  false positives on text that documents such things, and each false-positive
+  fix removes a little protection: a value that is an existing path is never
+  treated as a password, and a heading that ends in a keyword plus a colon,
+  followed by exactly one word, still has that word redacted because it cannot
+  be told from a YAML scalar.
+- **Prompt injection:** the injection finding is jailbreak and override
+  detection. Measured recall on indirect injection (malicious instructions
+  embedded in data with no override language) is about 6% on real tool-output
+  attacks (InjecAgent, n=200). A "clean" verdict is not a safety guarantee. The
+  warning is also shown only above a 0.95 confidence floor, because benign
+  security-themed text scored 0.86 to 0.91.
+- **PII:** only the entity types the PII model is configured for are found, and
+  the model produces false positives on engineering text. PII is flagged,
+  never removed, by default (`PII_GUARD_MODE=redact` changes that for the Bash
+  hook and outgoing messages).
+
+## False positives you will meet
+
+- **The credential-file guard denies any file that contains a private-key
+  header, whatever its name,** including documents that only quote one, and it
+  checks glob-expanded Bash arguments, so an innocent `grep ... docs/*` can be
+  denied. See "False positives from the private-key content sniff" in
+  [`guards/README.md`](../guards/README.md).
+- **The publish guard occasionally blocks a post that sits next to a
+  secret-ish key name.** In `default`, `acceptEdits` and `plan` modes it asks;
+  elsewhere it denies.
+- **PII notes on ordinary developer output** (a tool name tagged as a person,
+  a git remote as an email address). They are notes only.
+
+## Operational limits
+
+- **Latency is not always under one second with the flags on.** Measured by the
+  maintainers on a development machine (not re-measured for this page): about
+  0.6 s at 1 KB of output, 1.0 s at 3 KB and above, worst case 1.4 s, against
+  0.3 to 0.8 s with `FLAG_MAX_BYTES=0`. The Bash hook runs after every Bash
+  call, so you feel this on all work. `FLAG_MAX_BYTES=0` removes it at the cost
+  of no PII or injection notes.
+- **Scan latency scales with your CPU.** The compose file allows 16 CPUs and 4 GB
+  of memory for the service; a small machine will be slower, and a container
+  killed for exceeding memory looks like an intermittent outage.
+- **A hook that exceeds its timeout** (for example a hung scan inside the 15 s
+  Bash hook timeout) is assumed to leave the original, unredacted output in
+  place. This is Claude Code's behavior and is not verified here.
+- **Docker is required for PII and injection.** Without it only secret
+  detection runs. The service stack is not supported on Windows; Windows is not
+  tested.
+- **The service has no authentication** and sees raw tool output. It is bound
+  to loopback on purpose. Do not expose it, and be careful what you set
+  `GUARDS_ENDPOINT` to.
+- **Auto-update trust.** Watchtower, with access to the Docker socket, pulls
+  the floating `:cpu` tag every five minutes, so a published image reaches your
+  machine within minutes. Pin the tag and remove Watchtower if that is not
+  acceptable.
+
+## Maintenance gaps
+
+- **Untested components:** `sendmessage-guard.sh`, `userpromptsubmit-guard.sh`,
+  `guards-selfheal.sh` and `mcp/server.py` have no automated tests. They were
+  verified by hand against a live session (SendMessage, the install flow, the
+  MCP tool). The `UserPromptSubmit` hook's behavior with a slow service or a
+  very long prompt is derived from the code and has not been measured.
+- **The vendored `scan.sh` is synced by hand** from `app/scan.sh` in
+  [guards-unified](https://github.com/gramatr/guards-unified), and neither
+  repository's CI checks that they match. A scanner fix that lands only in
+  guards-unified reaches the local fallback only after a paired sync commit
+  here. As of this change the two files are identical apart from a two-line
+  header; a comment-only fix in guards-unified once sat uncopied for a day,
+  which shows the sync is manual.
+- **Versions move in lockstep,** but each repository's CI cannot see the other,
+  so equal `VERSION` files are a release-checklist step.
+- **gitleaks versions** are pinned in two places (the self-heal script and the
+  vendored Dockerfile) and kept equal by hand.
+- **Known CVEs** in the Go runtime bundled with the pinned gitleaks release are
+  accepted in `.trivyignore` because no fixed gitleaks release exists yet; they
+  are revisited when one is published.
