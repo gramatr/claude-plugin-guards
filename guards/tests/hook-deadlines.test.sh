@@ -26,7 +26,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 HOOKS_JSON="$REPO/guards/hooks/hooks.json"
-BASE="70ad267"   # origin/main before the deadlines change
+BASE="70ad26775a11c1bc3c608ef91a67291bd4eeda35"   # origin/main before the deadlines change
 
 T="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
