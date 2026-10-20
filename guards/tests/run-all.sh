@@ -52,5 +52,17 @@ if command -v gitleaks >/dev/null 2>&1; then
   done
 fi
 
+# The cve-scan CI job runs scan-redaction INSIDE the vendored scan image, where
+# paths and users differ from this machine (a $HOME-based test passed here and
+# failed there). Mirror that when docker is available.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  echo "inside the scan image (as the cve-scan CI job)"
+  if docker build -q -t secret-guard-core:run-all guards/vendor/secret-guard-core >/dev/null 2>&1; then
+    step "scan-redaction (SCAN_IMAGE)" env SCAN_IMAGE=secret-guard-core:run-all bash guards/tests/scan-redaction.test.sh
+  else
+    echo "  skip  could not build the scan image"
+  fi
+fi
+
 [ "$fail" -eq 0 ] && echo "ALL OK" || echo "FAILURES"
 exit "$fail"
