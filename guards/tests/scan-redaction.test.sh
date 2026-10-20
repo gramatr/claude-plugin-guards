@@ -92,9 +92,11 @@ for benign in "PWD=/usr/bin" "cwd listing for /usr/bin done" 'password: ${DB_PAS
 done
 # A heading that ends in a keyword and a colon is not a key: the next line's first
 # word is not its value (found live while verifying v0.2.2).
-for benign in $'Rotate the secret:\n  kubectl delete secret old' $'About the token:\n  local: running'; do  # guards:synthetic
+for benign in $'Rotate the secret:\n  kubectl delete secret old' $'About the token:\n  local: running' $'secret:\n  name: db-creds' $'token:\n  one two three'; do  # guards:synthetic
   if [ "$(printf '%s' "$benign" | scan)" = "$benign" ]; then pass=$((pass + 1)); else echo "FAIL: heading altered: ${benign%%$'\n'*}"; fail=$((fail + 1)); fi
 done
+# The one next-line form that IS a value: a YAML scalar under a line that is only the key and a colon.
+ctx "yaml scalar on the line after a bare key" $'password:\n  Tq7vN2xLm9Kd4RzP8wYb' 'Tq7vN2xLm9Kd4RzP8wYb'  # guards:synthetic
 
 # Large input with a secret: the span split used to be quadratic (232 KB took
 # 19 s, 1 MB 447 s), and the loops stopped after 200 matches, leaving later

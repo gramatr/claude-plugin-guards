@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths, same-line key delimiters (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths, same-line key delimiters plus the narrow YAML next-line value (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the
@@ -206,6 +206,21 @@ for KEYRE in "$KEY_A" "$KEY_B"; do
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'"
   ctx_rule secret-lead-in "$KEYRE" "$DELIM" "$V_BARE"
 done
+
+# --- the one next-line form that is a value, not a heading ------------------
+# YAML puts a scalar on the line after its key:
+#       password:
+#         <value>
+# The key rules above allow blanks after the delimiter, never a newline (a line
+# ending in "secret:" is usually a heading and the next line's first word is not
+# its value). This rule recovers the YAML form narrowly: the key line must be
+# ONLY the key and a colon (optionally "- "), so prose like "Rotate the secret:"
+# never qualifies, and the next line must be ONE bare token with no colon and
+# nothing after it, so a nested key ("name: x"), a command or a sentence never
+# qualifies. Tradeoff: "Password:" alone on a line followed by one word still
+# redacts that word.
+NL=$'\n'
+ctx_plain secret-lead-in "(^|${NL})[[:blank:]]*(-[[:blank:]]+)?[\"']?${KEY_A}[\"']?:[[:blank:]]*${NL}[[:blank:]]+" '[^[:space:]:"'"'"']{4,}' "${NL}|\$"
 
 # --- URLs: scheme://user:PASSWORD@host, secret-ish query parameters
 ctx_plain url-password '://[^/[:space:]:@]*:' '[^[:space:]@/]{3,}' '@'
