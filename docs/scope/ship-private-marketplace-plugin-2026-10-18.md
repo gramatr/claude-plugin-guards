@@ -1,5 +1,10 @@
 # Scope: Ship claude-plugin-guards to a private marketplace — 2026-10-18
 
+> **Historical, superseded.** This is a dated scoping pass from 2026-10-18. Its units (U1 to U6) are done and several of its designs are not what
+> shipped: the `UserPromptSubmit` hook described in U4 was built as an **advisory note, not a blocking hook**, and the repository stays public. For the
+> current behavior read [`guards/README.md`](../../guards/README.md), [`docs/HOOKS.md`](../HOOKS.md), [`docs/LIMITS.md`](../LIMITS.md) and
+> [`docs/TRADEOFFS.md`](../TRADEOFFS.md). It is kept for the reasoning only; some commands and paths in it no longer apply.
+
 ## Goal
 
 `claude-plugin-guards` ("guards") is meant to be one `/plugin install` away from protecting a Claude Code session against secret/PII/injection leaks in tool output and agent-to-agent messages. Today it would ship broken: two of its four integration points (`combined-hook.sh`, `guards-selfheal.sh`) still talk to the old three-daemon architecture (ports 8732/8731/8730) that `guards-unified` replaced, while the other two (`sendmessage-guard.sh`, `guards/mcp/server.py`) correctly call `guards-unified`'s single `:8700 /v1/scan` endpoint. A fresh install right now stands up the wrong backend for the hooks that need it, and the MCP tool has nothing to talk to unless someone manually starts `guards-unified`. Separately, the plugin manifest wiring (`.mcp.json` + `${CLAUDE_PLUGIN_ROOT}`) has never been exercised via a real `claude plugin marketplace add` + `claude plugin install` — only the underlying script was tested standalone.
@@ -37,7 +42,7 @@ Owner artifact: one issue per repo with a concrete, named gap (not one umbrella 
 
 **U6 — Decide and document claude-plugin-guards' repo visibility for the "private marketplace" plan**
 Owner artifact: one issue (decision record), not a code change.
-Lay out the two live options — (a) keep the repo PUBLIC and make "private marketplace" mean an access-controlled marketplace *listing* with a world-readable source repo, or (b) flip the repo PRIVATE (as was deliberately done for the sibling `bws-toolkit`) and have "private marketplace" mean a private source repo too — with the concrete tradeoff for each (discoverability control vs. source control), and get an explicit human decision rather than assuming either default.
+Lay out the two live options — (a) keep the repo PUBLIC and make "private marketplace" mean an access-controlled marketplace *listing* with a world-readable source repo, or (b) flip the repo PRIVATE (as was done for a separate, internal operational tool) and have "private marketplace" mean a private source repo too — with the concrete tradeoff for each (discoverability control vs. source control), and get an explicit human decision rather than assuming either default.
 
 ## Acceptance criteria per unit
 
@@ -64,11 +69,11 @@ Lay out the two live options — (a) keep the repo PUBLIC and make "private mark
 - The chosen fail-open/fail-closed behavior for backend-unreachable is stated explicitly in the PR body with a one-line rationale.
 
 **U5**
-- One `gh issue create` per repo, each citing a specific, confirmed gap. First confirmed finding to seed this: `guards-unified`'s README (`## License`) states "MIT for this repository's own code," but `ls /tmp/guard-check/unified` shows no `LICENSE` or `NOTICE` file in the repo root — that repo also vendors Llama-licensed code transitively (via `injection_guard`) but has no `THIRD_PARTY_LICENSES/` directory or "Built with Llama" attribution anywhere, unlike `injection-guard` itself which has both (`injg/NOTICE`, `injg/THIRD_PARTY_LICENSES/LLAMA4_COMMUNITY_LICENSE.txt`).
+- One `gh issue create` per repo, each citing a specific, confirmed gap. First confirmed finding to seed this: `guards-unified`'s README (`## License`) states "MIT for this repository's own code," but a listing of the repo root showed no `LICENSE` or `NOTICE` file in the repo root — that repo also vendors Llama-licensed code transitively (via `injection_guard`) but has no `THIRD_PARTY_LICENSES/` directory or "Built with Llama" attribution anywhere, unlike `injection-guard` itself which has both (`injg/NOTICE`, `injg/THIRD_PARTY_LICENSES/LLAMA4_COMMUNITY_LICENSE.txt`).
 - Each issue's AC is binary and checkable by a human reviewer without re-deriving the audit (e.g. "LICENSE file exists at repo root and matches the license named in README").
 
 **U6**
-- The issue states both options with their concrete consequences, names the `bws-toolkit` precedent explicitly, asks the one open question ("does the same bar apply here, and why/why not"), and tags the human decision-maker (`@bhandrigan`) rather than defaulting to either option.
+- The issue states both options with their concrete consequences, names that precedent explicitly, asks the one open question ("does the same bar apply here, and why/why not"), and tags the human decision-maker rather than defaulting to either option.
 
 ## Dependency graph
 
@@ -117,6 +122,6 @@ Load-bearing items named in this session's scoping conversation that do **not** 
 ## Open questions — all four resolved
 
 1. **U2 image default: `:cpu`.** Matches the existing documented rationale for standalone `injection-guard`.
-2. **`claude-plugin-guards` stays PUBLIC.** It doubles as the public reference implementation; `claude-plugin-guards` and the sibling `bws-toolkit` intentionally sit on opposite sides of the visibility line — one is the example other platforms/harnesses can build on, the other is a private operational tool.
+2. **`claude-plugin-guards` stays PUBLIC.** It doubles as the public reference implementation; `claude-plugin-guards` is the example other platforms/harnesses can build on, which is why it stays public while internal operational tools do not.
 3. **U1 keeps the bare-metal `scan.sh` fallback, secret axis only.** PII and injection don't get an equivalent fallback: both need their actual loaded models (Presidio, and especially injection-guard's Llama Prompt Guard 2) to produce a result at all, so there's no cheap local path for them the way gitleaks gives secrets — not a design choice, just what's physically available.
 4. **U4 (`UserPromptSubmit`) fails OPEN on backend-unreachable** — deliberately the opposite of `sendmessage-guard.sh`'s precedent. Fail-closed there costs one occasional agent-to-agent send during an outage; fail-closed here would block every single prompt the user types for as long as `guards-unified` is down, turning a safety net into a single point of failure for using Claude Code at all.
