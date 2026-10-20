@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# VENDORED COPY — source of truth is gramatr/secret-guard's core/scan.sh. Sync manually.
-# Local changes ahead of upstream: quoted redaction pattern, fail-closed verify, linear-time span split, deterministic private-key, context and base64 passes, SECRET_GUARD_SKIP_GITLEAKS, env-value pass and key rules that skip PWD and existing paths, same-line key delimiters plus the narrow YAML next-line value (guards-unified, guards-coordination#1/#3/#5/#9/#10/#11).
+# VENDORED COPY of app/scan.sh in https://github.com/gramatr/guards-unified, kept in sync by hand.
+# Change it there first, then copy it here; no automated check compares the two.
 # core/scan.sh — tool-agnostic secret scan + redaction.
 #
 # Reads arbitrary text on stdin, scans it with gitleaks, and writes the

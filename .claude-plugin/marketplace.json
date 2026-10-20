@@ -1,6 +1,6 @@
 {
   "name": "gramatr-guards",
-  "description": "Secret, prompt-injection, and PII detection for Claude Code tool output — secret-guard, injection-guard, and pii-guard wired into PostToolUse hooks.",
+  "description": "Secret, PII and prompt-injection guards for Claude Code: redacts secrets in Bash and MCP output and outgoing messages, denies reads of credential files, blocks credentials in issues, PRs and commits, and flags PII and likely injection. Backed by the guards-unified service.",
   "owner": {
     "name": "gramatr",
     "email": "support@gramatr.com",
@@ -10,7 +10,7 @@
     {
       "name": "guards",
       "source": "./guards",
-      "description": "Secret/injection/PII guards for Claude Code — see guards/README.md."
+      "description": "Seven hooks and an MCP scan tool for secret, PII and injection detection — see guards/README.md and docs/."
     }
   ]
 }
