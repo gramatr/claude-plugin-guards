@@ -170,8 +170,8 @@ class CheckBeforePublish(Base):
         staged_unmarked = self.repo()
         staged_marked = self.repo()
         for d, line in (
-            (staged_unmarked, "x_text = " + PW_LINE[11:]),
-            (staged_marked, "x_text = " + PW_LINE[11:] + "  # guards:synthetic"),
+            (staged_unmarked, PW_LINE),
+            (staged_marked, PW_LINE + "  # guards:synthetic"),
         ):
             with open(os.path.join(d, "fx.py"), "w") as f:
                 f.write("x = 1\n" + line + "\n")
