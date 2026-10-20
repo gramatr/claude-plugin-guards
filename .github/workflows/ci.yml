@@ -60,6 +60,23 @@ jobs:
         env:
           DEADLINE_REQUIRE_CONTROL: "1"
         run: bash guards/tests/hook-deadlines.test.sh
+      - name: sendmessage-guard tests
+        # Stub service and stub scan.sh; fabricated values only.
+        run: bash guards/tests/sendmessage-guard.test.sh
+      - name: userpromptsubmit-guard tests
+        # Stub service; advisory hook must never block.
+        run: bash guards/tests/userpromptsubmit-guard.test.sh
+      - name: guards-selfheal tests
+        # Stub docker/curl/git/timeout/sleep on PATH; no container or network.
+        run: bash guards/tests/guards-selfheal.test.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: MCP scan tool tests
+        # HTTP client stubbed; needs the packages the server imports.
+        run: |
+          python -m pip install "mcp>=2" httpx
+          python guards/tests/mcp-server.test.py
 
   scan-sh-drift:
     runs-on: ubuntu-latest

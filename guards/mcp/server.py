@@ -50,6 +50,25 @@ mcp = MCPServer("guards")
 GUARDS_ENDPOINT = os.environ.get("GUARDS_ENDPOINT", "http://127.0.0.1:8700")
 
 
+SCAN_TIMEOUT = 15.0
+
+
+def _http_error(resp: "httpx.Response") -> str:
+    """Describe a non-2xx answer from the backend, with its real status."""
+    try:
+        detail = resp.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    if resp.status_code == 413 and isinstance(detail, dict):
+        return (
+            f"guards backend refused the text: HTTP 413, {detail.get('bytes')} bytes is over the "
+            f"{detail.get('limit_bytes')}-byte limit (server setting {detail.get('setting')}). "
+            "Send a shorter text; nothing was scanned."
+        )
+    body = resp.text[:200].strip()
+    return f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code}, nothing was scanned" + (f": {body}" if body else "")
+
+
 @mcp.tool()
 def scan(text: str) -> dict:
     """Scan text for leaked secrets, PII, and prompt-injection/jailbreak attempts — one call, all three checked.
@@ -63,8 +82,9 @@ def scan(text: str) -> dict:
       ],
       "redacted_text": "..."  # secrets then PII redacted in sequence; injection never alters text, flag only
     }
-    Or {"error": str} if the unified guards backend is unreachable —
-    callers must not treat an error as "clean."
+    Or {"error": str} if the backend is unreachable, answers with a non-2xx
+    status (e.g. 413 for text over its size limit) or returns something that
+    is not a scan result — callers must not treat an error as "clean."
 
     SCOPE, stated plainly because this is what the underlying tools
     themselves document: the injection finding is jailbreak/override
@@ -76,11 +96,23 @@ def scan(text: str) -> dict:
     only, not all PII.
     """
     try:
-        resp = httpx.post(f"{GUARDS_ENDPOINT}/v1/scan", json={"text": text}, timeout=15.0)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
+        resp = httpx.post(f"{GUARDS_ENDPOINT}/v1/scan", json={"text": text}, timeout=SCAN_TIMEOUT)
+    except httpx.TimeoutException as e:
+        return {"error": f"guards backend unreachable at {GUARDS_ENDPOINT}: timed out after {SCAN_TIMEOUT:g}s ({e})"}
+    except (httpx.HTTPError, httpx.InvalidURL, OSError) as e:
         return {"error": f"guards backend unreachable at {GUARDS_ENDPOINT}: {e}"}
+
+    if not 200 <= resp.status_code < 300:
+        return {"error": _http_error(resp)}
+    try:
+        result = resp.json()
+        findings = result["findings"]
+    except (ValueError, KeyError, TypeError):
+        findings = None
+    if not isinstance(findings, list):
+        # A 2xx whose body is not a scan result must not read as "clean".
+        return {"error": f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code} without scan findings"}
+    return result
 
 
 if __name__ == "__main__":

@@ -20,7 +20,16 @@ For why the hooks are arranged this way (one rewriter per tool), see the
 | `UserPromptSubmit` | none (all prompts) | `hooks/userpromptsubmit-guard.sh` | 15 s | Adds a note if the prompt contains a secret. Cannot redact or block. |
 
 MCP server: `mcp/server.py`, one tool `scan(text)`. It calls the service's
-`POST /v1/scan` with a 15 s client timeout.
+`POST /v1/scan` with a 15 s client timeout. Anything that is not a real scan
+result comes back as `{"error": ...}`, never as a clean-looking result:
+
+| Outcome | Result |
+|---|---|
+| 2xx with a `findings` list | the service's JSON, unchanged |
+| 413 (text over the service limit, 64 KiB by default) | error naming the status, the byte count, the limit and the server setting (`SCAN_FULL_MAX_BYTES`); nothing was scanned |
+| any other non-2xx | error naming the HTTP status and the start of the body |
+| 2xx without a `findings` list | error: answered HTTP 2xx without scan findings |
+| timeout or connection error | error starting "guards backend unreachable at ..." |
 
 Two constraints worth knowing when you edit `hooks.json`:
 
@@ -52,9 +61,9 @@ the action is denied; **degrade** = a weaker check runs and the hook says so.
 | **SendMessage** (`sendmessage-guard.sh`) | **Degrade**: each field gets a local secret-only scan; the hook returns `allow` with the updated input and a note that PII scanning was unavailable. It returns `allow` even if nothing was found. | The hook decides reachability from the `message` field and then treats the service as down for all three fields. The three fields share a 4 s budget for the service; a field the service did not answer in time gets the local secret-only scan. Everything is bounded by the 10 s internal deadline, at which the message is **denied**. | `scan.sh` not executable and service down: the fields pass through unchanged while the note still says a local scan ran (**open**). `jq` missing: the hook does nothing (**open**). |
 | **Credential-file guard** (`credfile-guard.sh`) | Does not use the service. Unaffected. | Does not use the service. Internal deadline 6 s: **closed** (deny) if the check does not finish. | `jq` missing or payload unparseable: **open**. |
 | **Publish guard** (`publish-guard.sh`) | Service route skipped; the full local scan runs. Still enforces. | Secret route times out after 2 s, then the full local scan. | No scanner can run (service unusable **and** `scan.sh` missing, crashed, or over its 15 s limit), or the whole hook passes 25 s: **closed**, the publish is denied. `jq` missing: **open**. gitleaks missing only: the built-in passes still run, with a notice (vendor-token formats are not checked). |
-| **UserPromptSubmit** (`userpromptsubmit-guard.sh`) | No note (**open**). There is no local fallback. | The 8 s request limit applies; a long prompt that needs longer gets no note (**open**). | `jq` missing: no note (**open**). |
-| **MCP `scan` tool** | Returns `{"error": ...}`, never a false "clean". | 15 s client timeout, then the same error. | n/a |
-| **Self-heal** (`SessionStart`) | n/a (it starts the service) | A pull is limited to 240 s and the health poll to 30 s. | No Docker: logs that PII and injection are unavailable; secrets still work through the local fallback. A failed gitleaks download or missing `jq` is a warning. |
+| **UserPromptSubmit** (`userpromptsubmit-guard.sh`) | No note (**open**). There is no local fallback. | The request carries `curl -m 8`; a prompt that needs longer gets no note (**open**). | `jq` missing: no note (**open**). A malformed or error answer (no `findings` list, HTTP error, non-JSON) is treated like down: no note. |
+| **MCP `scan` tool** | Returns `{"error": "guards backend unreachable ..."}`, never a false "clean". | 15 s client timeout, then the same "unreachable" error. A non-2xx answer (including 413) returns an error naming the real status. | n/a |
+| **Self-heal** (`SessionStart`) | n/a (it starts the service) | A pull is limited to 240 s and the health poll to 30 s (15 polls, 2 s apart). A pull timeout warns and carries on with the cached image; a service that never answers warns. Exit status is 0 in every case. | No Docker, or the daemon down: logs that PII and injection are unavailable, touches nothing; secrets still work through the local fallback. A missing compose file makes `up -d` fail: warning, no health poll. A failed gitleaks download or missing `jq` is a warning. |
 
 Notes on the matrix:
 
@@ -128,3 +137,36 @@ Details and the reasoning are in [`TRADEOFFS.md`](TRADEOFFS.md).
 | Publish guard, sure thing | deny | deny |
 | Credential-file guard, ask-class file (`.env`, kubeconfig, ...) | ask | **deny** (no person to answer); `GUARDS_CRED_ASK` set to `force` asks in every mode, `0` denies in every mode |
 | Credential-file guard, deny-class file or private-key content | deny | deny |
+
+## Behavior pinned by the tests
+
+Each hook below has a test in `guards/tests/` that runs in `run-all.sh` and in
+CI, against a stub service (no real credential, container or network). The
+tests are the specification for the points listed.
+
+**SendMessage guard** (`sendmessage-guard.test.sh`)
+
+- Clean input: no output, input untouched. Other tools and all-empty fields are ignored.
+- A secret is redacted and the hook answers `allow` with `updatedInput` and a note; it never denies.
+- `message`, `summary` and `content` are each scanned from their own text. An empty `message` does not stop `content` from being scanned.
+- `summary` is cut to 200 characters on the redaction path. A clean 300-character summary with nothing else to report produces no output, so it is not cut.
+- PII is flagged and left intact by default; `PII_GUARD_MODE=redact` replaces it.
+- A field past `SCAN_MAX_BYTES` (default 24576): only that many bytes are sent, the rest is reattached unchanged, and the note says so. This applies even when nothing else was found.
+- Service down, or answering 200 without a `findings` list: local secret-only scan of every field, `allow`, and a note that PII scanning could not run. With no executable `scan.sh` as well, the text passes unchanged but the hook still answers `allow` (**open**).
+
+**UserPromptSubmit guard** (`userpromptsubmit-guard.test.sh`)
+
+- Clean prompt: no output, exit 0. Empty prompt: nothing is sent.
+- A secret adds one `additionalContext` note (`hookEventName: UserPromptSubmit`, nothing else) that does not repeat the value. The hook never blocks and never rewrites.
+- PII and injection findings in the prompt add nothing.
+- Service down, error answer, malformed answer, curl timeout, `jq` missing: no note, exit 0.
+- Length: the hook sends the whole prompt with no client-side cap. Over the service limit (64 KiB on `/v1/scan`) the service answers 413 and there is no note. Past the operating system's per-argument limit (about 128 KB; tested at 200 KB) the hook's own `jq --arg` fails, an empty text is scanned, and there is no note. Both are **open**.
+- Latency, measured 2026-10-20 against the live service (guards-unified 0.2.4, `http://127.0.0.1:8700`, one host, CPU image): the whole hook, from process start to exit, six runs each with small fabricated prompts. A 70-byte clean prompt: 199 to 231 ms (median about 209 ms). A 70-byte prompt holding a fabricated token: 210 to 220 ms (median about 214 ms). This is one machine on one day, with prompts far below the sizes where the model cost grows (about 0.25 s per KB per the service docs); larger prompts were not measured and will be slower, up to the 8 s request limit.
+
+**Self-heal** (`guards-selfheal.test.sh`, `docker`, `curl`, `git`, `timeout`, `sleep` stubbed)
+
+- Service already healthy: the script still runs `docker compose pull` and `up -d` (both idempotent) and removes nothing; with an unchanged version it prints nothing on stdout.
+- Service missing: `up -d` starts it and the health poll then succeeds.
+- A version change across the pull, or a plugin commit behind upstream, produces one `SessionStart` `additionalContext` note.
+- Containers on the old ports 8730-8732 are removed. A container on `:8700` is removed only if it is a `guards-unified` image whose compose file sits under this user's plugin cache; anything else is left alone with a warning.
+- The env file is created empty with mode 600 if absent, and set back to 600 if loosened.
