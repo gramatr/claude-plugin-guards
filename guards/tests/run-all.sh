@@ -52,6 +52,11 @@ if command -v gitleaks >/dev/null 2>&1; then
   done
 fi
 
+# Hang-stub tests with real wall-clock waits (about 40 s, cases in parallel):
+# once, not per PATH variant.
+echo "hook deadlines"
+step "hook-deadlines" bash guards/tests/hook-deadlines.test.sh
+
 # The cve-scan CI job runs scan-redaction INSIDE the vendored scan image, where
 # paths and users differ from this machine (a $HOME-based test passed here and
 # failed there). Mirror that when docker is available.

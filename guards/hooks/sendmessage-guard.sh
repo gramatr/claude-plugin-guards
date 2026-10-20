@@ -63,6 +63,11 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline deny 10
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
 SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
@@ -70,6 +75,14 @@ GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 SUMMARY_MAX=200
 PII_GUARD_MODE="${PII_GUARD_MODE:-flag}"
 SCAN_MAX_BYTES="${SCAN_MAX_BYTES:-24576}"
+
+# Time budget inside the 10 s deadline (deadline-lib.sh): the service gets the
+# first SERVICE_BUDGET seconds across all fields, local scans must end by
+# LOCAL_BY. Running out of local time exits 124, which becomes a deny.
+SM_T0="$(date +%s)"
+SERVICE_BUDGET=4
+LOCAL_BY=9
+PII_UNAVAILABLE=0
 
 TMP_FILES=()
 trap 'rm -f "${TMP_FILES[@]}"' EXIT
@@ -179,8 +192,10 @@ scan_remote() {
   # bypassing argv entirely.
   req_file="$(mktemp)"
   printf '%s' "$scan_text" > "$req_file"
+  local left=$((SM_T0 + SERVICE_BUDGET - $(date +%s)))
+  if [ "$left" -lt 1 ]; then rm -f "$req_file"; return 1; fi
   resp="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
-    | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+    | curl -sS --connect-timeout 2 -m "$left" -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
   rm -f "$req_file"
 
@@ -211,6 +226,16 @@ scan_remote() {
   return 0
 }
 
+# scan_remote_or_local TEXT -- scan_remote, but if the service gives up (its
+# time budget is shared by all three fields) the field gets the local
+# secret-only scan instead of passing unscanned; PII is then unavailable.
+scan_remote_or_local() {
+  scan_remote "$1" && return 0
+  scan_local_secret_only "$1"
+  SCAN_SECRET_FOUND="$SCAN_FOUND"; SCAN_PII_TYPES=""; SCAN_COMBINED_OUT="$SCAN_OUT"; SCAN_TRUNCATED=0
+  PII_UNAVAILABLE=1
+}
+
 # scan_local_secret_only TEXT -- sets SCAN_OUT and SCAN_FOUND=0|1,
 # via the vendored gitleaks fallback (no network dependency).
 scan_local_secret_only() {
@@ -219,7 +244,15 @@ scan_local_secret_only() {
   SCAN_FOUND=0
   [ -z "$text" ] && return 0
   if [ -x "$SECRET_SCAN" ]; then
-    redacted="$(printf '%s' "$text" | "$SECRET_SCAN" 2>/dev/null)"
+    local left=$((SM_T0 + LOCAL_BY - $(date +%s)))
+    [ "$left" -ge 1 ] || exit 124
+    local rc_file; rc_file="$(mktemp)"; TMP_FILES+=("$rc_file")
+    if command -v timeout >/dev/null 2>&1; then
+      redacted="$(printf '%s' "$text" | timeout -k 1 "$left" "$SECRET_SCAN" 2>/dev/null; echo "$?" > "$rc_file")"
+      case "$(cat "$rc_file")" in 124|137) exit 124 ;; esac
+    else
+      redacted="$(printf '%s' "$text" | "$SECRET_SCAN" 2>/dev/null)"
+    fi
     if [ -n "$redacted" ] && [ "$redacted" != "$text" ]; then
       SCAN_OUT="$redacted"
       SCAN_FOUND=1
@@ -318,7 +351,7 @@ if [ "$HAS_SUMMARY" = "true" ]; then
     SUM_SECRET_OUT="$MSG_SECRET_OUT"; SUM_SECRET_FOUND="$MSG_SECRET_FOUND"
     SUM_PII_TYPES="$MSG_PII_TYPES"; SUM_COMBINED_OUT="$MSG_COMBINED_OUT"; SUM_TRUNCATED="$MSG_TRUNCATED"
   else
-    scan_remote "$SUMMARY"
+    scan_remote_or_local "$SUMMARY"
     SUM_SECRET_OUT="$SCAN_OUT"; SUM_SECRET_FOUND="$SCAN_SECRET_FOUND"
     SUM_PII_TYPES="$SCAN_PII_TYPES"; SUM_COMBINED_OUT="$SCAN_COMBINED_OUT"; SUM_TRUNCATED="$SCAN_TRUNCATED"
   fi
@@ -340,7 +373,7 @@ if [ "$HAS_CONTENT" = "true" ]; then
     CON_SECRET_OUT="$MSG_SECRET_OUT"; CON_SECRET_FOUND="$MSG_SECRET_FOUND"
     CON_PII_TYPES="$MSG_PII_TYPES"; CON_COMBINED_OUT="$MSG_COMBINED_OUT"; CON_TRUNCATED="$MSG_TRUNCATED"
   else
-    scan_remote "$CONTENT"
+    scan_remote_or_local "$CONTENT"
     CON_SECRET_OUT="$SCAN_OUT"; CON_SECRET_FOUND="$SCAN_SECRET_FOUND"
     CON_PII_TYPES="$SCAN_PII_TYPES"; CON_COMBINED_OUT="$SCAN_COMBINED_OUT"; CON_TRUNCATED="$SCAN_TRUNCATED"
   fi
@@ -356,7 +389,7 @@ if [ "$HAS_CONTENT" = "true" ]; then
   add_rawfile_arg con "$CON_FIELD_OUT"
 fi
 
-if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ]; then
+if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ] && [ "$PII_UNAVAILABLE" -eq 0 ]; then
   exit 0
 fi
 
@@ -384,6 +417,10 @@ fi
 if [ "$ANY_TRUNCATED" -eq 1 ]; then
   REASON_PARTS+=("one or more fields exceeded ${SCAN_MAX_BYTES} bytes, only the first ${SCAN_MAX_BYTES} bytes of each were scanned")
   CTX_PARTS+=("One or more fields were larger than the ${SCAN_MAX_BYTES}-byte scan limit -- only the first ${SCAN_MAX_BYTES} bytes of each were checked for secrets/PII. The rest was sent as-is, unscanned. Review it yourself before assuming it's clean.")
+fi
+if [ "$PII_UNAVAILABLE" -eq 1 ]; then
+  REASON_PARTS+=("summary/content got a local secret-only scan, PII scan unavailable (service out of time)")
+  CTX_PARTS+=("The guards-unified service ran out of time for the summary or content field, so those were checked for secrets by the local scan only and not for PII.")
 fi
 REASON="sendmessage-guard: $(printf '%s; ' "${REASON_PARTS[@]}")"
 CTX="$(printf '%s ' "${CTX_PARTS[@]}")"

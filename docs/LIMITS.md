@@ -135,11 +135,12 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
 - **Scan latency scales with your CPU.** The compose file allows 16 CPUs and 4 GB
   of memory for the service; a small machine will be slower, and a container
   killed for exceeding memory looks like an intermittent outage.
-- **A hook that exceeds its timeout fails open** (verified, Claude Code 2.1.304,
-  see [`HOOKS.md`](HOOKS.md)): a hung scan inside the 15 s Bash hook timeout, or
-  a slow scanner behind the publish guard, lets the tool call or the original,
-  unredacted output through. The hooks do not yet enforce their own shorter
-  deadlines; that is a known gap that is being worked on.
+- **A hook that exceeds its timeout fails open in Claude Code** (verified, Claude Code 2.1.304, see [`HOOKS.md`](HOOKS.md)): the hook is
+  killed and the tool call or output goes through unchecked. Each hook
+  therefore has its own shorter deadline and a deliberate outcome at expiry
+  (deny for the publish and credential-file guards, withhold for the Bash and
+  MCP output hooks), listed in [`HOOKS.md`](HOOKS.md). The cost is that a hung
+  scanner now blocks a publish or hides one command's output until you retry.
 - **Docker is required for PII and injection.** Without it only secret
   detection runs. The service stack is not supported on Windows; Windows is not
   tested.

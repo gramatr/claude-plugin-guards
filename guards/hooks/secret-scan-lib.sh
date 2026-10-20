@@ -18,19 +18,29 @@
 #
 # Needs from the caller: SS_WORK (a writable temp dir) and SECRET_SCAN (path
 # to the vendored scan.sh). Optional: GUARDS_ENDPOINT.
+# Each hook sets SS_LOCAL_TIMEOUT (default 30 s) and SS_ENV_TIMEOUT (default
+# 10 s) below its own deadline (deadline-lib.sh); SS_TIMED_OUT=1 means the local
+# scan ran out of time, as opposed to being unable to run.
 # Sets:  SS_OUT (file with the redacted text), SS_RULES (space-separated
 #        detector rule IDs, never values), SS_CHANGED (1 if SS_OUT differs
 #        from INFILE), SS_SOURCE (service|local).
 # Returns 0 on success, 1 if no scanner could run at all.
 
+# ss_timeout SECS CMD... -- `timeout` where it exists; without it (macOS) the
+# command just runs, still bounded by the hook's own deadline (deadline-lib.sh).
+ss_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout -k 1 "$secs" "$@"; else "$@"; fi
+}
+
 secret_scan() {
   local in="$1" w="${SS_WORK:?SS_WORK not set}"
   local svc="$w/ss.svc.json" svc_out="$w/ss.svc.out" loc="$w/ss.loc.json" verdict r
-  SS_OUT="$w/ss.final.out"; SS_RULES=""; SS_CHANGED=0; SS_SOURCE=local
+  SS_OUT="$w/ss.final.out"; SS_RULES=""; SS_CHANGED=0; SS_SOURCE=local; SS_TIMED_OUT=0
   : > "$loc"
 
   if jq -n --rawfile text "$in" '{text: $text}' 2>/dev/null \
-      | curl -sS -m "${SS_SERVICE_TIMEOUT:-2}" -X POST "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}/v1/scan/secret" \
+      | curl -sS --connect-timeout 1 -m "${SS_SERVICE_TIMEOUT:-2}" -X POST "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}/v1/scan/secret" \
           -H 'Content-Type: application/json' -d @- -o "$svc" 2>/dev/null \
      && jq -e '(.findings | type == "array") and (.findings[0].type == "secret") and (.findings[0].verdict != "error")' "$svc" >/dev/null 2>&1; then
     SS_SOURCE=service
@@ -43,14 +53,17 @@ secret_scan() {
     fi
     # Local-environment passes only (no gitleaks).
     if ! SECRET_GUARD_SKIP_GITLEAKS=1 SECRET_GUARD_ENV_VALUES=1 SECRET_GUARD_FINDINGS_JSON="$loc" \
-         timeout 10 bash "$SECRET_SCAN" < "$svc_out" > "$SS_OUT" 2>/dev/null; then
+         ss_timeout "${SS_ENV_TIMEOUT:-10}" bash "$SECRET_SCAN" < "$svc_out" > "$SS_OUT" 2>/dev/null; then
       cp "$svc_out" "$SS_OUT"
     fi
   else
     # Service unavailable: the full local scan, gitleaks included.
     [ -f "$SECRET_SCAN" ] || return 1
     SECRET_GUARD_ENV_VALUES=1 SECRET_GUARD_FINDINGS_JSON="$loc" \
-      timeout 30 bash "$SECRET_SCAN" < "$in" > "$SS_OUT" 2>"$w/ss.err" || return 1
+      ss_timeout "${SS_LOCAL_TIMEOUT:-30}" bash "$SECRET_SCAN" < "$in" > "$SS_OUT" 2>"$w/ss.err" || {
+        case $? in 124|137) SS_TIMED_OUT=1 ;; esac
+        return 1
+      }
     SS_SOURCE=local
   fi
 

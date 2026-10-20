@@ -46,13 +46,13 @@ the action is denied; **degrade** = a weaker check runs and the hook says so.
 
 | Hook | Service down | Service slow (timeout) | No scanner available |
 |---|---|---|---|
-| **Bash output** (`combined-hook.sh`), fast path | Secrets: **local fallback**, full `scan.sh` with gitleaks, 30 s limit inside a 15 s hook timeout. PII and injection notes: absent, with no message. | Secret route times out after 2 s, then the full local scan runs. Flag scan is dropped silently when its budget (0.85 s for 2 KB) passes. | `scan.sh` missing and service down: the hook falls through to the older path, which prints a message to stderr and passes the output through unchanged (**open**). `jq` missing: the hook does nothing (**open**). |
-| **Bash output**, older path (`GUARDS_FAST_BASH=0` or `PII_GUARD_MODE=redact`) | **Local fallback** for secrets only; stderr message "falling back to local scan.sh". | The 10 s request limit applies; on timeout it behaves as down. | `scan.sh` missing or not executable: pass-through with a stderr message (**open**). |
-| **MCP result** (`mcp-output-guard.sh`) | **Local fallback** (full `scan.sh`), per text block. | Secret route times out after 2 s, then local scan. Many large blocks in one result can exceed the hook's 30 s timeout. | `scan.sh` missing or `jq` missing: nothing is scanned (**open**). A text block over 512 KB is skipped silently (**open**). A failed scan leaves the block untouched (**open**). |
-| **SendMessage** (`sendmessage-guard.sh`) | **Degrade**: each field gets a local secret-only scan; the hook returns `allow` with the updated input and a note that PII scanning was unavailable. It returns `allow` even if nothing was found. | A 10 s request limit applies per field; the hook decides reachability from the `message` field and then treats the service as down for all three fields. Up to three sequential requests against a 15 s hook timeout: not measured. | `scan.sh` not executable and service down: the fields pass through unchanged while the note still says a local scan ran (**open**). `jq` missing: the hook does nothing (**open**). |
-| **Credential-file guard** (`credfile-guard.sh`) | Does not use the service. Unaffected. | Does not use the service. | `jq` missing or payload unparseable: **open**. |
-| **Publish guard** (`publish-guard.sh`) | Service route skipped; the full local scan runs. Still enforces. | Secret route times out after 2 s, then the full local scan. | No scanner can run (service unusable **and** `scan.sh` missing, crashed, or over its 30 s limit): **closed**, the publish is denied. `jq` missing: **open**. gitleaks missing only: the built-in passes still run, with a notice (vendor-token formats are not checked). |
-| **UserPromptSubmit** (`userpromptsubmit-guard.sh`) | No note (**open**). There is no local fallback. | The 10 s request limit applies; a long prompt that needs longer gets no note (**open**). | `jq` missing: no note (**open**). |
+| **Bash output** (`combined-hook.sh`), fast path | Secrets: **local fallback**, full `scan.sh` with gitleaks, bounded to 6 s inside the hook's 10 s internal deadline (see below). PII and injection notes: absent, with no message. | Secret route times out after 2 s, then the full local scan runs. Flag scan is dropped silently when its budget (0.85 s for 2 KB) passes. | `scan.sh` missing and service down: the hook falls through to the older path, which prints a message to stderr and passes the output through unchanged (**open**). `jq` missing: the hook does nothing (**open**). |
+| **Bash output**, older path (`GUARDS_FAST_BASH=0` or `PII_GUARD_MODE=redact`) | **Local fallback** for secrets only; stderr message "falling back to local scan.sh". | The 6 s request limit applies; on timeout it behaves as down. | `scan.sh` missing or not executable: pass-through with a stderr message (**open**). |
+| **MCP result** (`mcp-output-guard.sh`) | **Local fallback** (full `scan.sh`), per text block. | Secret route times out after 2 s, then local scan. Many large blocks in one result run into the 20 s internal deadline, at which the result is **withheld** (see below). | `scan.sh` missing or `jq` missing: nothing is scanned (**open**). A text block over 512 KB is skipped silently (**open**). A failed scan leaves the block untouched (**open**). |
+| **SendMessage** (`sendmessage-guard.sh`) | **Degrade**: each field gets a local secret-only scan; the hook returns `allow` with the updated input and a note that PII scanning was unavailable. It returns `allow` even if nothing was found. | The hook decides reachability from the `message` field and then treats the service as down for all three fields. The three fields share a 4 s budget for the service; a field the service did not answer in time gets the local secret-only scan. Everything is bounded by the 10 s internal deadline, at which the message is **denied**. | `scan.sh` not executable and service down: the fields pass through unchanged while the note still says a local scan ran (**open**). `jq` missing: the hook does nothing (**open**). |
+| **Credential-file guard** (`credfile-guard.sh`) | Does not use the service. Unaffected. | Does not use the service. Internal deadline 6 s: **closed** (deny) if the check does not finish. | `jq` missing or payload unparseable: **open**. |
+| **Publish guard** (`publish-guard.sh`) | Service route skipped; the full local scan runs. Still enforces. | Secret route times out after 2 s, then the full local scan. | No scanner can run (service unusable **and** `scan.sh` missing, crashed, or over its 15 s limit), or the whole hook passes 25 s: **closed**, the publish is denied. `jq` missing: **open**. gitleaks missing only: the built-in passes still run, with a notice (vendor-token formats are not checked). |
+| **UserPromptSubmit** (`userpromptsubmit-guard.sh`) | No note (**open**). There is no local fallback. | The 8 s request limit applies; a long prompt that needs longer gets no note (**open**). | `jq` missing: no note (**open**). |
 | **MCP `scan` tool** | Returns `{"error": ...}`, never a false "clean". | 15 s client timeout, then the same error. | n/a |
 | **Self-heal** (`SessionStart`) | n/a (it starts the service) | A pull is limited to 240 s and the health poll to 30 s. | No Docker: logs that PII and injection are unavailable; secrets still work through the local fallback. A failed gitleaks download or missing `jq` is a warning. |
 
@@ -69,9 +69,10 @@ Notes on the matrix:
   there. The tool call goes through the normal permission flow and the model sees
   no timeout message. This holds even for a hook that would have returned a
   deny. Any exit status other than 0 or 2 is also a non-blocking error (the tool
-  runs). Only exit 2 or a JSON deny blocks. A hook therefore has to enforce its
-  own deadline below its configured timeout and decide for itself; that work is
-  tracked as a known gap (see [`LIMITS.md`](LIMITS.md)).
+  runs). Only exit 2 or a JSON deny blocks. Every hook therefore
+  enforces its own deadline below its configured timeout and decides for itself
+  what happens at expiry, and a crash gets the same deliberate outcome (next
+  section).
 - **An `ask` with no person attached is a deny.** Verified in headless
   `claude -p` in every permission mode (default, acceptEdits, plan, auto,
   bypassPermissions, dontAsk): the tool call does not run, the model receives the
@@ -91,6 +92,30 @@ Notes on the matrix:
   256 KB, the older path past 24 KB, SendMessage fields past 24 KB, MCP blocks
   past 512 KB), see [`LIMITS.md`](LIMITS.md). The Bash and SendMessage hooks
   disclose it; the MCP guard does not.
+
+## Internal deadline versus configured timeout
+
+`hooks/deadline-lib.sh` re-runs each hook under its own deadline and maps what
+happens to a deliberate outcome. The deadline is at most 70 % of the timeout in
+`hooks.json`, so no timeout needed raising. `guards/tests/hook-deadlines.test.sh`
+hangs the scanner of every hook, runs it under a kill at the configured timeout
+and asserts it answers at least 3 s earlier; the same test against the previous
+hooks fails (they are killed, which is the fail-open).
+
+| Hook | `hooks.json` timeout | Internal deadline | Outcome at expiry or crash |
+|---|---|---|---|
+| Publish guard | 40 s | 25 s | **Deny**, with a reason that says the scan did not finish and what to do. Inner bounds: service 2 s, local scan 15 s. |
+| Credential-file guard | 10 s | 6 s | **Deny**, same shape. |
+| Bash output (`combined-hook.sh`) | 15 s | 10 s | **Withhold**: stdout is replaced by a notice that the output was not checked and should be produced again; stderr is emptied. Inner bounds: service 6 s, local scan 6 s. |
+| MCP result (`mcp-output-guard.sh`) | 30 s | 20 s | **Withhold**, in the shape of the result (content array, string, or object with `content`). Shapes the hook never scans are left alone, as always. Inner bound: local scan 8 s per block. |
+| SendMessage | 15 s | 10 s | The service gets 4 s across all fields, then the local secret-only scan (the documented degrade); if even that does not finish by 9 s, or the hook crashes, **deny**. |
+| UserPromptSubmit | 15 s | 10 s | No note, nothing else (advisory, as documented). Inner bound: service 8 s. |
+| Self-heal (`SessionStart`) | 270 s | none | Not a guard and makes no decision; unchanged. |
+
+Notes: a hook with nothing to say returns no decision, never an explicit allow.
+The SendMessage degrade path still returns `allow` with the updated input, as
+before, because it must carry the rewritten message. Without `timeout` on the
+machine (stock macOS) the lib falls back to a bash watchdog.
 
 ## Ask versus deny by permission mode
 

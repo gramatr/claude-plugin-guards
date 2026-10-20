@@ -66,6 +66,13 @@
 
 set -uo pipefail
 
+# Own deadline below the hook timeout in hooks.json: Claude Code fails open when
+# a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
+# shellcheck source=guards/hooks/deadline-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline withhold-bash 10
+# Local scan budgets inside that deadline (secret-scan-lib.sh).
+export SS_LOCAL_TIMEOUT="${SS_LOCAL_TIMEOUT:-6}" SS_ENV_TIMEOUT="${SS_ENV_TIMEOUT:-3}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_ROOT="$(dirname "$SCRIPT_DIR")"
 SECRET_SCAN="$GUARDS_ROOT/vendor/secret-guard-core/scan.sh"
@@ -147,7 +154,7 @@ scan_and_redact() {
   req_file="$(mktemp)"
   printf '%s' "$scan_text" > "$req_file"
   response="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
-    | curl -sS -m 10 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+    | curl -sS --connect-timeout 2 -m 6 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
         -H "Content-Type: application/json" -d @- 2>/dev/null)"
   rm -f "$req_file"
 
@@ -252,7 +259,13 @@ scan_and_redact() {
       # SECRET_GUARD_ENV_VALUES=1: the fallback runs in the session's own
       # environment, so a bare value copied from a secret-named env var
       # (echo $DB_PASSWORD) is exact-match redacted too.
-      redacted="$(printf '%s' "$current" | SECRET_GUARD_ENV_VALUES=1 "$SECRET_SCAN" 2>/dev/null)"
+      # Bounded below the hook's own deadline; running out of time exits 124,
+      # which deadline-lib.sh turns into withholding the output.
+      local fb_rc
+      fb_rc="$(mktemp)"
+      redacted="$(printf '%s' "$current" | SECRET_GUARD_ENV_VALUES=1 ss_timeout "$SS_LOCAL_TIMEOUT" "$SECRET_SCAN" 2>/dev/null; echo "$?" > "$fb_rc")"
+      case "$(cat "$fb_rc" 2>/dev/null)" in 124|137) rm -f "$fb_rc"; exit 124 ;; esac
+      rm -f "$fb_rc"
       if [ -n "$redacted" ] && [ "$redacted" != "$current" ]; then
         current="$redacted"
         changed=1
@@ -335,6 +348,9 @@ scan_and_redact_fast() {
   else
     # Nothing could scan: hand the whole job to the previous single-call path
     # (which has its own handling) instead of passing the text through.
+    # Unless the local scan ran out of time: no budget is left for another
+    # attempt, so the deadline outcome (withhold) applies now.
+    [ "${SS_TIMED_OUT:-0}" -eq 1 ] && exit 124
     [ -n "$fpid" ] && wait "$fpid" 2>/dev/null
     scan_and_redact "$text"
     return
