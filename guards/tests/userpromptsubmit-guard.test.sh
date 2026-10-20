@@ -100,7 +100,7 @@ for spec in '200|{"detail":"oops"}' '200|not json' '500|{"detail":"boom"}' '200|
   [ -z "$out" ] && [ "$(rc)" = 0 ] && ok || bad "malformed or error answer ($spec): no note, exit 0"
 done
 
-# 7. the request has a 10 s limit; a timed-out request gives no note.
+# 7. the request has an 8 s limit; a timed-out request gives no note.
 # A stub curl records its arguments and fails like a timeout (exit 28).
 mkdir -p "$T/bin"
 cat > "$T/bin/curl" <<SH
@@ -112,7 +112,7 @@ SH
 chmod +x "$T/bin/curl"
 out="$(prompt_hook "$UP" "key $SEC" "PATH=$T/bin:$PATH")"
 [ -z "$out" ] && [ "$(rc)" = 0 ] && ok || bad "timeout: no note, exit 0"
-grep -q -- '-m 10' "$T/curl.args" && ok || bad "the request carries a 10 s time limit (-m 10): $(cat "$T/curl.args" 2>/dev/null)"
+grep -qE -- '-m 8( |$)' "$T/curl.args" && ok || bad "the request carries an 8 s time limit (-m 8): $(cat "$T/curl.args" 2>/dev/null)"
 
 # 8. long prompts: sent whole (no client-side cap); the service's 413 means no note
 : > "$T/capped/requests"
