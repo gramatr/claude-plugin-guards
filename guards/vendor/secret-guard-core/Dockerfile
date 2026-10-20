@@ -5,11 +5,20 @@
 # in server.py so it presents the same Docker-service shape as
 # pii-guard-daemon and injection-guard-daemon for this compose stack.
 #
-# Base: the official gitleaks image, not python:3.12-slim + a manual
-# binary download — gitleaks publishes its own image specifically so
-# downstream Dockerfiles can copy the binary out of it rather than
-# re-implementing "detect the right release asset for this arch."
-FROM ghcr.io/gitleaks/gitleaks:v8.30.1 AS gitleaks
+# gitleaks is built from its release tag here, not copied out of the official
+# image: v8.30.1 is the latest release but its binary bundles Go modules with
+# known HIGH CVEs (klauspost/compress, x/crypto, x/text, the Go stdlib), and a
+# secret scanner should not ship a vulnerable dependency. The build pins the
+# tag, bumps the modules to fixed versions and uses a current Go toolchain.
+# When gitleaks publishes a release that already carries these fixes, drop
+# the `go get` line (and the bumps) and go back to the tag alone.
+FROM golang:1.26-bookworm AS gitleaks
+ARG GITLEAKS_VERSION=v8.30.1
+RUN git clone --depth 1 --branch "${GITLEAKS_VERSION}" https://github.com/gitleaks/gitleaks.git /src
+WORKDIR /src
+RUN go get github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0 \
+    && go mod tidy \
+    && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/zricethezav/gitleaks/v8/version.Version=${GITLEAKS_VERSION}" -o /usr/bin/gitleaks .
 
 FROM python:3.12-slim
 COPY --from=gitleaks /usr/bin/gitleaks /usr/bin/gitleaks
