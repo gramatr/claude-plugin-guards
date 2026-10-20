@@ -14,6 +14,7 @@ that port to DIR/port. Each request is logged to DIR/requests as
 MAX_BYTES (default unlimited) mimics the real 413 on oversize text; DELAY
 sleeps before answering. Nothing here scans anything for real.
 """
+
 import json
 import sys
 import time
@@ -43,19 +44,42 @@ class Handler(BaseHTTPRequestHandler):
         with open(f"{out_dir}/requests", "a") as log:
             log.write(f"{self.path} {size}\n")
         if max_bytes and size > max_bytes:
-            detail = {"error": "text_too_large", "bytes": size, "limit_bytes": max_bytes, "setting": "SCAN_FULL_MAX_BYTES"}
+            detail = {
+                "error": "text_too_large",
+                "bytes": size,
+                "limit_bytes": max_bytes,
+                "setting": "SCAN_FULL_MAX_BYTES",
+            }
             return self.reply(413, {"detail": detail})
         time.sleep(delay)
-        secret = {"type": "secret", "verdict": "clean", "reason_code": None, "detail": {}}
+        secret = {
+            "type": "secret",
+            "verdict": "clean",
+            "reason_code": None,
+            "detail": {},
+        }
         redacted = text
         if "STUBSECRET123" in text:
             redacted = text.replace("STUBSECRET123", "***REDACTED:SECRET***")
-            secret = {"type": "secret", "verdict": "found", "reason_code": ["SECRET_STUB"], "detail": {"redacted_text": redacted}}
+            secret = {
+                "type": "secret",
+                "verdict": "found",
+                "reason_code": ["SECRET_STUB"],
+                "detail": {"redacted_text": redacted},
+            }
         has_pii = "STUBPII" in text
-        pii = {"type": "pii", "verdict": "found" if has_pii else "clean", "reason_code": None,
-               "detail": {"entities": [{"entity_type": "PERSON"}] if has_pii else []}}
-        inj = {"type": "injection", "verdict": "malicious" if "STUBINJECT" in text else "clean",
-               "reason_code": None, "detail": {"score": 0.99}}
+        pii = {
+            "type": "pii",
+            "verdict": "found" if has_pii else "clean",
+            "reason_code": None,
+            "detail": {"entities": [{"entity_type": "PERSON"}] if has_pii else []},
+        }
+        inj = {
+            "type": "injection",
+            "verdict": "malicious" if "STUBINJECT" in text else "clean",
+            "reason_code": None,
+            "detail": {"score": 0.99},
+        }
         combined = redacted.replace("STUBPII", "<PERSON>")
         self.reply(200, {"findings": [secret, pii, inj], "redacted_text": combined})
 

@@ -71,6 +71,7 @@ Before publishing text, run the check_before_publish tool on it. Read guards://g
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
 
+
 # Tools and prompts that help an agent work with the guards (check before publishing,
 # explain a block, mark fake fixtures); see guards_tools.py. None of them weakens a guard.
 def _register_agent_tools() -> None:
@@ -101,7 +102,10 @@ def _http_error(resp: "httpx.Response") -> str:
             "Send a shorter text; nothing was scanned."
         )
     body = resp.text[:200].strip()
-    return f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code}, nothing was scanned" + (f": {body}" if body else "")
+    return (
+        f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code}, nothing was scanned"
+        + (f": {body}" if body else "")
+    )
 
 
 @mcp.tool()
@@ -131,9 +135,13 @@ def scan(text: str) -> dict:
     only, not all PII.
     """
     try:
-        resp = httpx.post(f"{GUARDS_ENDPOINT}/v1/scan", json={"text": text}, timeout=SCAN_TIMEOUT)
+        resp = httpx.post(
+            f"{GUARDS_ENDPOINT}/v1/scan", json={"text": text}, timeout=SCAN_TIMEOUT
+        )
     except httpx.TimeoutException as e:
-        return {"error": f"guards backend unreachable at {GUARDS_ENDPOINT}: timed out after {SCAN_TIMEOUT:g}s ({e})"}
+        return {
+            "error": f"guards backend unreachable at {GUARDS_ENDPOINT}: timed out after {SCAN_TIMEOUT:g}s ({e})"
+        }
     except (httpx.HTTPError, httpx.InvalidURL, OSError) as e:
         return {"error": f"guards backend unreachable at {GUARDS_ENDPOINT}: {e}"}
 
@@ -146,7 +154,9 @@ def scan(text: str) -> dict:
         findings = None
     if not isinstance(findings, list):
         # A 2xx whose body is not a scan result must not read as "clean".
-        return {"error": f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code} without scan findings"}
+        return {
+            "error": f"guards backend at {GUARDS_ENDPOINT} answered HTTP {resp.status_code} without scan findings"
+        }
     return result
 
 
@@ -227,14 +237,23 @@ If the block names a line you did not write, it may come from a file the command
 
 GUIDES = {
     "publishing": ("Publishing with the guards on", GUIDE_PUBLISHING),
-    "false-positives": ("False positives and the synthetic marker", GUIDE_FALSE_POSITIVES),
+    "false-positives": (
+        "False positives and the synthetic marker",
+        GUIDE_FALSE_POSITIVES,
+    ),
     "hooks": ("The hooks and what they do when they cannot run", GUIDE_HOOKS),
     "diagnosing-a-block": ("Diagnosing a block", GUIDE_DIAGNOSING),
 }
 
 
 def _register_guide(slug: str, title: str, body: str) -> None:
-    @mcp.resource(f"guards://guide/{slug}", name=f"guide-{slug}", title=title, description=title, mime_type="text/markdown")
+    @mcp.resource(
+        f"guards://guide/{slug}",
+        name=f"guide-{slug}",
+        title=title,
+        description=title,
+        mime_type="text/markdown",
+    )
     def _guide() -> str:
         return body
 
@@ -264,34 +283,73 @@ def _run_hook(command: str, cwd: str) -> dict:
     """Run publish-guard.sh on a synthetic Bash payload; return {"decision", "inspected", "explanation"} or {"error"}."""
     hook = _hook_path()
     if not hook.is_file() or shutil.which("bash") is None:
-        return {"error": f"cannot check: the publish-guard hook was not found at {hook} (or bash is missing); nothing was checked"}
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd, "permission_mode": "auto"})
+        return {
+            "error": f"cannot check: the publish-guard hook was not found at {hook} (or bash is missing); nothing was checked"
+        }
+    payload = json.dumps(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": cwd,
+            "permission_mode": "auto",
+        }
+    )
     env = {k: v for k, v in os.environ.items() if k != "GUARDS_ALLOW_PUBLISH_SECRETS"}
     env["GUARDS_PUBLISH_GUARD_REPORT"] = "1"
     try:
-        proc = subprocess.run(["bash", str(hook)], input=payload, capture_output=True, text=True, timeout=HOOK_TIMEOUT, env=env, check=False)
+        proc = subprocess.run(
+            ["bash", str(hook)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=HOOK_TIMEOUT,
+            env=env,
+            check=False,
+        )
     except subprocess.TimeoutExpired:
-        return {"error": f"cannot check: the publish-guard hook did not finish within {HOOK_TIMEOUT}s; nothing was checked"}
+        return {
+            "error": f"cannot check: the publish-guard hook did not finish within {HOOK_TIMEOUT}s; nothing was checked"
+        }
     except OSError as e:
-        return {"error": f"cannot check: the publish-guard hook could not run ({e}); nothing was checked"}
+        return {
+            "error": f"cannot check: the publish-guard hook could not run ({e}); nothing was checked"
+        }
     out = proc.stdout.strip()
     if proc.returncode not in (0, 2):
-        return {"error": f"cannot check: the publish-guard hook exited with status {proc.returncode}; nothing was checked"}
+        return {
+            "error": f"cannot check: the publish-guard hook exited with status {proc.returncode}; nothing was checked"
+        }
     if not out:
-        return {"decision": "allow", "inspected": False, "explanation": "The publish guard did not inspect this: it only checks gh issue/pr/release/gist publishes, gh api with a body, git commit and GitHub MCP writes."}
+        return {
+            "decision": "allow",
+            "inspected": False,
+            "explanation": "The publish guard did not inspect this: it only checks gh issue/pr/release/gist publishes, gh api with a body, git commit and GitHub MCP writes.",
+        }
     try:
         specific = json.loads(out)["hookSpecificOutput"]
     except (ValueError, KeyError, TypeError):
-        return {"error": "cannot check: the publish-guard hook answered something that is not a hook decision; nothing was checked"}
+        return {
+            "error": "cannot check: the publish-guard hook answered something that is not a hook decision; nothing was checked"
+        }
     decision = specific.get("permissionDecision")
     if decision in ("deny", "ask"):
-        return {"decision": decision, "inspected": True, "explanation": specific.get("permissionDecisionReason", "")}
+        return {
+            "decision": decision,
+            "inspected": True,
+            "explanation": specific.get("permissionDecisionReason", ""),
+        }
     note = specific.get("additionalContext", "")
-    return {"decision": "allow", "inspected": True, "explanation": note or "The publish guard checked this and found nothing."}
+    return {
+        "decision": "allow",
+        "inspected": True,
+        "explanation": note or "The publish guard checked this and found nothing.",
+    }
 
 
 @mcp.tool()
-def check_before_publish(text_or_command: str, cwd: str = "", kind: str = "auto") -> dict:
+def check_before_publish(
+    text_or_command: str, cwd: str = "", kind: str = "auto"
+) -> dict:
     """Check text or a command with the publish guard BEFORE you run it. Offline; nothing is published.
 
     Pass either the exact shell command you are about to run (a gh issue/pr/
@@ -313,13 +371,21 @@ def check_before_publish(text_or_command: str, cwd: str = "", kind: str = "auto"
     diff of a git commit, never the text you pass here.
     """
     if not isinstance(text_or_command, str) or not text_or_command.strip():
-        return {"decision": "unknown", "error": "nothing to check: text_or_command is empty"}
+        return {
+            "decision": "unknown",
+            "error": "nothing to check: text_or_command is empty",
+        }
     if kind not in ("auto", "command", "text"):
-        return {"decision": "unknown", "error": 'kind must be "auto", "command" or "text"'}
+        return {
+            "decision": "unknown",
+            "error": 'kind must be "auto", "command" or "text"',
+        }
     run_cwd = cwd or os.getcwd()
     if not os.path.isdir(run_cwd):
         return {"decision": "unknown", "error": f"cwd is not a directory: {run_cwd}"}
-    as_command = kind == "command" or (kind == "auto" and bool(_COMMAND_RE.match(text_or_command)))
+    as_command = kind == "command" or (
+        kind == "auto" and bool(_COMMAND_RE.match(text_or_command))
+    )
     if as_command:
         result = _run_hook(text_or_command, run_cwd)
     else:
@@ -328,11 +394,18 @@ def check_before_publish(text_or_command: str, cwd: str = "", kind: str = "auto"
             Path(tmp, "body.txt").write_text(text_or_command)
             result = _run_hook("gh issue comment 0 --body-file body.txt", tmp)
         if "explanation" in result:
-            result["explanation"] = _TEXT_LABEL_RE.sub("your text", result["explanation"]).replace("from this command", "from your text")
+            result["explanation"] = _TEXT_LABEL_RE.sub(
+                "your text", result["explanation"]
+            ).replace("from this command", "from your text")
     if "error" in result:
         result["decision"] = "unknown"  # could not inspect: never an allow
-    if os.environ.get("GUARDS_ALLOW_PUBLISH_SECRETS") == "1" and "explanation" in result:
-        result["explanation"] += " Note: GUARDS_ALLOW_PUBLISH_SECRETS=1 is set in this environment, so the real hook would allow everything; this check ignored it."
+    if (
+        os.environ.get("GUARDS_ALLOW_PUBLISH_SECRETS") == "1"
+        and "explanation" in result
+    ):
+        result["explanation"] += (
+            " Note: GUARDS_ALLOW_PUBLISH_SECRETS=1 is set in this environment, so the real hook would allow everything; this check ignored it."
+        )
     return result
 
 
