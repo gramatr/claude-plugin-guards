@@ -40,9 +40,12 @@
 #     unremarkable name is not caught here.
 #   - A Bash command that reads a key indirectly (script that cats it,
 #     env var holding a path, eval of a built string) is not caught.
-#   - Fails OPEN if jq is missing or the payload is unparseable: a
-#     broken hook must not wedge every Read/Grep/Bash call. Redaction
-#     (combined-hook.sh) remains the backstop for Bash.
+#   - Fails OPEN if the payload is unparseable by jq: a broken hook must
+#     not wedge every Read/Grep/Bash call. Redaction (combined-hook.sh)
+#     remains the backstop for Bash.
+#   - Without jq the guard still decides: a small awk parser reads the few
+#     fields it needs. If even that cannot find the tool name it DENIES
+#     (it cannot tell what the call is), with a reason that says what to fix.
 #
 # OVERRIDE: set GUARDS_ALLOW_CRED_READ=1 in the environment Claude Code
 # was started from. Deliberate and visible; there is no per-call bypass.
@@ -63,22 +66,92 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/deadline-lib.sh" && guards_deadline deny 6
 
 [ "${GUARDS_ALLOW_CRED_READ:-0}" = "1" ] && exit 0
-command -v jq >/dev/null 2>&1 || exit 0
+
+HAVE_JQ=1
+command -v jq >/dev/null 2>&1 || HAVE_JQ=0
 
 RAW="$(cat)"
-TOOL_NAME="$(printf '%s' "$RAW" | jq -r '.tool_name // ""' 2>/dev/null)" || exit 0
-CWD="$(printf '%s' "$RAW" | jq -r '.cwd // ""' 2>/dev/null)"
-PERM_MODE="$(printf '%s' "$RAW" | jq -r '.permission_mode // ""' 2>/dev/null)"
+
+# jfield NAME -> the string value of NAME from the hook payload: tool_name, cwd
+# and permission_mode are top-level, everything else is under tool_input. With
+# jq that is a one-liner. Without it, awk walks the JSON string tokens (so an
+# escaped quote inside a command cannot end a value early and a key name that
+# only appears inside another string is never mistaken for a key) and decodes
+# the usual escapes; a \uXXXX escape becomes '?', which cannot matter for the
+# ASCII file names this guard looks at.
+jfield() {
+  if [ "$HAVE_JQ" -eq 1 ]; then
+    case "$1" in
+      tool_name|cwd|permission_mode) printf '%s' "$RAW" | jq -r ".$1 // \"\"" 2>/dev/null ;;
+      *) printf '%s' "$RAW" | jq -r ".tool_input.$1 // \"\"" 2>/dev/null ;;
+    esac
+    return
+  fi
+  printf '%s' "$RAW" | awk -v key="$1" '
+    BEGIN { RS = "\001" }
+    {
+      s = $0; n = length(s); i = 1; want = 0
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c != "\"") {
+          if (want && c !~ /[ \t\r\n:]/) want = 0
+          i++; continue
+        }
+        val = ""; j = i + 1
+        while (j <= n) {
+          d = substr(s, j, 1)
+          if (d == "\\") {
+            e = substr(s, j + 1, 1)
+            if (e == "n") val = val "\n"
+            else if (e == "t") val = val "\t"
+            else if (e == "r") val = val "\r"
+            else if (e == "b" || e == "f") val = val " "
+            else if (e == "u") { val = val "?"; j += 4 }
+            else val = val e
+            j += 2; continue
+          }
+          if (d == "\"") break
+          val = val d; j++
+        }
+        if (want) { printf "%s", val; exit }
+        k = j + 1
+        while (substr(s, k, 1) ~ /[ \t\r\n]/) k++
+        if (substr(s, k, 1) == ":" && val == key) want = 1
+        i = j + 1
+      }
+    }'
+}
+
+TOOL_NAME="$(jfield tool_name)" || exit 0
+CWD="$(jfield cwd)"
+PERM_MODE="$(jfield permission_mode)"
 [ -n "$CWD" ] || CWD="$PWD"
 
 SNIFF_MAX_BYTES="${CREDFILE_SNIFF_MAX_BYTES:-10485760}"
 PRIVATE_KEY_RE='-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 
+# emit KIND REASON -> the PreToolUse decision JSON (jq when present, else printf
+# with the reason escaped for JSON).
+emit() {
+  if [ "$HAVE_JQ" -eq 1 ]; then
+    jq -n --arg kind "$1" --arg reason "$2" \
+      '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: $kind, permissionDecisionReason: $reason}}'
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' \
+      "$1" "$(printf '%s' "$2" | awk 'BEGIN { ORS = "" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); print sep $0; sep = "\\n" }')"
+  fi
+}
+
 deny() {
-  jq -n --arg reason "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+  emit deny "$1"
   exit 0
 }
+
+# The payload could not be read at all and there is no jq to say why: the guard
+# cannot tell what the call is, so it refuses rather than guess.
+if [ "$HAVE_JQ" -eq 0 ] && [ -z "$TOOL_NAME" ]; then
+  deny "Blocked by guards credfile-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked. Install jq (apt install jq, brew install jq) and retry. If the user really wants the call to go through unchecked, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
+fi
 
 # ask: hand the decision to the HUMAN via Claude Code's built-in permission
 # prompt. Used for files that are credential-adjacent but routinely needed
@@ -91,8 +164,7 @@ deny() {
 # default, acceptEdits and plan; deny elsewhere. GUARDS_CRED_ASK set to "force" asks
 # regardless of mode; set to 0 it denies in every mode.
 ask() {
-  jq -n --arg reason "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+  emit ask "$1"
   exit 0
 }
 
@@ -209,11 +281,11 @@ check_path() {
 
 case "$TOOL_NAME" in
   Read)
-    check_path "$(printf '%s' "$RAW" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+    check_path "$(jfield file_path)"
     ;;
   Grep)
-    check_path "$(printf '%s' "$RAW" | jq -r '.tool_input.path // ""' 2>/dev/null)"
-    GLOB="$(printf '%s' "$RAW" | jq -r '.tool_input.glob // ""' 2>/dev/null)"
+    check_path "$(jfield path)"
+    GLOB="$(jfield glob)"
     if [ -n "$GLOB" ]; then
       case "$(printf '%s' "$GLOB" | tr '[:upper:]' '[:lower:]')" in
         *.env*|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|*id_rsa*|*id_ed25519*|*id_ecdsa*|*id_dsa*|*credentials*|*.netrc*|*.pgpass*|*.npmrc*|*.pypirc*|*.tfstate*|*.ssh*|*client_secret*|*service-account*)
@@ -227,7 +299,7 @@ case "$TOOL_NAME" in
     fi
     ;;
   Bash)
-    CMD="$(printf '%s' "$RAW" | jq -r '.tool_input.command // ""' 2>/dev/null)"
+    CMD="$(jfield command)"
     [ -n "$CMD" ] || exit 0
     # Only commands that print file content are in scope.
     READERS='(^|[^A-Za-z0-9_./-])(cat|tac|nl|head|tail|less|more|bat|batcat|sed|awk|gawk|grep|egrep|fgrep|rg|ag|xxd|od|hexdump|strings|base64|cut|paste|diff|cmp|python3?|perl|ruby|node)([^A-Za-z0-9_-]|$)'
