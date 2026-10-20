@@ -30,15 +30,14 @@ bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 BIN="$T/bin"; mkdir -p "$BIN"
+# Every tool on PATH except `timeout` and `gtimeout`. One `ln` per directory (the
+# first directory on PATH wins), not one per file: a per-file loop takes minutes
+# on a machine with thousands of tools on PATH and slow process launches.
 IFS=: read -ra dirs <<< "$PATH"
-for d in "${dirs[@]}"; do
-  [ -d "$d" ] || continue
-  for f in "$d"/*; do
-    n="${f##*/}"
-    case "$n" in timeout | gtimeout) continue ;; esac
-    [ -e "$BIN/$n" ] || ln -s "$f" "$BIN/$n" 2> /dev/null
-  done
+for ((i = ${#dirs[@]} - 1; i >= 0; i--)); do
+  [ -d "${dirs[$i]}" ] && ln -sf "${dirs[$i]}"/* "$BIN"/ 2> /dev/null
 done
+rm -f "$BIN/timeout" "$BIN/gtimeout"
 
 if env -i PATH="$BIN" "$BASH_BIN" -c 'command -v timeout > /dev/null 2>&1 || command -v gtimeout > /dev/null 2>&1'; then
   bad "setup: timeout is still visible on the test PATH"
