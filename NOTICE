@@ -1,0 +1,11 @@
+gramatr-guards (claude-plugin-guards)
+Copyright (c) 2026 grāmatr
+
+This repository's own code is licensed under the MIT License, see LICENSE. A copy is
+also in guards/LICENSE so that the installed plugin carries it.
+
+This license covers this plugin's own code (hooks wiring, self-heal
+script, vendored copies). The vendored hook scripts and secret-guard
+core logic retain their origin repos' licensing — see each vendored
+file's header comment and the source repos (gramatr/secret-guard,
+gramatr/injection-guard, gramatr/pii-guard) for details.
