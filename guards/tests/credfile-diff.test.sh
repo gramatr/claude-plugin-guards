@@ -119,11 +119,28 @@ fi
 pass=0 fail=0
 check() { if [ "$2" = "$3" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: $1"; fi; }
 
+# actual_output N MODE -> what the hook said for case N in MODE, HOME replaced, cut to
+# 600 bytes: shown when a case differs from the golden file, so a mismatch on another
+# machine can be read instead of guessed at (the golden file holds only hashes).
+actual_output() {
+  local c="${CASES[$(($1 - 1))]}"
+  payload "${c%%	*}" "${c#*	}" "$2" | bash "$HOOKS/credfile-guard.sh" 2>&1 | sed "s|$HOME|<HOME>|g" | head -c 600
+}
+
 new="$(results "$HOOKS/credfile-guard.sh")"
 total="$(printf '%s\n' "$new" | wc -l)"
 while IFS= read -r line; do
   want="$(grep -F -x -m1 -e "${line% *}"' '"${line##* }" "$GOLDEN" || true)"
-  check "case/mode ${line% *} differs from the golden output" "$line" "$want"
+  if [ "$line" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "FAIL: case/mode ${line% *} differs from the golden output"
+    set -- ${line% *}
+    echo "  command: ${CASES[$(($1 - 1))]#*	}"
+    echo "  files under ~/.ssh: $(ls -f "$HOME/.ssh" 2>/dev/null | tr '\n' ' ')"
+    echo "  actual: $(actual_output "$1" "$2" | tr '\n' ' ')"
+  fi
 done <<< "$new"
 check "golden file has one line per case and mode" "$total" "$(wc -l < "$GOLDEN" | tr -d ' ')"
 check "at least 40 payloads" yes "$([ "${#CASES[@]}" -ge 40 ] && echo yes || echo no)"
