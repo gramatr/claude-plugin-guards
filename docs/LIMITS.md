@@ -52,6 +52,11 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   count towards the cap, so a long command is looked at slightly deeper than before. Pinned as an expected
   miss in `credfile-battery.test.sh`; tracked, with a design to cover long commands at the same cost, as
   gramatr/guards-coordination#91.
+- **The use-only registry exempts the credential, not the tool's output or its side effects.** `age -d -i KEY file`
+  keeps the key out of the transcript but prints the decrypted secret (covered only by output redaction, which has
+  the gaps listed below), and `ssh-keygen -p -f KEY` or `ssh-keygen -t ... -f KEY` can rewrite or overwrite the key:
+  an integrity risk the guard does not claim to prevent. Both are pinned as intentionally allowed in
+  `credfile-battery.test.sh` (shapes 15 to 17), so a later change is a conscious one.
 - **A tool with no row in the use-only registry is still denied beside a reader word.** The credential-file
   guard drops a credential handed to a tool in `guards/hooks/cred-use-registry.tsv` before it looks for sensitive
   paths; for any other tool (`sops`, `op`, `gpg`, a script) a reader word and a sensitive path on the same line

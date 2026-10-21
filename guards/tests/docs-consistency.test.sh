@@ -102,5 +102,10 @@ if command -v jq > /dev/null 2>&1; then
   [ "$(jq -r '[.. | objects | select(has("version"))] | length' "$REPO/.claude-plugin/marketplace.json")" = 0 ] && ok || bad "marketplace.json has no version field"
 fi
 
+# The limits of the identity-use exemption are written down where the setting is (coordination#87).
+grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'decrypted' && ok || bad "CONFIGURATION.md says the exemption does not cover a tool's decrypted output"
+grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'rewrite' && ok || bad "CONFIGURATION.md says ssh-keygen -p can rewrite a key"
+grep -q 'exempts the credential, not the tool' "$REPO/docs/LIMITS.md" && ok || bad "LIMITS.md states the limits of the use-only registry"
+
 echo "docs-consistency: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
