@@ -167,6 +167,20 @@ jobs:
             /bin/bash "guards/tests/$t.test.sh" || exit 1
           done
 
+  macos-probe:
+    # TEMPORARY (#71): run every other suite on a Mac, none can fail the job, 90 s cap each.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Remaining suites under /bin/bash 3.2
+        run: |
+          for t in no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard outbound-safeforms outbound-parse; do
+            echo "=================== $t"
+            perl -e 'alarm 90; exec @ARGV' /bin/bash "guards/tests/$t.test.sh" 2>&1 | grep -E "FAIL|passed|failed|Terminated|rror" | head -30
+            echo "exit(${PIPESTATUS[0]})"
+          done
+          exit 0
+
   scan-sh-drift:
     runs-on: ubuntu-latest
     steps:
