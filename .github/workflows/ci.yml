@@ -101,6 +101,9 @@ jobs:
       - name: guards-selfheal tests
         # Stub docker/curl/git/timeout/sleep on PATH; no container or network.
         run: bash guards/tests/guards-selfheal.test.sh
+      - name: gitleaks install tests (patched download, hash check, upstream fallback)
+        # Stub curl serving fixture tarballs; no network. Fabricated binaries.
+        run: bash guards/tests/gitleaks-install.test.sh
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -169,6 +172,12 @@ jobs:
         env:
           SERVER_REF: ${{ inputs.server_ref }}
         run: bash guards/tests/scan-sh-drift.sh
+      - name: Vendored gitleaks-assets.sha256 equals guards-unified docs/gitleaks-assets.sha256
+        # The hashes the self-heal script checks a patched gitleaks download against must be
+        # the ones guards-unified's CI builds hash to (same tag on a tag build, else main).
+        env:
+          SERVER_REF: ${{ inputs.server_ref }}
+        run: bash guards/tests/gitleaks-assets-drift.sh
 
   hadolint:
     runs-on: ubuntu-latest

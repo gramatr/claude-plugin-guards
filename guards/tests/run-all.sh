@@ -34,7 +34,7 @@ step() { # step LABEL CMD...
 }
 
 SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift
-        sendmessage-guard userpromptsubmit-guard guards-selfheal
+        sendmessage-guard userpromptsubmit-guard guards-selfheal gitleaks-install
         credclass-lib credfile-diff deadline-fallback realpath-lib outbound-guard scan-bash-compat docs-consistency glob-order build-pins)
 
 # The MCP server test is Python and needs `mcp>=2` and `httpx`. Point
