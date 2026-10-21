@@ -183,6 +183,12 @@ printf 'password: "%s" # guards:synthetic\n' "$PW" > "$LR/msg.txt"
 want deny "a marker in a -F message file does not excuse it" "$LR" 'git commit -F msg.txt'
 has "msg.txt (named by the command), line 1: password: \"***REDACTED:SECRET***\""; check "message locates a match in a named file" $?
 ! has "$PW"; check "message never contains the value (named file)" $?
+# Stock macOS has no `realpath -m`: a relative file the command names must still be found and scanned.
+mkdir -p "$T/noreal"
+printf '#!/bin/sh\ncase "$1" in -m) echo "realpath: illegal option -- m" >&2; exit 1 ;; esac\nexec /bin/realpath "$@"\n' > "$T/noreal/realpath"
+chmod +x "$T/noreal/realpath"
+want deny "a named relative file is still scanned when realpath has no -m" "$LR" 'git commit -F msg.txt' "PATH=$T/noreal:$PATH"
+has "msg.txt (named by the command), line 1"; check "message locates a named file without realpath -m" $?
 git -C "$LR" reset -q; rm -f "$LR/clean.txt" "$LR/msg.txt"
 
 # More than 5 matches: only the first 5 are listed.
