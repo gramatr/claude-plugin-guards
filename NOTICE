@@ -4,8 +4,13 @@ Copyright (c) 2026 grāmatr
 This repository's own code is licensed under the MIT License, see LICENSE. A copy is
 also in guards/LICENSE so that the installed plugin carries it.
 
-This license covers this plugin's own code (hooks wiring, self-heal
-script, vendored copies). The vendored hook scripts and secret-guard
-core logic retain their origin repos' licensing — see each vendored
-file's header comment and the source repos (gramatr/secret-guard,
-gramatr/injection-guard, gramatr/pii-guard) for details.
+Vendored code. guards/vendor/secret-guard-core/ is derived from gramatr/secret-guard,
+which is licensed under the MIT License, the same terms as this repository. Each
+vendored file's header comment says where it came from. scan.sh is a copy of
+guards-unified's app/scan.sh, kept equal by a CI check.
+
+Not in this repository. The PII and prompt-injection detectors are part of the
+guards-unified service, a separate repository and container image, with its own
+LICENSE and NOTICE (including a note about a model that is licensed separately).
+This plugin calls that service over HTTP; it does not contain that code or those
+models.
