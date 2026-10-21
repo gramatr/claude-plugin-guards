@@ -23,6 +23,13 @@
 
 # shellcheck disable=SC2034  # the PAYLOAD_* variables are read by name in run_case
 set -uo pipefail
+# This suite needs bash 4 (declare -A) and GNU timeout(1), its stand-in for Claude Code's kill.
+# Stock macOS has neither; the watchdog path it would exercise is covered there by deadline-fallback.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ] || ! command -v timeout >/dev/null 2>&1; then
+  echo "SKIP: hook-deadlines needs bash 4 and GNU timeout (bash ${BASH_VERSION}); deadline-fallback covers the timeout-less path"
+  echo "hook-deadlines: 0 passed, 0 failed (skipped)"
+  exit 0
+fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 HOOKS_JSON="$REPO/guards/hooks/hooks.json"
