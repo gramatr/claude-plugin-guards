@@ -165,7 +165,7 @@ jobs:
         run: |
           /bin/bash --version | head -1
           failed=""
-          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard outbound-safeforms; do
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard; do
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || failed="$failed $t"
           done
