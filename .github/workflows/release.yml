@@ -1,0 +1,53 @@
+name: Release
+
+# claude-plugin-guards has no image to publish: its tag is a label (installs track
+# main and are identified by commit). A GitHub Release gives the label a page that
+# says which server release it goes with and where that release's evidence is
+# (scan reports, SBOMs, test counts, signed images). Created from CI on a tag push,
+# never by hand; the matching guards-unified release is made by that repo's Publish
+# workflow. Issue gramatr/guards-coordination#52.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # contents: write is held by this job only.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Tag equals VERSION at the tagged commit
+        # Same rule as tag-check.yml; a release page for a mismatched label would
+        # defeat lockstep.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(tr -d '[:space:]' < VERSION)"
+          if [ "$tag" != "$file" ]; then
+            echo "::error::Tag v$tag does not match VERSION ($file) on this commit."
+            exit 1
+          fi
+      - name: Create the release page
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          {
+            printf 'Plugin label for guards-unified %s (lockstep: same version, same tag).\n\n' "$TAG"
+            printf 'Plugin installs track `main` and are identified by commit; this tag marks commit `%s`.\n\n' "$SHA"
+            printf 'The server release, with its scan reports, SBOMs, test counts and the changelog, is here:\n'
+            printf 'https://github.com/gramatr/guards-unified/releases/tag/%s\n\n' "$TAG"
+            printf 'That page appears when the guards-unified Publish run for this tag finishes; if the plugin tag was pushed first, as the release checklist says, the link does not work until then.\n'
+          } > release-body.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-body.md
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-body.md
+          fi

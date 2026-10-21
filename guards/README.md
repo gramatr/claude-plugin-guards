@@ -656,8 +656,10 @@ packages, so **they carry the same version and the same tag**, cut together:
 of this repository. Plugin installs track `main` and are identified by commit
 (that is what `/plugin` shows), so the tag here is a label; a CI check
 (`.github/workflows/tag-check.yml`) fails if a pushed tag does not equal
-`VERSION`. Before tagging a release, confirm `VERSION` is the same in both
-repositories. The release recipe is in guards-unified's
+`VERSION`. A tag also gets a GitHub Release page, created by CI
+(`.github/workflows/release.yml`), that points at the matching guards-unified
+release, where the scan reports, SBOMs and test counts are attached. Before tagging
+a release, confirm `VERSION` is the same in both repositories. The release recipe is in guards-unified's
 [`docs/RELEASING.md`](https://github.com/gramatr/guards-unified/blob/main/docs/RELEASING.md).
 
 ## Why this exists
