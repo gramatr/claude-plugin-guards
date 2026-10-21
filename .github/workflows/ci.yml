@@ -180,6 +180,19 @@ jobs:
             echo "exit(${PIPESTATUS[0]})"
           done
           exit 0
+      - name: Diagnose the stub-service hooks
+        run: |
+          set +e
+          D="$(mktemp -d)"; mkdir -p "$D/svc"
+          python3 -I guards/tests/stub-service.py "$D/svc" >/dev/null 2>&1 &
+          for _ in $(seq 1 50); do [ -s "$D/svc/port" ] && break; sleep 0.1; done
+          echo "port: $(cat "$D/svc/port")"; python3 --version; curl --version | head -1; jq --version
+          URL="http://127.0.0.1:$(cat "$D/svc/port")"
+          echo "--- curl direct"; printf '{"text":"hello STUBSECRET123 x"}' | curl -sS -v --connect-timeout 2 -m 5 -X POST "$URL/v1/scan" -H "Content-Type: application/json" -d @- 2>&1 | head -40
+          echo "--- hook (trace tail)"
+          printf '{"tool_name":"SendMessage","tool_input":{"to":"a","message":"m STUBSECRET123"},"cwd":"/tmp"}' | GUARDS_ENDPOINT="$URL" HOME="$D" /bin/bash -x guards/hooks/sendmessage-guard.sh 2>&1 | tail -60
+          echo "--- requests logged"; cat "$D/svc/requests"
+          exit 0
 
   scan-sh-drift:
     runs-on: ubuntu-latest
