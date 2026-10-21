@@ -98,20 +98,30 @@ else
 fi
 
 HAVE_PROC=0
-[ -r "/proc/$$/cmdline" ] && HAVE_PROC=1
+[ -r "/proc/$$/cmdline" ] && command -v pgrep > /dev/null 2>&1 && HAVE_PROC=1
 
-# argv_scan: while a client is in flight, does any process whose command line
+# argv_scan CPID: while a client is in flight, does a process in the test's OWN
+# process tree (the `bash -c` wrapper CPID, its children and grandchildren) that
 # mentions the listener port carry the value (plain or Basic form) in its argv?
+# Only those few processes' command lines are read; no other process on the
+# machine is opened, and nothing read here is printed or kept beyond two flags.
+# (An earlier version read every /proc/*/cmdline, which on a busy machine took
+# longer than the listener holds the connection, so the client had already
+# finished: "no client process found".)
 # Sets ARGV_SEEN (a client process was found) and ARGV_HAS.
 argv_scan() {
   ARGV_SEEN=0; ARGV_HAS=0
-  local f c
-  for f in /proc/[0-9]*/cmdline; do
-    c="$({ tr '\0' ' ' < "$f"; } 2>/dev/null)" || continue
+  local pid p c pids="$1" kids="$1"
+  for _ in 1 2 3; do
+    kids="$(for p in $kids; do pgrep -P "$p" 2> /dev/null; done)"
+    pids="$pids $kids"
+  done
+  for pid in $pids; do
+    c="$({ tr '\0' ' ' < "/proc/$pid/cmdline"; } 2> /dev/null)" || continue
     case "$c" in
       *"127.0.0.1:$PORT"*)
         ARGV_SEEN=1
-        case "$c" in *"$TOK"*|*"$B64"*) ARGV_HAS=1 ;; esac ;;
+        case "$c" in *"$TOK"* | *"$B64"*) ARGV_HAS=1 ;; esac ;;
     esac
   done
 }
@@ -158,7 +168,7 @@ run_case() {
   local cpid=$! n
   if [ "$HAVE_PROC" -eq 1 ]; then
     for n in $(seq 1 100); do [ -e "$D/inflight" ] && break; sleep 0.1; done
-    argv_scan
+    argv_scan "$cpid"
   fi
   wait "$cpid"
 
