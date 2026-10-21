@@ -162,7 +162,7 @@ jobs:
       - name: Hook suites under the system bash (3.2)
         run: |
           /bin/bash --version | head -1
-          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry; do
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction; do
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || exit 1
           done
