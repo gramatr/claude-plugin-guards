@@ -53,6 +53,11 @@
 #
 # OVERRIDE: set GUARDS_ALLOW_CRED_READ=1 in the environment Claude Code
 # was started from. Deliberate and visible; there is no per-call bypass.
+# NARROWER OVERRIDE: GUARDS_ALLOW_CRED_PATHS=/abs/one:/abs/two lets exactly those
+# files through (any class, private keys included), compared by realpath. Also read
+# from the launch environment only; a variable typed in a Bash command is not it.
+# Entries that are empty, relative, contain a glob character or a .. segment are
+# ignored, so a malformed list denies more, never less. Unset = no change.
 #
 # Deny output format per Claude Code's hooks docs:
 #   {"hookSpecificOutput":{"hookEventName":"PreToolUse",
@@ -134,13 +139,40 @@ block() {
   deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript${note}. Do not read it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
 }
 
+# path_allowed P: P (already resolved) is one of the exact paths in
+# GUARDS_ALLOW_CRED_PATHS. The list is parsed once, and only when a path is about
+# to be blocked, so a call that touches nothing sensitive never pays for it.
+ALLOW_LOADED=0
+ALLOW_LIST=""
+path_allowed() {
+  [ -n "${GUARDS_ALLOW_CRED_PATHS:-}" ] || return 1
+  if [ "$ALLOW_LOADED" -eq 0 ]; then
+    ALLOW_LOADED=1
+    local entry r parts=()
+    IFS=: read -r -a parts <<< "$GUARDS_ALLOW_CRED_PATHS"
+    for entry in ${parts[@]+"${parts[@]}"}; do
+      case "$entry" in
+        /*) ;;
+        *) continue ;;
+      esac
+      case "$entry" in
+        *'*'*|*'?'*|*'['*|*'\\'*|*/../*|*/..|*$'\n'*) continue ;;
+      esac
+      r="$(gd_realpath "$entry")"
+      [ -n "$r" ] && ALLOW_LIST="${ALLOW_LIST}${r}"$'\n'
+    done
+  fi
+  case $'\n'"$ALLOW_LIST" in *$'\n'"$1"$'\n'*) return 0 ;; esac
+  return 1
+}
+
 check_path() {
   local raw="$1" p why
   [ -n "$raw" ] || return 0
   p="$(resolve_path "$raw")"
   [ -n "$p" ] || return 0
-  if why="$(sensitive_reason "$p")"; then block "$why" "$raw"; fi
-  if [ -d "$p" ] && why="$(sensitive_dir_reason "$p")"; then block "$why" "$raw"; fi
+  if why="$(sensitive_reason "$p")"; then path_allowed "$p" || block "$why" "$raw"; fi
+  if [ -d "$p" ] && why="$(sensitive_dir_reason "$p")"; then path_allowed "$p" || block "$why" "$raw"; fi
   return 0
 }
 
