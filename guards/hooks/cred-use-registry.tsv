@@ -1,0 +1,38 @@
+# cred-use-registry.tsv -- tools that USE a credential without printing it (issue gramatr/guards-coordination#78, #79).
+#
+# credfile-guard denies a Bash line that has a "reader" word (cat, head, grep ...) anywhere on it and a
+# sensitive path anywhere on it. For a tool in this file, the credential it is handed through one of its
+# "use" forms is dropped from the line before that scan, so `ssh -i KEY host | head` is not read as
+# `head KEY`. Anything else on the line that names the credential still counts.
+#
+# Columns, TAB separated; "-" means none; lists are comma separated:
+#   tool      the command word (basename; a leading quote or directory is ignored)
+#   subs      only when the first non-flag word after the tool is one of these (openssl dgst, ...)
+#   use       forms that hand over the credential:
+#               -i            a flag whose NEXT word is the credential
+#               --identity    same, and the glued form --identity=VALUE
+#               -o:IdentityFile=   flag -o whose next word starts with IdentityFile= (also glued -oIdentityFile=)
+#               @operand      every non-flag word after the tool
+#               env:NAME      an assignment NAME=value anywhere in the same simple command
+#   needs     flags that must ALL be present, or the row does not apply
+#   forbid    flags that, if present, make the row not apply (they turn use into print or mutate)
+#   test_id   the canary in guards/tests/cred-use-registry.test.sh that proves the tool does not print
+#             the credential (and, for forbid, that the forbidden form does). A row without one fails CI.
+#   note      why, or a known limit
+#
+# Rules: a row exists only for a tool that was run against a throwaway credential and did not print it.
+# A "simple command" ends at | ; & ( ) or a backtick. Missing or unparsable file: the guard behaves as if
+# GUARDS_CRED_IDENTITY_USE=0 (denies more, never less).
+#
+age	-	-i,--identity	-	-	age-identity	decrypts to stdout: the key is not printed, the decrypted payload is (output redaction covers that)
+rage	-	-i,--identity	-	-	rage-identity	canary is skipped where rage is not installed
+ssh	-	-i,-o:IdentityFile=	-	-	ssh-identity
+scp	-	-i,-o:IdentityFile=	-	-	scp-identity
+sftp	-	-i,-o:IdentityFile=	-	-	sftp-identity
+ssh-keygen	-	-f	-	-	ssh-keygen-file	-l -y -e print the public half only; -p and -t ... -f can rewrite the key (integrity, accepted, see coordination#87)
+ssh-add	-	@operand	-	-	ssh-add-operand	adds the key to the agent; -L and -l print public halves
+openssl	dgst,pkeyutl,req,x509,s_client	-sign,-inkey,-key,-signkey	-	-	openssl-sign	signing and TLS flags that take a private key
+openssl	pkey,rsa,ec	-in	-pubout	-text	openssl-pubout	-in KEY only with -pubout (public half); bare or with -text prints the private key
+kubectl	-	--kubeconfig,env:KUBECONFIG	-	--raw	kubectl-kubeconfig	config view --raw prints the token, so --raw disables the row
+curl	-	--key	-	-	curl-key	the TLS client key is used, not sent as payload
+docker	-	--config	-	-	docker-config	the client config directory (auth entries) is read, not printed

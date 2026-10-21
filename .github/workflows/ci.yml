@@ -72,6 +72,14 @@ jobs:
           bash guards/tests/realpath-lib.test.sh
           bash guards/tests/deadline-fallback.test.sh
           bash guards/tests/glob-order.test.sh
+      - name: credential-use registry (canaries against the real tools) and the 20-shape battery
+        # Every registry row is run against a throwaway credential generated here; the forbidden forms
+        # must really print it. The stripper is compared across every awk installed.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age gawk mawk busybox
+          bash guards/tests/cred-use-registry.test.sh
+          bash guards/tests/credfile-battery.test.sh
       - name: outbound-guard tests
         # A throwaway HOME with fabricated credential files, a stub service.
         run: bash guards/tests/outbound-guard.test.sh
@@ -154,7 +162,7 @@ jobs:
       - name: Hook suites under the system bash (3.2)
         run: |
           /bin/bash --version | head -1
-          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback; do
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry; do
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || exit 1
           done
