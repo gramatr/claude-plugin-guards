@@ -160,6 +160,15 @@ while IFS=$'\t' read -r tool subs use needs forbid test_id note; do
   : "$note"
 done < "$REG"
 [ "$rows" -ge 10 ] && ok || bad "registry has too few rows ($rows)"
+# A row exists only where the tool was run against a throwaway credential and did not print it. These have
+# no canary (not installable in CI, or needing a pipe-sink rule), so they must not be in the registry.
+for absent in sops op gpg ls stat test find xargs; do
+  if awk -F'\t' -v t="$absent" '$0 !~ /^[ \t]*#/ && $1 == t { found = 1 } END { exit !found }' "$REG"; then
+    bad "registry has a row for '$absent', which has no canary (remove it, or add the canary first)"
+  else
+    ok
+  fi
+done
 # every canary function belongs to a row (no orphan evidence)
 for fn in $(declare -F | awk '{print $3}' | grep '^canary_'); do
   id="${fn#canary_}"; id="${id//_/-}"
