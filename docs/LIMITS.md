@@ -15,19 +15,21 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   output shape for `Bash` only, and a wrong shape is silently ignored. The
   credential-file guard denies reads of credential files up front; everything
   else those tools return reaches the model unchecked.
-- **Tool inputs are mostly not scanned.** Only `SendMessage` input and the
-  publish verbs (see below) are checked. A secret written with `Write` or
-  `Edit`, sent with `curl`, or passed to a tool the guards do not name is not
-  looked at.
+- **Tool inputs are mostly not scanned.** Only `SendMessage` input, the publish
+  verbs and, for a command that names a network client, the outbound guard (see
+  [Outbound commands](#outbound-commands)) are checked. A secret written with
+  `Write` or `Edit`, or passed to a tool the guards do not name, is not looked
+  at.
 - **A secret typed in your own prompt cannot be removed by a hook.**
   `UserPromptSubmit` can only block the whole prompt or add a note, and this
   plugin adds a note. The prompt reaches the model and the API as typed. If the
   value is real, rotate it.
 - **The publish guard does not cover `git push`.** It inspects `git commit`
   (message and staged diff) but not what is pushed, so a secret that is already
-  in a commit is not caught at push time. It also does not cover `curl` or other
-  posters, scripts that publish indirectly, non-GitHub MCP tools (GitLab, Jira,
-  Slack, mail and similar), or the GitHub web UI. It inspects only commands
+  in a commit is not caught at push time. It also does not cover scripts that
+  publish indirectly, non-GitHub MCP tools (GitLab, Jira, Slack, mail and
+  similar), or the GitHub web UI. Commands that send data with `curl`, `wget`
+  and similar clients belong to the outbound guard. It inspects only commands
   that name `gh issue|pr|release|gist` with `create|comment|edit|review`, a
   `gh api` call with a body flag, `git commit`, and MCP tools whose name
   contains `github` and a write verb.
@@ -45,6 +47,61 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   by directory and glob name only.
 - **Only Claude Code sessions with the plugin installed** are covered, not a
   terminal outside Claude Code.
+
+## Outbound commands
+
+The outbound guard (`hooks/outbound-guard.sh`) stops a Bash command from sending
+credential material to a remote host. It is best effort, not a sandbox.
+
+**What it covers.** Commands whose command word is `curl`, `wget`, HTTPie
+(`http`, `https`, `xh`), `nc`/`ncat`/`netcat`, `scp`/`rsync`/`sftp` (a local
+source with a remote destination) or `ssh` (standard input only), including
+behind `sudo`, `env`, `timeout`, `xargs`, `bash -c` and `eval`:
+
+- a **file** the client would send (`-d @file`, `-F f=@file`, `-T file`,
+  `-H @file`, `--post-file`, `field@file`, a source operand, `< file`,
+  `cat file |`, `$(cat file)`), classified like `credfile-guard` does: a
+  credential store denies, `.env` and similar ask or deny by mode;
+- the **whole environment** (`env`, `printenv`, `set`, `export -p`) piped in;
+- a **literal credential in the command text**: a vendor-shaped token or key id,
+  a private-key header, a value from the session's own environment (deny), or
+  an ambiguous literal such as `-u user:pw`, an `X-Api-Key` or `Authorization`
+  value, URL userinfo or `password=` in a body (ask or deny by mode).
+
+**What it does not see.** These go through unchecked:
+
+- a file or value named through a **variable** or a **command substitution that
+  builds the path** (`curl -d @$F`): allowed with a note that says so;
+- **aliases and functions**, **scripts** (`bash ./upload.sh`) and **other
+  interpreters** (a python `requests.post`, a node `fetch`);
+- **state across commands**: a file created or copied by an earlier command, a
+  `cd` earlier in the same command, `tee >(client) < file`, a named fifo;
+- **other clients**: `ftp`, `telnet`, `socat`, `openssl s_client`, `aria2c`,
+  `lftp`, `git push` and `git remote` URLs, `docker run <client image>`, and
+  cloud CLIs (`aws s3 cp`, `gsutil`, `rclone`, `kubectl cp`, `gh api -F @file`);
+- the **content** of a file sent as a body: it is judged by its name and a
+  private-key sniff of its first 10 MB, not scanned for vendor tokens, and the
+  file can change between the check and the client running;
+- a command over **8 KB**, unbalanced quoting, or nesting deeper than 3: the
+  guard says it could not check fully and runs the checks that could run.
+
+**Safe forms are not all equally safe.** A variable reference keeps a credential
+out of the command text but not out of the process list (`ps`). `curl -v`,
+`wget -d` and `http --verbose` print a credential carried in a header or
+cookie back. Whether `curl --oauth2-bearer` and `-u` show the value in `ps`
+depends on the curl version (visible on 7.81, hidden on 8.5.0). See
+[`OUTBOUND-SAFE-FORMS.md`](OUTBOUND-SAFE-FORMS.md) for each form, measured.
+
+**Cost.** A command that names no client costs about 3 ms. A command that
+names one costs about 190 to 230 ms with the service (measured on a busy
+machine), because the command text is scanned; a file-reference deny skips the
+scan and costs about 45 ms.
+
+**A sandbox placeholder** (`SANDBOX_MASKED_<id>`) is removed before the text is
+read. The real placeholder format of Claude Code's sandbox credential masking is
+not verified; set `GUARDS_OUTBOUND_SENTINEL_RE` if it differs. For a hard
+boundary, use Claude Code's sandbox (a network allowlist and credential
+masking), which this guard complements and does not replace.
 
 ## Size and position limits
 

