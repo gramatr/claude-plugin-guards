@@ -70,5 +70,13 @@ row 13 deny deny "KNOWN: ls of a credential directory piped to a reader (needs t
 # --- EXPECTED MISS: allowed although it reads the key (documented indirect read, LIMITS) ----
 row 20 allow allow "EXPECTED MISS: a path assembled from pieces" "python3 -c \"import os;p=os.path.expanduser('~')+'/.ss'+'h/id_'+'ed25519';print(len(open(p).read()))\""
 
+# --- EXPECTED MISS: the hook checks at most the first 60 path-like words (gramatr/guards-coordination#91) ----
+# Control first: the same command with few words before the key denies, so the miss below is the cap and not
+# something else about the shape.
+few="$(seq -s ' ' 1 10)"
+many="$(seq -s ' ' 1 70)"
+row 21 deny  deny  "a key after 10 words is seen"                                   "cat $few $KEY"
+row 22 allow allow "EXPECTED MISS: a key after more than 60 words is not seen (#91)" "cat $many $KEY"
+
 echo "credfile-battery: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
