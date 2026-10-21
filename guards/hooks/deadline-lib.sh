@@ -117,18 +117,23 @@ guards_deadline() {
     gd_outcome "$kind" "$secs" "the hook could not create a temp directory" /dev/null
     exit 0
   fi
-  # shellcheck disable=SC2064  # expand $w now
-  trap "rm -rf '$w'" EXIT
+  # No EXIT trap for the work directory: the bash watchdog (gd_bounded) is a
+  # subshell, and a trap set here ran in it when it was killed, deleting $w while
+  # this function was about to read the hook's answer. Under load that lost the
+  # answer (a deny came out as nothing, i.e. allowed). The directory is removed
+  # explicitly on every path below instead.
   cat > "$w/in" 2>/dev/null
   gd_bounded "$secs" "$w/in" "$w/out" "$w/err" "$GD_SCRIPT"
   rc=$?
   case "$rc" in
     0|2)
       cat "$w/out"; cat "$w/err" >&2
+      rm -rf "$w"
       exit "$rc" ;;
     124) why="the scan did not finish in time" ;;
     *)   why="the hook crashed (exit status ${rc})" ;;
   esac
   gd_outcome "$kind" "$secs" "$why" "$w/in"
+  rm -rf "$w"
   exit 0
 }
