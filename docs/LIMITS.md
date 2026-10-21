@@ -45,6 +45,13 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   paths a command or tool names. A script that reads a key, a path held in a
   variable, or `eval` is not caught. A `Grep` over a whole directory is checked
   by directory and glob name only.
+- **Only the first 60 path-like words of a Bash command are checked.** The credential-file guard looks at
+  the words of a command that could be paths, up to a cap of 60, to keep the hook fast (about 2.4 ms per
+  word). A credential path after the 60th word is not seen: a reader word, 60 other arguments and then a key
+  path is allowed. Words the use-only registry removes (a credential handed to `ssh -i` and so on) do not
+  count towards the cap, so a long command is looked at slightly deeper than before. Pinned as an expected
+  miss in `credfile-battery.test.sh`; tracked, with a design to cover long commands at the same cost, as
+  gramatr/guards-coordination#91.
 - **A tool with no row in the use-only registry is still denied beside a reader word.** The credential-file
   guard drops a credential handed to a tool in `guards/hooks/cred-use-registry.tsv` before it looks for sensitive
   paths; for any other tool (`sops`, `op`, `gpg`, a script) a reader word and a sensitive path on the same line
