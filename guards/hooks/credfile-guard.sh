@@ -30,9 +30,12 @@
 #      content is never printed.
 #   For Bash, only commands that PRINT file content (cat, head, tail,
 #   less, sed, awk, grep, base64, xxd, strings, python ... ) AND name a
-#   sensitive path are denied. `ssh -i ~/.ssh/id_ed25519 host` or
-#   `ssh-keygen -l -f key` use the key without printing it and are
-#   allowed.
+#   sensitive path are denied. `ssh -i ~/.ssh/id_ed25519 host`,
+#   `ssh-keygen -l -f key` and `age -d -i key file` use the key without
+#   printing it and are allowed: a key named as the identity / key-file of
+#   age, rage, ssh, scp, sftp or ssh-keygen is not counted as a read, even
+#   if a reader word (a cat of some other file) is elsewhere on the line.
+#   GUARDS_CRED_IDENTITY_USE=0 turns that off.
 #
 # KNOWN LIMITS (documented, not hidden)
 #   - A Grep over a DIRECTORY is only checked by directory and glob name;
@@ -165,6 +168,28 @@ case "$TOOL_NAME" in
     # Only commands that print file content are in scope.
     READERS='(^|[^A-Za-z0-9_./-])(cat|tac|nl|head|tail|less|more|bat|batcat|sed|awk|gawk|grep|egrep|fgrep|rg|ag|xxd|od|hexdump|strings|base64|cut|paste|diff|cmp|python3?|perl|ruby|node)([^A-Za-z0-9_-]|$)'
     printf '%s' "$CMD" | grep -qE -e "$READERS" || exit 0
+    # A key named as the identity / key-file of a tool that only USES it (age -i KEY,
+    # ssh -i KEY, ssh-keygen -f KEY) is not a read: drop that flag and its value before
+    # looking for sensitive paths, so a reader word elsewhere on the line (a cat of some
+    # other file in another $(...)) does not make the use look like a read. Only when the
+    # tool word and the flag are in the same simple command (no | ; & $( ) or backtick
+    # between them); any other mention of the key on the line still counts. If sed fails
+    # the line is scanned as written. GUARDS_CRED_IDENTITY_USE=0 turns this off.
+    SCAN="$CMD"
+    if [ "${GUARDS_CRED_IDENTITY_USE:-1}" != 0 ]; then
+      PRE='(^|[^A-Za-z0-9_./-])'
+      GAP='([[:space:]]+[^|;&$()`]*)?'
+      i=0
+      while [ "$i" -lt 4 ]; do
+        i=$((i + 1))
+        stripped="$(printf '%s' "$SCAN" | sed -E \
+          -e "s/${PRE}(age|rage)${GAP}[[:space:]](-i|--identity)([[:space:]]+|=)[^[:space:]]+/\\1\\2\\3 /g" \
+          -e "s/${PRE}(ssh|scp|sftp)${GAP}[[:space:]]-i[[:space:]]+[^[:space:]]+/\\1\\2\\3 /g" \
+          -e "s/${PRE}(ssh-keygen)${GAP}[[:space:]]-f[[:space:]]+[^[:space:]]+/\\1\\2\\3 /g" 2>/dev/null)" || break
+        [ -n "$stripped" ] && [ "$stripped" != "$SCAN" ] || break
+        SCAN="$stripped"
+      done
+    fi
     # Tokenise on whitespace and shell metacharacters, then check each
     # path-looking token (globs expanded, capped to keep this fast).
     n=0
@@ -181,7 +206,7 @@ case "$TOOL_NAME" in
           while IFS= read -r e; do [ -n "$e" ] && check_path "$e"; done <<< "$expanded" ;;
         *) check_path "$tok" ;;
       esac
-    done < <(printf '%s' "$CMD" | tr ';|&<>()"`'"'"'\t\n=' '          ' | tr ' ' '\n')
+    done < <(printf '%s' "$SCAN" | tr ';|&<>()"`'"'"'\t\n=' '          ' | tr ' ' '\n')
     ;;
 esac
 

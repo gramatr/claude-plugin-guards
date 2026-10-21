@@ -64,6 +64,7 @@ scans whatever text it is sent; the hook decides how much to send.
 |---|---|---|
 | `GUARDS_ALLOW_CRED_READ` | `0` | `1` disables the guard. Set it in the environment Claude Code starts from; there is no per-call bypass. |
 | `GUARDS_CRED_ASK` | `1` | `1`: `.env`, kubeconfig, `.npmrc`/`.pypirc` and terraform state ask the person in `default`, `acceptEdits` and `plan` modes and deny in every other mode. `force`: ask in every mode. `0`: hard deny in every mode. Private keys and credential stores are always hard denies. |
+| `GUARDS_CRED_IDENTITY_USE` | `1` | `1`: a key named as the identity or key-file of a tool that only uses it (`age`/`rage` `-i` or `--identity`, `ssh`/`scp`/`sftp` `-i`, `ssh-keygen -f`) is not treated as a read, so a reader word elsewhere on the same line (a `cat` of another file) no longer makes it look like one. Any other mention of the key on the line still counts. `0` restores the old behavior: any reader word plus a sensitive path on the line is a deny. |
 | `CREDFILE_SNIFF_MAX_BYTES` | `10485760` (10 MiB) | Bytes of each readable regular file checked for a private-key header. This is what denies an unrelated document that quotes a key header. |
 
 ## Publish guard (`publish-guard.sh`)
