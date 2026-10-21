@@ -99,7 +99,7 @@ path_class() { # path_class RAW -> prints deny|ask|"" for one operand
   case "$raw" in /*) ;; *) raw="$P/$raw" ;; esac
   case "$raw" in
     *'*'*|*'?'*|*'['*)
-      for e in $(compgen -G "$raw" 2>/dev/null | head -n 20); do path_class "$e"; done
+      for e in $(compgen -G "$raw" 2>/dev/null | LC_ALL=C sort | head -n 20); do path_class "$e"; done
       return 0 ;;
   esac
   p="$raw"

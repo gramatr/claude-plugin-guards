@@ -174,9 +174,9 @@ case "$TOOL_NAME" in
       n=$((n + 1)); [ "$n" -le 60 ] || break
       case "$tok" in
         *'*'*|*'?'*|*'['*)
-          expanded="$(cd "$CWD" 2>/dev/null && compgen -G "$tok" | head -n 20)"
+          expanded="$(cd "$CWD" 2>/dev/null && compgen -G "$tok" | LC_ALL=C sort | head -n 20)"
           if [ -z "$expanded" ] && [ "${tok#\~}" != "$tok" ]; then
-            expanded="$(compgen -G "${HOME}/${tok#\~/}" | head -n 20)"
+            expanded="$(compgen -G "${HOME}/${tok#\~/}" | LC_ALL=C sort | head -n 20)"
           fi
           while IFS= read -r e; do [ -n "$e" ] && check_path "$e"; done <<< "$expanded" ;;
         *) check_path "$tok" ;;

@@ -181,9 +181,9 @@ classify_path() { # classify_path RAWPATH WHERE
   case "$raw" in -) return 0 ;; esac
   case "$raw" in
     *'*'* | *'?'* | *'['*)
-      expanded="$(cd "$CWD" 2> /dev/null && compgen -G "$raw" | head -n 20)"
+      expanded="$(cd "$CWD" 2> /dev/null && compgen -G "$raw" | LC_ALL=C sort | head -n 20)"
       if [ -z "$expanded" ] && [ "${raw#\~}" != "$raw" ]; then
-        expanded="$(compgen -G "${HOME}/${raw#\~/}" | head -n 20)"
+        expanded="$(compgen -G "${HOME}/${raw#\~/}" | LC_ALL=C sort | head -n 20)"
       fi
       while IFS= read -r e; do [ -n "$e" ] && classify_path "$e" "$where"; done <<< "$expanded"
       return 0 ;;
