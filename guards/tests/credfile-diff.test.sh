@@ -151,7 +151,22 @@ if git -C "$HERE" cat-file -e "$OLD_REF:guards/hooks/credfile-guard.sh" 2>/dev/n
   OLD="$T/old"; mkdir -p "$OLD"
   git -C "$HERE" show "$OLD_REF:guards/hooks/credfile-guard.sh" > "$OLD/credfile-guard.sh"
   cp "$HOOKS/deadline-lib.sh" "$HOOKS/json-lib.sh" "$OLD/"
-  check "live differential against $OLD_REF" "$(results "$OLD/credfile-guard.sh")" "$new"
+  old_res="$(results "$OLD/credfile-guard.sh")"
+  check "live differential against $OLD_REF" "$old_res" "$new"
+  if [ "$old_res" != "$new" ]; then
+    # Name what differs (the check above only says that something does): the case,
+    # the mode and what each hook said, so a failure seen once on CI can be read.
+    shown=0
+    while IFS= read -r l; do
+      [ "$shown" -ge 3 ] && break
+      set -- ${l% *}
+      echo "  differs: case $1 mode $2 command: ${CASES[$(($1 - 1))]#*	}"
+      c="${CASES[$(($1 - 1))]}"
+      echo "    $OLD_REF: $(payload "${c%%	*}" "${c#*	}" "$2" | bash "$OLD/credfile-guard.sh" 2>&1 | sed "s|$HOME|<HOME>|g" | head -c 400 | tr '\n' ' ')"
+      echo "    now:      $(actual_output "$1" "$2" | head -c 400 | tr '\n' ' ')"
+      shown=$((shown + 1))
+    done < <(diff <(printf '%s\n' "$old_res") <(printf '%s\n' "$new") | sed -n 's/^> //p')
+  fi
   live="live against $OLD_REF too"
 fi
 
