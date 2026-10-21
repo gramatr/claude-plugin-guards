@@ -454,7 +454,7 @@ function httpie_args(sid, n,   j, a, e, v, cl) {
     else if (!e && a ~ /^[^=:]+==?.+/) lit("http", "field", a, 0)
   }
 }
-function is_remote(w) { return (w ~ /^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:[^\/]/ || w ~ /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/ || w ~ /^(scp|sftp|rsync|ssh):\/\//) }
+function is_remote(w) { return (w ~ /^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+:([^\/]|\/([^\/]|$))/ || w ~ /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/ || w ~ /^(scp|sftp|rsync|ssh):\/\//) }
 function copy_args(sid, n, client,   j, a, np, dest_remote, pos) {
   np = 0
   for (j = 1; j <= n; j++) { a = AR[j]; if (a ~ /^-/) { if (a ~ /^-[eiFoJlPcSBLfT]$/ && AR[j] != "") j++; continue } np++; PA[np] = a; PE[np] = ex[sid, AI[j]] }

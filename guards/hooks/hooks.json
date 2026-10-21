@@ -1,5 +1,5 @@
 {
-  "description": "gramatr guards: secret, PII and prompt-injection guards for Claude Code, backed by one guards-unified service with a local secrets-only fallback. SessionStart: self-heal script that starts and updates the guards-unified container and installs gitleaks if missing. PostToolUse on Bash: combined-hook redacts secrets in stdout and stderr and notes PII and likely injection (one rewriter per tool, because Claude Code leaves the order of several updatedToolOutput hooks undefined). PostToolUse on MCP tools: mcp-output-guard redacts secrets in results of recognised shapes. PreToolUse on SendMessage: sendmessage-guard redacts secrets in outgoing messages and flags PII; it must stay the only PreToolUse hook on that tool. PreToolUse on Read, Grep and Bash: credfile-guard denies reads of credential files and of any file containing a private-key header, and asks about .env-style files. PreToolUse on Bash and GitHub MCP tools: publish-guard denies gh issue/pr/release/gist, gh api body, git commit and GitHub MCP writes that contain credentials (git push is not covered). UserPromptSubmit: userpromptsubmit-guard adds a note when your own prompt contains a secret; advisory only, the prompt is not changed. See guards/README.md and docs/HOOKS.md.",
+  "description": "gramatr guards: secret, PII and prompt-injection guards for Claude Code, backed by one guards-unified service with a local secrets-only fallback. SessionStart: self-heal script that starts and updates the guards-unified container and installs gitleaks if missing. PostToolUse on Bash: combined-hook redacts secrets in stdout and stderr and notes PII and likely injection (one rewriter per tool, because Claude Code leaves the order of several updatedToolOutput hooks undefined). PostToolUse on MCP tools: mcp-output-guard redacts secrets in results of recognised shapes. PreToolUse on SendMessage: sendmessage-guard redacts secrets in outgoing messages and flags PII; it must stay the only PreToolUse hook on that tool. PreToolUse on Read, Grep and Bash: credfile-guard denies reads of credential files and of any file containing a private-key header, and asks about .env-style files. PreToolUse on Bash and GitHub MCP tools: publish-guard denies gh issue/pr/release/gist, gh api body, git commit and GitHub MCP writes that contain credentials (git push is not covered). PreToolUse on Bash: outbound-guard denies (or asks about) commands that send credential material to a remote host by reference: a credential file given to curl, wget, HTTPie, nc, scp or rsync, or the whole environment piped into a client. UserPromptSubmit: userpromptsubmit-guard adds a note when your own prompt contains a secret; advisory only, the prompt is not changed. See guards/README.md and docs/HOOKS.md.",
   "hooks": {
     "SessionStart": [
       {
@@ -69,6 +69,17 @@
             "command": "bash",
             "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/publish-guard.sh"],
             "timeout": 40
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/outbound-guard.sh"],
+            "timeout": 15
           }
         ]
       }

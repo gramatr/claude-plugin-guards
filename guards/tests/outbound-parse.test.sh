@@ -25,6 +25,7 @@
 # corpus file holds only placeholders. Needs bash and an awk.
 
 set -uo pipefail
+export LC_ALL=C   # byte-oriented, and bash 3.2 plus the BSD tools take ten times longer in a UTF-8 locale (15 s against 159 s on a Mac)
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS="$HERE/../hooks"
 AWKBIN="${AWKBIN:-awk}"; export AWKBIN
