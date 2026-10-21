@@ -28,17 +28,12 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 T="$(cd "$T" && pwd -P)"   # macOS mktemp lives under a symlinked /var
 
-# PATH without realpath (the rest of PATH is unchanged).
+# A `realpath` that fails the way macOS's does for -m (the hooks then take the bash
+# walk). A one-file stub in front of PATH: copying every tool on PATH just to leave
+# one out takes minutes on a machine with a big PATH and slow process launches.
 NOREAL="$T/noreal"; mkdir -p "$NOREAL"
-IFS=: read -ra dirs <<< "$PATH"
-for d in "${dirs[@]}"; do
-  [ -d "$d" ] || continue
-  for f in "$d"/*; do
-    n="${f##*/}"
-    [ "$n" = realpath ] && continue
-    [ -e "$NOREAL/$n" ] || ln -s "$f" "$NOREAL/$n" 2> /dev/null
-  done
-done
+printf '#!/bin/sh\necho "realpath: illegal option -- m" >&2\nexit 1\n' > "$NOREAL/realpath"; chmod +x "$NOREAL/realpath"
+NOREAL_PATH="$NOREAL:$PATH"
 
 # --- 1. the resolver on a real tree -----------------------------------------
 mkdir -p "$T/real/dir" "$T/real/dir2" "$T/links"
@@ -110,7 +105,7 @@ decision() { # decision FILE -> the permissionDecision in the hook output, or "a
 }
 cred() { # cred PATH  -> the permissionDecision, or "allow"
   printf '{"tool_name":"Read","permission_mode":"default","cwd":"%s/proj","tool_input":{"file_path":"%s"}}' "$H" "$1" \
-    | env PATH="$NOREAL" HOME="$H" "$BASH_BIN" "$HOOKS/credfile-guard.sh" 2> /dev/null > "$T/hook.out"
+    | env PATH="$NOREAL_PATH" HOME="$H" "$BASH_BIN" "$HOOKS/credfile-guard.sh" 2> /dev/null > "$T/hook.out"
   decision "$T/hook.out"
 }
 check "credfile-guard, no realpath: direct path" "deny" "$(cred "$H/.aws/credentials")"
