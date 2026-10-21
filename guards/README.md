@@ -81,6 +81,14 @@ Prerequisites:
 - For the injection finding only: a Hugging Face token whose account has
   accepted the Llama Prompt Guard 2 license (below).
 
+In Claude Code 2.1.275 or later, one step:
+
+```
+/plugin install guards --marketplace gramatr/claude-plugin-guards
+```
+
+Or in two steps, from a terminal:
+
 ```
 claude plugin marketplace add gramatr/claude-plugin-guards
 claude plugin install guards

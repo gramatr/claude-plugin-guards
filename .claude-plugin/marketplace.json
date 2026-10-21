@@ -10,7 +10,10 @@
     {
       "name": "guards",
       "source": "./guards",
-      "description": "Seven hooks and an MCP scan tool for secret, PII and injection detection — see guards/README.md and docs/."
+      "description": "Eight hooks and an MCP scan tool for secret, PII and injection detection — see guards/README.md and docs/.",
+      "license": "MIT",
+      "homepage": "https://github.com/gramatr/claude-plugin-guards",
+      "repository": "https://github.com/gramatr/claude-plugin-guards"
     }
   ]
 }

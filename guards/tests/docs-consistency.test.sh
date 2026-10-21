@@ -87,5 +87,20 @@ neg_fail=$((fail - before_fail))
 fail=$before_fail   # the control's failures are expected; count only whether it caught them
 if [ "$neg_fail" -ge 4 ]; then ok; else bad "negative control: the checks caught only $neg_fail of the 4 planted drifts"; fi
 
+# The marketplace front page and license (a reader of the marketplace sees the repo root, an
+# installer gets only guards/): README at the root, the same MIT text in both places, the
+# license named in the manifest, and no version field in the manifest (installs track main and
+# are identified by commit; see docs/TRADEOFFS.md).
+[ -s "$REPO/README.md" ] && ok || bad "the repository root has a README.md"
+grep -q 'LICENSE' "$REPO/README.md" && ok || bad "the root README points at the license"
+grep -q '^MIT License' "$REPO/LICENSE" && ok || bad "LICENSE is the MIT text"
+if grep -q -E '^(---|This license covers)' "$REPO/LICENSE"; then bad "LICENSE holds only the license text (notes belong in NOTICE, or GitHub reports 'other')"; else ok; fi
+cmp -s "$REPO/LICENSE" "$REPO/guards/LICENSE" && ok || bad "guards/LICENSE equals LICENSE, so the installed plugin carries the license"
+cmp -s "$REPO/NOTICE" "$REPO/guards/NOTICE" && ok || bad "guards/NOTICE equals NOTICE"
+if command -v jq > /dev/null 2>&1; then
+  [ "$(jq -r '.plugins[0].license // ""' "$REPO/.claude-plugin/marketplace.json")" = MIT ] && ok || bad "marketplace.json names the plugin license"
+  [ "$(jq -r '[.. | objects | select(has("version"))] | length' "$REPO/.claude-plugin/marketplace.json")" = 0 ] && ok || bad "marketplace.json has no version field"
+fi
+
 echo "docs-consistency: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
