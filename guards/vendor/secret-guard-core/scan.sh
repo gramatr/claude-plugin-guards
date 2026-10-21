@@ -162,6 +162,37 @@ ctx_describes_secret() {
   return 1
 }
 
+# ctx_dependency_spec KEY VAL BEFORE: a dependency line, not a credential.
+# `"@scope/credentials-lifecycle": "^0.2.0"` in a package.json (or the same in YAML) names a package that
+# happens to contain a credential word; its value is a version specifier. The context rule keyed on the
+# word and redacted the version, on every commit that touched the file. Skipped only when BOTH hold:
+#   - the key is a package-name segment (lowercase letters, digits, dots, hyphens; an underscore makes it a
+#     config key, not a package), and
+#   - the value is a version specifier: an operator-prefixed semver range (^0.2.0, ~1.4.2, >=0.2.0 <1.0.0),
+#     a protocol (workspace:*, link:, file:, portal:, catalog:, npm:), or, only for a scoped package
+#     (BEFORE ends in @scope/), a bare three-part version.
+# A password that is exactly a caret range, or a scoped package-shaped key holding a bare 3-part version, is
+# the accepted residual; "password": "1.2.3.4", client_secret: ^0.2.0 and any non-version value still redact.
+ctx_dependency_spec() {
+  local k="$1" v="$2" before="$3" nc=0 rc=1
+  local ver='v?[0-9]+(\.([0-9]+|[xX*]))*(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+  local range="^[~^<>=]+[[:space:]]*${ver}([[:space:]]+(\|\|[[:space:]]*)?[~^<>=]*[[:space:]]*${ver})*\$"
+  local proto='^(workspace|link|file|portal|catalog|npm):[^[:space:]]+$'
+  local bare='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+  local pkg='^[a-z0-9][a-z0-9.-]*$' scoped='@[a-z0-9._-]+/$'
+  shopt -q nocasematch && nc=1
+  shopt -u nocasematch
+  if [[ "$k" =~ $pkg ]]; then
+    if [[ "$v" =~ $range ]] || [[ "$v" =~ $proto ]]; then
+      rc=0
+    elif [[ "$before" =~ $scoped ]] && [[ "$v" =~ $bare ]]; then
+      rc=0
+    fi
+  fi
+  [ "$nc" = 1 ] && shopt -s nocasematch
+  return $rc
+}
+
 # ctx_code_shape KEY BEFORE PFX VAL AFTER: an UNQUOTED value that is source
 # code, not a credential: a call (getToken(ctx)), an identifier or member chain
 # (accessToken, this.cfg.apiToken), or a type (string, Promise<Token>), on a
@@ -299,6 +330,7 @@ ctx_redact() {
       fi
     fi
     if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
+      || { [ -n "$key" ] && ctx_dependency_spec "$key" "$val" "$out$pre"; } \
       || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
