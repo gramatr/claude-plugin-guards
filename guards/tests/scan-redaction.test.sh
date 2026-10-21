@@ -60,8 +60,8 @@ for key in ec p8; do
   grep -v -- '-----' "$T/$key.pem" > "$T/body.txt"
   cp "$T/$key.pem" "$T/in_plain.txt"
   jq -n --rawfile k "$T/$key.pem" '{private_key: $k}' > "$T/in_json.txt"
-  sed 's/$/\r/' "$T/$key.pem" > "$T/in_crlf.txt"
-  head -n -1 "$T/$key.pem" > "$T/in_trunc.txt"
+  awk '{ printf "%s\r\n", $0 }' "$T/$key.pem" > "$T/in_crlf.txt"   # not sed 's/$/\r/': BSD sed has no \r
+  sed '$d' "$T/$key.pem" > "$T/in_trunc.txt"   # drop the END line; not head -n -1: BSD head rejects a negative count
   check "$key plain"          "$T/in_plain.txt"
   check "$key json-escaped"   "$T/in_json.txt"
   check "$key crlf"           "$T/in_crlf.txt"
@@ -83,7 +83,7 @@ ctx "dsn redis"         'redis://:Tq7vN2xLm9Kd4RzP8wYb@cache.internal:6379/0'   
 ctx "env punctuation"   'DB_PASSWORD=Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'                         'Xk9mQ4vT2p@Lw8RzN5bJc7Hd3'
 ctx "json punctuation"  '{"secretKey": "Qm4*Xw9%tL2!pR7=zN3^vB8", "user": "bob"}'       'Qm4*Xw9%tL2!pR7=zN3^vB8'
 ctx "bearer header"     'Authorization: Bearer Tq7vN2xLm9Kd4RzP8wYb'                    'Tq7vN2xLm9Kd4RzP8wYb'
-B64DSN="$(printf 'postgresql://svc:Tq7vN2xLm9Kd4RzP8wYb@db.internal:5432/app' | base64 -w0)"
+B64DSN="$(printf 'postgresql://svc:Tq7vN2xLm9Kd4RzP8wYb@db.internal:5432/app' | base64 | tr -d '\n')"   # not base64 -w0: BSD base64 has no -w
 ctx "base64 DSN under a plain key" "{\"conn\": \"$B64DSN\"}" "$B64DSN"
 # Harmless lookalikes stay byte-identical.
 # /usr/bin exists on the host AND inside the scan image (SCAN_IMAGE mode), unlike $HOME.
