@@ -113,7 +113,7 @@ are listed so you know what a hook is doing.
 | Path | Purpose |
 |---|---|
 | `~/.config/gramatr-guards/injection-guard.env` | Container env file; put `HF_TOKEN=...` here. Created empty with mode 0600 if missing. |
-| `~/.local/share/gramatr-guards/metrics/` | Metrics volume, mounted at `/app/metrics` in the container. Created `chmod 777`. |
+| `~/.local/share/gramatr-guards/metrics/` | Metrics volume, mounted at `/app/metrics` in the container. Mode 0700 when your uid is 1000 (the container's uid), 0700 plus an ACL entry for uid 1000 when `setfacl` is installed, otherwise 0777 with a warning (none on macOS). An older install's 0777 directory is tightened on the next session start; its files are kept. |
 | `~/.local/share/gramatr-guards/selfheal.lock` | Lock so two session starts do not reconcile the stack at once. |
 | `~/.local/bin/gitleaks` | Where a missing gitleaks (v8.30.1) is installed. |
 

@@ -200,8 +200,9 @@ the redaction regression test inside it and to scan it.
 `bin/guards-selfheal.sh` is idempotent and always exits 0. It installs gitleaks
 if missing; compares the installed plugin commit with `main` (a note appears in
 the session if it is behind); and, if Docker is usable, takes a lock, creates
-the env file and the metrics directory (`chmod 777`, so the container's
-non-root user can write), removes only provably stale containers holding port
+the env file and the metrics directory (mode 0700 when your uid is 1000, the
+container's uid; 0700 plus an ACL entry for uid 1000 when `setfacl` exists; else
+0777 with a warning, so the container's non-root user can write), removes only provably stale containers holding port
 8700 (an image of this project whose compose file lives under the plugin
 cache), pulls the image (240 s limit), runs `docker compose up -d` and polls
 `/health` for up to 30 s. A version change of the running image is reported to

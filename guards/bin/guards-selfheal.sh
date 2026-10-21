@@ -335,6 +335,33 @@ reconcile_port_8700() {
   done
 }
 
+# secure_metrics_dir: make the metrics bind mount private to this user while the container
+# (fixed uid 1000) can still write to it. The directory only ever holds verdict lines (no
+# scanned text), but a world-writable directory in a home lets any local user read the history,
+# fill or replace the log, or plant a symlink for the container's next write to follow (#92).
+#   - host uid 1000 (the common case): mode 0700; the container is the same user.
+#   - another uid with setfacl: mode 0700 plus an ACL entry for uid 1000 (and the mask kept open).
+#   - otherwise (no ACLs, or Docker Desktop on macOS): the previous mode 0777, with a warning
+#     except on macOS, where Docker Desktop maps the owner and the mode does not matter.
+# An older install's 0777 directory is tightened on the next session start; the files are kept.
+secure_metrics_dir() {
+  local uid; uid="$(id -u 2>/dev/null)"
+  if [ "$uid" = 1000 ]; then
+    chmod 700 "$METRICS_DIR" 2>/dev/null
+    return
+  fi
+  if command -v setfacl >/dev/null 2>&1 \
+    && chmod 700 "$METRICS_DIR" 2>/dev/null \
+    && setfacl -m u:1000:rwx,m::rwx "$METRICS_DIR" 2>/dev/null \
+    && setfacl -d -m u:1000:rwx "$METRICS_DIR" 2>/dev/null; then
+    return 0
+  fi
+  chmod 777 "$METRICS_DIR" 2>/dev/null || return 1
+  [ "$(uname -s 2>/dev/null)" = Darwin ] \
+    || log "WARNING: $METRICS_DIR is world-writable (mode 0777): this user is not uid 1000 and setfacl is not available, so the container (uid 1000) could not write to a private directory. It holds only verdict lines, no scanned text. Install the acl package (setfacl) to make it private."
+  return 0
+}
+
 ensure_docker_stack() {
   # guards-unified runs as a non-root user (fixed UID/GID 1000) as of
   # that repo's own fix for this exact problem -- a bind-mounted directory Docker
@@ -355,7 +382,7 @@ ensure_docker_stack() {
   # whole top-level directory fixes every level under it in one shot,
   # so the guidance targets that, not just the leaf.
   GRAMATR_GUARDS_DIR="$HOME/.local/share/gramatr-guards"
-  if ! mkdir -p "$METRICS_DIR" 2>/dev/null || ! chmod 777 "$METRICS_DIR" 2>/dev/null; then
+  if ! mkdir -p "$METRICS_DIR" 2>/dev/null || ! secure_metrics_dir; then
     log "WARNING: $GRAMATR_GUARDS_DIR (or a parent of it) isn't owned by this user — likely left over from an older guards-unified image that ran as root. Metrics will silently fail to write until you fix this. Run: sudo chown -R \$(whoami) $GRAMATR_GUARDS_DIR"
   fi
 
