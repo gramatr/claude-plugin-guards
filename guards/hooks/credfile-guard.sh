@@ -32,9 +32,10 @@
 #   less, sed, awk, grep, base64, xxd, strings, python ... ) AND name a
 #   sensitive path are denied. `ssh -i ~/.ssh/id_ed25519 host`,
 #   `ssh-keygen -l -f key` and `age -d -i key file` use the key without
-#   printing it and are allowed: a key named as the identity / key-file of
-#   age, rage, ssh, scp, sftp or ssh-keygen is not counted as a read, even
-#   if a reader word (a cat of some other file) is elsewhere on the line.
+#   printing it and are allowed: a credential handed to a tool listed in
+#   cred-use-registry.tsv (age -i, ssh -i, kubectl --kubeconfig, openssl
+#   -sign, ...) is not counted as a read, even if a reader word (a cat of
+#   some other file, a trailing | head) is elsewhere on the line.
 #   GUARDS_CRED_IDENTITY_USE=0 turns that off.
 #
 # KNOWN LIMITS (documented, not hidden)
@@ -168,27 +169,20 @@ case "$TOOL_NAME" in
     # Only commands that print file content are in scope.
     READERS='(^|[^A-Za-z0-9_./-])(cat|tac|nl|head|tail|less|more|bat|batcat|sed|awk|gawk|grep|egrep|fgrep|rg|ag|xxd|od|hexdump|strings|base64|cut|paste|diff|cmp|python3?|perl|ruby|node)([^A-Za-z0-9_-]|$)'
     printf '%s' "$CMD" | grep -qE -e "$READERS" || exit 0
-    # A key named as the identity / key-file of a tool that only USES it (age -i KEY,
-    # ssh -i KEY, ssh-keygen -f KEY) is not a read: drop that flag and its value before
-    # looking for sensitive paths, so a reader word elsewhere on the line (a cat of some
-    # other file in another $(...)) does not make the use look like a read. Only when the
-    # tool word and the flag are in the same simple command (no | ; & $( ) or backtick
-    # between them); any other mention of the key on the line still counts. If sed fails
-    # the line is scanned as written. GUARDS_CRED_IDENTITY_USE=0 turns this off.
+    # A credential handed to a tool that only USES it (age -i KEY, ssh -i KEY, kubectl --kubeconfig P,
+    # openssl dgst -sign KEY ...) is not a read: drop it from the line before looking for sensitive
+    # paths, so a reader word elsewhere on the line (a cat of some other file, a trailing | head) does
+    # not make the use look like a read. The rules are data, cred-use-registry.tsv (columns documented
+    # there), applied by cred-use-strip.awk to one simple command at a time (no | ; & ( ) or backtick
+    # between the tool word and the flag). Any other mention of the credential on the line still counts.
+    # A missing registry, a missing awk script or an awk failure leaves the line as written, so the
+    # fallback only ever denies more. GUARDS_CRED_IDENTITY_USE=0 turns the exemption off.
     SCAN="$CMD"
     if [ "${GUARDS_CRED_IDENTITY_USE:-1}" != 0 ]; then
-      PRE='(^|[^A-Za-z0-9_./-])'
-      GAP='([[:space:]]+[^|;&$()`]*)?'
-      i=0
-      while [ "$i" -lt 4 ]; do
-        i=$((i + 1))
-        stripped="$(printf '%s' "$SCAN" | sed -E \
-          -e "s/${PRE}(age|rage)${GAP}[[:space:]](-i|--identity)([[:space:]]+|=)[^[:space:]]+/\\1\\2\\3 /g" \
-          -e "s/${PRE}(ssh|scp|sftp)${GAP}[[:space:]]-i[[:space:]]+[^[:space:]]+/\\1\\2\\3 /g" \
-          -e "s/${PRE}(ssh-keygen)${GAP}[[:space:]]-f[[:space:]]+[^[:space:]]+/\\1\\2\\3 /g" 2>/dev/null)" || break
-        [ -n "$stripped" ] && [ "$stripped" != "$SCAN" ] || break
-        SCAN="$stripped"
-      done
+      HOOKDIR="$(dirname "${BASH_SOURCE[0]}")"
+      if [ -r "$HOOKDIR/cred-use-registry.tsv" ] && [ -r "$HOOKDIR/cred-use-strip.awk" ]; then
+        stripped="$(printf '%s' "$CMD" | awk -v reg="$HOOKDIR/cred-use-registry.tsv" -f "$HOOKDIR/cred-use-strip.awk" 2>/dev/null)" && [ -n "$stripped" ] && SCAN="$stripped"
+      fi
     fi
     # Tokenise on whitespace and shell metacharacters, then check each
     # path-looking token (globs expanded, capped to keep this fast).

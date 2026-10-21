@@ -45,6 +45,11 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   paths a command or tool names. A script that reads a key, a path held in a
   variable, or `eval` is not caught. A `Grep` over a whole directory is checked
   by directory and glob name only.
+- **A tool with no row in the use-only registry is still denied beside a reader word.** The credential-file
+  guard drops a credential handed to a tool in `guards/hooks/cred-use-registry.tsv` before it looks for sensitive
+  paths; for any other tool (`sops`, `op`, `gpg`, a script) a reader word and a sensitive path on the same line
+  is a deny, and a listing such as `ls ~/.ssh | head` is too. Each row exists only where the tool was run against
+  a throwaway credential and did not print it. Rows can be added with a canary; see the header of that file.
 - **Only Claude Code sessions with the plugin installed** are covered, not a
   terminal outside Claude Code.
 
