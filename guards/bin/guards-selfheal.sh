@@ -360,12 +360,13 @@ ensure_docker_stack() {
   fi
 
   if [ ! -f "$ENV_FILE" ]; then
-    # guards-unified's injection finding needs HF_TOKEN to load its
-    # model; the secret/PII findings don't. Create the file empty
-    # (0600) so the stack can still start — injection classification
-    # fails at runtime with its own clear missing-token error, which is
-    # the correct "fail visibly, don't block everything else" shape.
-    log "WARNING: $ENV_FILE not found — injection detection needs HF_TOKEN=<your Hugging Face token, with the Llama Prompt Guard 2 gated license accepted> in that file. This cannot be automated. Creating it empty so the rest of the stack can still start; injection classification will fail open until you add a real token and restart."
+    # guards-unified loads its injection model at startup and exits if it
+    # cannot (a 401 without HF_TOKEN), so without a token the service
+    # does not run and PII and injection detection are unavailable;
+    # secret detection continues through the hooks' local fallback.
+    # Create the file empty (0600) so the compose file has something to
+    # read, and say so plainly.
+    log "WARNING: $ENV_FILE not found — without HF_TOKEN=<your Hugging Face token, with the Llama Prompt Guard 2 gated license accepted> in that file the guards-unified service cannot start (it loads the injection model at startup), so PII and injection detection are unavailable; secret detection continues through the local fallback. This cannot be automated. Creating the file empty (0600); add a real token and re-run self-heal or restart the container."
     mkdir -p "$(dirname "$ENV_FILE")"
     touch "$ENV_FILE"
     chmod 600 "$ENV_FILE"
