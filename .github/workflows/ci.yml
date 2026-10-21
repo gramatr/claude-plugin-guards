@@ -166,6 +166,15 @@ jobs:
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || exit 1
           done
+      - name: TEMP diagnose combined-hook slow case
+        if: always()
+        run: |
+          set +e
+          /bin/bash -x guards/tests/combined-hook.test.sh > /tmp/ch.trace 2>&1
+          grep -n "^FAIL" /tmp/ch.trace | head
+          n=$(grep -n "^FAIL: secret redacted even though" /tmp/ch.trace | head -1 | cut -d: -f1)
+          echo "--- trace before the first slow-case failure"; sed -n "$((n-60)),${n}p" /tmp/ch.trace | cut -c1-220
+          exit 0
 
   scan-sh-drift:
     runs-on: ubuntu-latest
