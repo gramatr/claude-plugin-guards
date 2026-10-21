@@ -50,6 +50,63 @@ IMAGE_UPDATE_NOTE=""
 # just in the fallback path. ---
 GITLEAKS_VERSION="8.30.1"
 
+# The patched build (issue #55). guards-unified publishes standalone gitleaks binaries built
+# from the same recipe as the image's gitleaks (patched Go modules; the upstream release binary
+# bundles modules with known HIGH CVEs). The binary is checked against SHA-256 values THIS
+# repository carries (vendor/secret-guard-core/gitleaks-assets.sha256, kept equal to
+# guards-unified's docs/gitleaks-assets.sha256 by a CI check), not against a checksum served
+# beside the download, so a tampered release page cannot pass. Any failure returns non-zero
+# and the caller falls back to the upstream binary with a warning.
+GITLEAKS_ASSETS_URL="${GUARDS_GITLEAKS_ASSETS_URL:-https://github.com/gramatr/guards-unified/releases/latest/download}"
+GITLEAKS_ASSETS_SHA="${GUARDS_GITLEAKS_ASSETS_SHA:-$GUARDS_ROOT/vendor/secret-guard-core/gitleaks-assets.sha256}"
+
+file_sha256() { # file_sha256 FILE -> hash on stdout (macOS has no sha256sum by default)
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" 2>/dev/null | awk '{print $1}'
+  else
+    shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+# _install_patched_in TMP OS ARCH INSTALL_DIR -- no traps, so the caller removes TMP.
+_install_patched_in() {
+  local tmp="$1" os="$2" arch="$3" install_dir="$4" want got name
+  if [ ! -r "$GITLEAKS_ASSETS_SHA" ]; then
+    log "patched gitleaks: hash file $GITLEAKS_ASSETS_SHA is missing"
+    return 1
+  fi
+  want="$(grep -v '^[[:space:]]*#' "$GITLEAKS_ASSETS_SHA" | awk -v k="${os}_${arch}" '$2 == k {print $1}')"
+  if [ -z "$want" ]; then
+    log "patched gitleaks: no recorded hash for ${os}_${arch}"
+    return 1
+  fi
+  name="gitleaks-patched_${GITLEAKS_VERSION}_${os}_${arch}.tar.gz"
+  if ! curl -fsSL -m 60 -o "$tmp/$name" "${GITLEAKS_ASSETS_URL}/${name}" 2>/dev/null; then
+    log "patched gitleaks: ${name} is not available from ${GITLEAKS_ASSETS_URL}"
+    return 1
+  fi
+  if ! tar -xzf "$tmp/$name" -C "$tmp" gitleaks 2>/dev/null || [ ! -f "$tmp/gitleaks" ] || [ -L "$tmp/gitleaks" ]; then
+    log "patched gitleaks: ${name} did not contain a plain gitleaks file"
+    return 1
+  fi
+  got="$(file_sha256 "$tmp/gitleaks")"
+  if [ "$got" != "$want" ]; then
+    log "WARNING: patched gitleaks ${os}_${arch} does not match the hash this plugin carries (expected ${want}, got '${got}') — not installing it."
+    return 1
+  fi
+  mkdir -p "$install_dir" && mv "$tmp/gitleaks" "$install_dir/gitleaks" && chmod +x "$install_dir/gitleaks" || return 1
+  return 0
+}
+
+install_patched_gitleaks() { # install_patched_gitleaks OS ARCH INSTALL_DIR
+  local tmp rc
+  tmp="$(mktemp -d)" || return 1
+  _install_patched_in "$tmp" "$1" "$2" "$3"
+  rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
 ensure_gitleaks() {
   if command -v gitleaks >/dev/null 2>&1; then
     return 0
@@ -68,6 +125,15 @@ ensure_gitleaks() {
   esac
 
   local install_dir="$HOME/.local/bin"
+  if install_patched_gitleaks "$os" "$arch" "$install_dir"; then
+    if command -v gitleaks >/dev/null 2>&1; then
+      log "Installed patched gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks."
+    else
+      log "Installed patched gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks, but $install_dir isn't on this shell's PATH yet — add it (e.g. export PATH=\"\$HOME/.local/bin:\$PATH\" in your shell profile) for combined-hook.sh's fallback scan to actually find it."
+    fi
+    return 0
+  fi
+  log "WARNING: the patched gitleaks could not be installed; falling back to the upstream v${GITLEAKS_VERSION} release, which bundles Go modules with known HIGH CVEs."
   local base="gitleaks_${GITLEAKS_VERSION}_${os}_${arch}"
   local tmp
   tmp="$(mktemp -d)"
@@ -106,9 +172,9 @@ ensure_gitleaks() {
   chmod +x "$install_dir/gitleaks"
 
   if command -v gitleaks >/dev/null 2>&1; then
-    log "Installed gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks."
+    log "Installed UPSTREAM (unpatched) gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks."
   else
-    log "Installed gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks, but $install_dir isn't on this shell's PATH yet — add it (e.g. export PATH=\"\$HOME/.local/bin:\$PATH\" in your shell profile) for combined-hook.sh's fallback scan to actually find it."
+    log "Installed UPSTREAM (unpatched) gitleaks v${GITLEAKS_VERSION} to $install_dir/gitleaks, but $install_dir isn't on this shell's PATH yet — add it (e.g. export PATH=\"\$HOME/.local/bin:\$PATH\" in your shell profile) for combined-hook.sh's fallback scan to actually find it."
   fi
 }
 

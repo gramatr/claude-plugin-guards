@@ -1,0 +1,12 @@
+# SHA-256 of the standalone patched gitleaks binaries (issue #55), one per OS and architecture.
+# Built by `bash tests/gitleaks_assets.sh build` from Dockerfile.cpu's gitleaks stage: the pinned
+# gitleaks commit, patched Go modules, pinned Go image. The build is reproducible; the Publish
+# workflow fails if its binaries do not hash to these values. claude-plugin-guards carries a copy
+# (guards/vendor/secret-guard-core/gitleaks-assets.sha256) that its self-heal script checks a
+# download against, and a CI check keeps the copy equal to this file.
+# Change the recipe, the Go image, a module version or the gitleaks commit: regenerate this file in
+# the same change (build, then copy gitleaks-patched_<ver>_binary-sha256.txt over the lines below).
+3b4e2ac1f8393e565be4ceae24b66f21aaa1933cb4138291813ce4603c840406  darwin_x64
+9192b1066064adce90f26fa0fc712be9cb7556a686e44a12cf9071ee30140f9e  darwin_arm64
+a1e3941f4ce3b44722076aeca89795800564608d7db45c0c565e4977ed87a8d0  linux_x64
+b84b96d8d494b8a8ca289a8a6ef94ed88de09a1866f9fce7e7516b205fd32d41  linux_arm64
