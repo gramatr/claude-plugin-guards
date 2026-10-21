@@ -107,5 +107,11 @@ grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'decr
 grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'rewrite' && ok || bad "CONFIGURATION.md says ssh-keygen -p can rewrite a key"
 grep -q 'exempts the credential, not the tool' "$REPO/docs/LIMITS.md" && ok || bad "LIMITS.md states the limits of the use-only registry"
 
+# Without a Hugging Face token the service does not start (coordination#93): no doc may say PII keeps working.
+if grep -rn -i -E 'secret and PII findings work normally|the stack can still start|only the injection finding' "$REPO/guards/README.md" "$REPO/guards/docker/docker-compose.yml" "$REPO/guards/bin/guards-selfheal.sh" "$REPO/docs" > /dev/null; then
+  bad "a doc says the service runs and PII works without an HF_TOKEN"
+else ok; fi
+grep -q 'does not start' "$REPO/guards/README.md" && ok || bad "the README says the service does not start without a token"
+
 echo "docs-consistency: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

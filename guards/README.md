@@ -103,9 +103,14 @@ The injection finding needs a Hugging Face token that has accepted Llama
 Prompt Guard 2's gated license. Accepting someone else's license is a manual,
 per-user step, so it cannot be automated. Put `HF_TOKEN=<your token>` in
 `~/.config/gramatr-guards/injection-guard.env`. The self-heal script creates
-that file empty (mode 0600) if it is missing and warns. Without a token the
-secret and PII findings work normally and the injection finding does not
-(the model cannot load).
+that file empty (mode 0600) if it is missing and warns. **Without a token the
+guards-unified service does not start**: it loads both models at startup and
+exits if the injection model cannot be downloaded ("gated repo ... 401"). The
+compose file restarts it, so it loops. While it is down, PII and injection
+detection are unavailable, and secret detection continues through the plugin's
+local fallback (`scan.sh`) with the notices described in
+[`docs/HOOKS.md`](../docs/HOOKS.md). Measured with the published `v0.2.9` image
+on 2026-10-21; tracked as gramatr/guards-coordination#93.
 
 ### Stopping and uninstalling
 

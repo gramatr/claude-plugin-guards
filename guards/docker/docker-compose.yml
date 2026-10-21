@@ -28,9 +28,11 @@ services:
       # Must contain HF_TOKEN=<token with the Llama Prompt Guard 2
       # gated license accepted> — see guards-unified's own README,
       # "The HF_TOKEN problem." Not committed; guards-selfheal.sh
-      # creates this file empty (0600) if missing rather than fail the
-      # whole stack over one optional capability — the secret/PII
-      # findings don't need it, only the injection finding does.
+      # creates this file empty (0600) if missing and warns. Without a
+      # token the guards-unified service does NOT start (it loads the
+      # injection model at startup and exits on the 401), so PII and
+      # injection detection are unavailable until a token is added; secret
+      # detection continues through the hooks' local fallback.
       - ${HOME}/.config/gramatr-guards/injection-guard.env
     volumes:
       # Local-only metrics — one JSON line per finding (timestamp,
