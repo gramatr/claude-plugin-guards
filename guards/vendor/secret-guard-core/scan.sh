@@ -28,9 +28,18 @@
 
 set -uo pipefail
 
-INPUT_FILE="$(mktemp)"
-REPORT_FILE="$(mktemp)"
-trap 'rm -f "$INPUT_FILE" "$REPORT_FILE"' EXIT
+# A private directory with FIXED, plain names. gitleaks decides that a file is an
+# archive from its NAME and then scans nothing: a file named like tmp.7zAbCdEfGh,
+# tmp.xzAbCdEfGh, tmp.brAbCdEfGh, tmp.gz..., tmp.zip..., tmp.tar... is skipped with
+# "scanned ~0 bytes", "no leaks found" and exit 0. A random mktemp suffix hit one of
+# those prefixes in about 1 scan in 125, so a vendor token was silently left in the
+# text that often (the deterministic passes below were not affected). That is the
+# intermittent miss the private-key pass below was added to work around.
+WORK_DIR="$(mktemp -d)"
+INPUT_FILE="$WORK_DIR/input.txt"
+REPORT_FILE="$WORK_DIR/report.json"
+GL_ERR="$WORK_DIR/gitleaks.err"   # gitleaks' stderr: tells "scanned nothing" from "found nothing"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 cat > "$INPUT_FILE"
 
@@ -568,16 +577,32 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# One retry if gitleaks itself errors, so a transient failure is not
-# silently read as "no secrets". Its stderr is kept to the log line only.
+# Retry if gitleaks itself errors, so a transient failure is not silently read
+# as "no secrets". Its stderr goes to a file, not to ours.
+#
+# Also a failure: gitleaks (8.30.1 seen) reports success after scanning ZERO bytes of
+# a non-empty file ("scanned ~0 bytes (0)", "no leaks found", empty report, exit 0).
+# The file name above is the cause we know; if it ever happens for another reason,
+# read as clean it would let a vendor token through with nothing on stderr, so a
+# scan that read nothing is retried and, failing that, said out loud.
 run_gitleaks() {
-  gitleaks detect --no-git -s "$INPUT_FILE" --report-format json --report-path "$REPORT_FILE" --exit-code 0 >/dev/null 2>&1
-}
-if ! run_gitleaks; then
-  echo "secret-guard: gitleaks exited non-zero, retrying once" >&2
   : > "$REPORT_FILE"
-  run_gitleaks || echo "secret-guard: gitleaks failed twice; relying on the private-key pass only" >&2
-fi
+  gitleaks detect --no-git -s "$INPUT_FILE" --report-format json --report-path "$REPORT_FILE" --exit-code 0 >/dev/null 2>"$GL_ERR" || return 1
+  if [ -s "$INPUT_FILE" ] && grep -q 'scanned ~0 bytes' "$GL_ERR" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+GL_TRIES=0
+until run_gitleaks; do
+  GL_TRIES=$((GL_TRIES + 1))
+  if [ "$GL_TRIES" -ge 3 ]; then
+    echo "secret-guard: gitleaks failed 3 times or scanned nothing; relying on the other passes only" >&2
+    : > "$REPORT_FILE"
+    break
+  fi
+  echo "secret-guard: gitleaks exited non-zero or scanned nothing, retrying" >&2
+done
 
 # gitleaks' generic-api-key rule reads any "secret_*"/"token_*" key with a
 # quoted value as a credential, including a key that only names an identifier
@@ -631,9 +656,8 @@ TEXT="$PEM_TEXT"
 #
 # Secrets are NUL-delimited, not newline-delimited: a multi-line secret
 # (a PEM block) must be replaced as ONE unit, not as its lines.
-SECRETS_FILE="$(mktemp)"
-FRAGMENTS_FILE="$(mktemp)"
-trap 'rm -f "$INPUT_FILE" "$REPORT_FILE" "$SECRETS_FILE" "$FRAGMENTS_FILE"' EXIT
+SECRETS_FILE="$WORK_DIR/secrets.nul"
+FRAGMENTS_FILE="$WORK_DIR/fragments.nul"
 
 jq -j '[.[] | .Secret // empty] | unique | sort_by(-length) | .[] | (., "\u0000")' \
   "$REPORT_FILE" > "$SECRETS_FILE"
