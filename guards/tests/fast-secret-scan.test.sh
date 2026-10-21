@@ -36,6 +36,15 @@ start_stub() { # start_stub MODE -> prints port
   python3 -I - "$1" "$T/port.$1" >/dev/null 2>&1 <<'PY' &
 import json, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Quiet(HTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
 mode, portfile = sys.argv[1], sys.argv[2]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -58,7 +67,7 @@ class H(BaseHTTPRequestHandler):
         data = json.dumps(out).encode()
         self.send_response(code); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
-s = HTTPServer(("127.0.0.1", 0), H)
+s = Quiet(("127.0.0.1", 0), H)
 open(portfile, "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
