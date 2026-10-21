@@ -187,6 +187,33 @@ expect allow "Glob not inspected"                 Glob '{"pattern":"**/*.pem"}'
 # --- override ---
 GUARDS_ALLOW_CRED_READ=1 expect allow "override env allows read" Read "$(read_in "$HOME/.ssh/id_rsa")"
 
+# --- GUARDS_ALLOW_CRED_PATHS: exact paths allowed, set in the launch environment ---
+ln -s "$HOME/.ssh/id_rsa" "$HOME/proj/linked-key"
+printf 'KEY=other\n' > "$HOME/proj/sibling.env"
+AP="GUARDS_ALLOW_CRED_PATHS"
+for m in default acceptEdits plan auto bypassPermissions dontAsk; do
+  MODE="$m"
+  expect allow "[$m] listed .env allows Read"           Read "$(read_in "$HOME/proj/.env")" "$AP=$HOME/proj/.env"
+  expect allow "[$m] listed key allows Read"            Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/.ssh/id_rsa"
+  expect allow "[$m] listed key allows Grep path"       Grep "$(grep_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/.ssh/id_rsa"
+  expect allow "[$m] listed key allows Bash cat"        Bash "$(bash_in "cat $HOME/.ssh/id_rsa")" "$AP=$HOME/.ssh/id_rsa"
+  expect deny  "[$m] unlisted sibling key still denies" Read "$(read_in "$HOME/.ssh/id_ed25519")" "$AP=$HOME/.ssh/id_rsa"
+done
+MODE="default"
+expect allow "second entry of a list allows"          Read "$(read_in "$HOME/.aws/credentials")" "$AP=$HOME/nope:$HOME/.aws/credentials"
+expect deny  "the variable typed before the command still denies" Bash "$(bash_in "$AP=$HOME/.ssh/id_rsa cat $HOME/.ssh/id_rsa")"
+expect ask   "a listed .env does not allow another .env" Read "$(read_in "$HOME/proj/sibling.env")" "$AP=$HOME/proj/.env"
+expect deny  "a glob entry is ignored"                Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/.ssh/*"
+expect deny  "a relative entry is ignored"            Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=.ssh/id_rsa"
+expect deny  "an empty entry is ignored"              Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=::"
+expect deny  "an entry with .. is ignored"            Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/proj/../.ssh/id_rsa"
+expect deny  "a directory entry does not allow the files in it" Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/.ssh"
+expect allow "a listed symlink is compared by realpath" Read "$(read_in "$HOME/.ssh/id_rsa")" "$AP=$HOME/proj/linked-key"
+expect allow "reading through a symlink to a listed file" Read "$(read_in "$HOME/proj/linked-key")" "$AP=$HOME/.ssh/id_rsa"
+expect deny  "a listed key does not allow a second key on the line" Bash "$(bash_in "cat $HOME/.ssh/id_rsa $HOME/.ssh/id_ed25519")" "$AP=$HOME/.ssh/id_rsa"
+expect deny  "the variable unset changes nothing"     Read "$(read_in "$HOME/.ssh/id_rsa")"
+expect allow "GUARDS_ALLOW_CRED_READ=1 still short-circuits with a list set" Read "$(read_in "$HOME/.ssh/id_ed25519")" GUARDS_ALLOW_CRED_READ=1 "$AP=$HOME/nope"
+
 # --- jq missing: the guard must still decide (an awk parser reads the payload) ---
 # A PATH with every tool except jq. The payloads are built with the real jq
 # first, then fed to the hook under the shadow PATH.
