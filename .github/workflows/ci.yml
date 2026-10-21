@@ -160,12 +160,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Hook suites under the system bash (3.2)
+        env:
+          GUARDS_TEST_BUDGET_FACTOR: "2"  # shared runner; the timing budgets pass at 1 on a real Mac
         run: |
           /bin/bash --version | head -1
+          failed=""
           for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard outbound-safeforms; do
             echo "== $t"
-            /bin/bash "guards/tests/$t.test.sh" || exit 1
+            /bin/bash "guards/tests/$t.test.sh" || failed="$failed $t"
           done
+          [ -z "$failed" ] || { echo "FAILED SUITES:$failed"; exit 1; }
 
   scan-sh-drift:
     runs-on: ubuntu-latest

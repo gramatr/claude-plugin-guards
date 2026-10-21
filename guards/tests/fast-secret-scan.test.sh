@@ -124,7 +124,7 @@ now_ms() { # BSD date has no %N (it prints a literal N); python3 is already requ
 start=$(now_ms)
 pub "$CMD_CLEAN" "$GOOD" >/dev/null
 ms=$(( $(now_ms) - start ))
-[ "$ms" -le 1500 ] && ok || bad "fast path took ${ms} ms (budget 1500 ms incl. process starts)"
+[ "$ms" -le $((1500 * ${GUARDS_TEST_BUDGET_FACTOR:-1})) ] && ok || bad "fast path took ${ms} ms (budget $((1500 * ${GUARDS_TEST_BUDGET_FACTOR:-1})) ms incl. process starts)"
 
 # 5. MCP guard uses the same path
 out="$(jq -n --argjson r '[{"type":"text","text":"x STUBSECRET123 y"}]' '{tool_name:"mcp__x__get",tool_input:{},tool_response:$r}' \

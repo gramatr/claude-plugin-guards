@@ -61,6 +61,9 @@ PY
   PIDS+=($!)
   for _ in $(seq 1 50); do [ -s "$T/$1.port" ] && break; sleep 0.1; done
 }
+# Timing budgets are multiplied by GUARDS_TEST_BUDGET_FACTOR (default 1). Only the shared macOS CI runner
+# sets it (2): the same checks pass at 1 on a real Mac, and correctness is asserted regardless.
+BF="${GUARDS_TEST_BUDGET_FACTOR:-1}"
 start_stub fast 0
 start_stub slow 6
 FAST="http://127.0.0.1:$(cat "$T/fast.port")"
@@ -108,7 +111,7 @@ out="$(hook "x STUBSECRET123 y STUBPII" "" "$SLOW")"
 so="$(field "$out" stdout)"
 [[ -n "$out" && "$so" != *STUBSECRET123* ]] && ok || bad "secret redacted even though the model scan is slow"
 [[ "$so" != *"possible PII"* ]] && ok || bad "slow flags are dropped silently, not waited for"
-MS="$(cat "$T/ms")"; [ "$MS" -le 2000 ] && ok || bad "slow models held the hook for ${MS} ms (budget 2000)"
+MS="$(cat "$T/ms")"; [ "$MS" -le $((2000 * BF)) ] && ok || bad "slow models held the hook for ${MS} ms (budget $((2000 * BF)))"
 
 # 5b. the flag prefix is capped at 2 KB however large the output is
 : > "$T/fast.lens"
@@ -119,7 +122,7 @@ awk '$1=="/v1/scan" && $2>2048 {bad=1} END{exit bad}' "$T/fast.lens" && grep -q 
 big="$(python3 -I -c "print('log line number one two three four five six seven\n' * 4000)")"
 out="$(hook "${big}STUBSECRET123" "" "$FAST")"
 [[ -n "$out" && "$(field "$out" stdout)" != *STUBSECRET123* ]] && ok || bad "secret past 24 KB is redacted (output empty: ${#out} bytes)"
-MS="$(cat "$T/ms")"; [ "$MS" -le 2000 ] && ok || bad "190 KB output took ${MS} ms (budget 2000)"
+MS="$(cat "$T/ms")"; [ "$MS" -le $((2000 * BF)) ] && ok || bad "190 KB output took ${MS} ms (budget $((2000 * BF)))"
 
 # 7. service down: full local scan still redacts
 out="$(hook "DB_PASSWORD=Tq7vN2xLm9Kd4RzP8wYb" "" "$DOWN")"
