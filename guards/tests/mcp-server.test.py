@@ -253,6 +253,26 @@ class Resources(unittest.TestCase):
         ):
             self.assertIn(needle, text)
 
+    def test_the_hooks_guide_and_the_agents_guide_teach_the_outbound_safe_forms(self):
+        guide = self.read("guards://guide/hooks")
+        agents_path = os.path.join(HERE, "..", "..", "docs", "AGENTS-GUIDE.md")
+        with open(agents_path) as fh:
+            agents = fh.read()
+        self.assertIn("outbound-guard", guide)
+        self.assertIn("guards://guide/hooks", server.INSTRUCTIONS)
+        # The same four forms and two caveats in both places. Each form has a
+        # case in outbound-safeforms.test.sh; the caveats are measured there too.
+        for needle in (
+            "curl -K <file>",
+            "--netrc-file <file>",
+            "curl -H @headers.txt",
+            "curl -d @-",
+            "shows it to other users",
+            "curl -v",
+        ):
+            self.assertIn(needle, guide, f"hooks guide lacks: {needle}")
+            self.assertIn(needle, agents, f"AGENTS-GUIDE.md lacks: {needle}")
+
     def test_the_guides_do_not_trip_the_scanner_themselves(self):
         scan_sh = os.path.join(HERE, "..", "vendor", "secret-guard-core", "scan.sh")
         for uri in GUIDE_URIS + [None]:

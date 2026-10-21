@@ -66,7 +66,7 @@ Rules:
 2. guards:synthetic on the SAME line marks a deliberately fake fixture line. It only works for added lines of a git commit's staged diff.
 3. Never disable or bypass the guards, and never ask the user to. Report a false positive (for example a key named secret_vault_id) instead.
 
-Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
+Network commands that send credentials are blocked too (guards://guide/hooks). Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
 """
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
@@ -172,7 +172,7 @@ The publish guard (a PreToolUse hook) checks these before they run:
 - gh api with a body flag (-f, -F, --field, --raw-field, --input)
 - git commit, including `git -C DIR commit`, `git -c k=v commit` and commits after `cd DIR`
 - GitHub MCP write tools (create, update, comment, push, merge, review, edit, ...)
-It does NOT inspect git push, curl, scripts that publish indirectly, other MCP servers or the web UI.
+It does NOT inspect git push, scripts that publish indirectly, other MCP servers or the web UI. Commands that send data with curl, wget, nc, scp or rsync are checked by the outbound guard (see guards://guide/hooks).
 
 What is scanned: the whole command text (heredoc bodies and a git commit -m message included), the contents of files the command names (--body-file, --notes-file, --input, -F, `cat FILE`, gist files), and for git commit the lines the commit adds. With `git add ... && git commit` in one command the add is replayed on a copy of the index; with -a/--all it is the tracked changes against HEAD. Each source is capped at 512 KB (PUBLISH_GUARD_MAX_BYTES); the hook says when a diff was cut.
 
@@ -214,7 +214,16 @@ GUIDE_HOOKS = """\
 | sendmessage-guard | before SendMessage | redacts secrets in message, summary, content | degrades to a local secret scan |
 | credfile-guard | before Read, Grep, Bash | denies reads of SSH keys, cloud credentials, key stores and any file that holds a private-key header; asks about .env, kubeconfig, .npmrc, terraform state where a person can answer, denies otherwise | denies if it cannot finish |
 | publish-guard | before gh publishes, gh api bodies, git commit, GitHub MCP writes | denies (or asks) when the text looks like it holds a credential, and says where | closed: denies |
+| outbound-guard | before Bash commands that run curl, wget, HTTPie, nc, scp, rsync, sftp or ssh | denies (or asks) when a credential file, the whole environment or a literal credential would be sent to a remote host, and says how to do it safely | closed for a command that names a client: denies |
 | userpromptsubmit-guard | on your own prompt | adds a note if the prompt holds a secret; cannot redact | no note |
+
+## Sending a credential over the network
+The outbound guard blocks a curl, wget, HTTPie, nc, scp or rsync command that would send a credential file (curl -d @~/.aws/credentials), the whole environment (env | curl -d @- ...) or a literal credential in the command text. The @ is not the problem: curl -H @headers.txt and curl -d @payload.json are fine. Use one of these instead of putting the value in the command line:
+1. A config file only you can read: curl -K <file>, or wget --config=<file>.
+2. The client's netrc support: curl --netrc-file <file>.
+3. A header file: curl -H @headers.txt.
+4. A body from a file or standard input: curl -d @payload.json or curl -d @-.
+A variable reference (-H "X-Api-Key: $KEY") keeps the value out of the command text but not out of the process list (ps shows it to other users). Avoid curl -v, wget -d and http --verbose when a header carries a credential, because they print it back. A path named through a variable (-d @$F) is allowed with a note because the guard cannot see it. Ask-class files (.env, kubeconfig) and ambiguous literals ask a person in default, acceptEdits and plan modes and are denied otherwise.
 
 Secrets are redacted by the service (guards-unified) or, if it is down, by a local copy of the same scanner, so protection does not depend on the service. PII and injection are best-effort notes, not blocks. The guards run in the session's environment: a variable set inline on a command does not reach them. The credential-file guard has no per-call bypass by design; GUARDS_ALLOW_CRED_READ=1 in the environment Claude Code started from turns it off for the session, and that is the user's decision.
 """

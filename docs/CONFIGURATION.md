@@ -37,7 +37,7 @@ scans whatever text it is sent; the hook decides how much to send.
 |---|---|---|
 | `GUARDS_ENDPOINT` | `http://127.0.0.1:8700` | Base URL of the guards-unified service. Used by the Bash hook, the secret-scan library (so also the publish guard and the MCP result guard), `sendmessage-guard.sh`, `userpromptsubmit-guard.sh` and `mcp/server.py`. Pointing it at a remote host sends raw tool output, which may contain secrets, to that host; read `guards/docker/SERVER-SIDE.md` first. |
 | `SS_SERVICE_TIMEOUT` | `2` | Seconds to wait for the secret-only route (`POST /v1/scan/secret`) before the hook runs the full local scan. Read by `hooks/secret-scan-lib.sh`. |
-| `GUARDS_SECRET_SCAN` | `<plugin>/vendor/secret-guard-core/scan.sh` | Path of the local scanner. Honoured by the publish guard and the MCP result guard only; the Bash hook and `sendmessage-guard.sh` always use the vendored copy. Mainly used by tests to simulate a missing or broken scanner. |
+| `GUARDS_SECRET_SCAN` | `<plugin>/vendor/secret-guard-core/scan.sh` | Path of the local scanner. Honoured by the publish guard, the outbound guard and the MCP result guard only; the Bash hook and `sendmessage-guard.sh` always use the vendored copy. Mainly used by tests to simulate a missing or broken scanner. |
 
 ## Bash output hook (`combined-hook.sh`)
 
@@ -73,6 +73,17 @@ scans whatever text it is sent; the hook decides how much to send.
 | `GUARDS_ALLOW_PUBLISH_SECRETS` | `0` | `1` disables the guard, for a reviewed false positive. |
 | `GUARDS_PUBLISH_ASK` | `1` | `1`: an ambiguous match asks the person in `default`, `acceptEdits` and `plan` modes and denies in every other mode. `force`: ask in every mode. `0`: every match is a hard deny. Sure things (a private key, a vendor token format, a value from the session environment) always deny. |
 | `PUBLISH_GUARD_MAX_BYTES` | `524288` (512 KB) | Cap per appended file, and for the staged diff. |
+
+## Outbound command guard (`outbound-guard.sh`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GUARDS_ALLOW_OUTBOUND_SECRETS` | `0` | `1` disables the guard. Set it in the environment Claude Code starts from; typed in front of a command, or exported in the same command, it changes nothing, because the caller is usually an AI agent and the override must be something it cannot type. |
+| `GUARDS_OUTBOUND_ASK` | `1` | `1`: an ask-class file (`.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state), a filtered environment dump or an ambiguous literal asks the person in `default`, `acceptEdits` and `plan` modes and denies in every other mode. `force`: ask in every mode. `0`: deny in every mode. Sure things deny in every mode. |
+| `GUARDS_OUTBOUND_SENTINEL_RE` | `SANDBOX_MASKED_[A-Za-z0-9]+` | Extended regular expression for the placeholder Claude Code's sandbox puts where it masks a credential. Matches are removed from the command before it is read. The real format is not verified. |
+| `CREDFILE_SNIFF_MAX_BYTES` | `10485760` (10 MiB) | Shared with the credential-file guard: bytes of each file checked for a private-key header. |
+
+The guard also reads `GUARDS_ENDPOINT` and `SS_SERVICE_TIMEOUT` (the secret-only route) and `GUARDS_SECRET_SCAN` (the local scanner), described above.
 
 ## MCP result guard (`mcp-output-guard.sh`)
 

