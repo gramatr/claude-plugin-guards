@@ -24,7 +24,7 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0  # hook-deadlines.test.sh reads the pre-change hooks from history
       - name: Ruff (check and format) on the plugin's Python
@@ -101,7 +101,7 @@ jobs:
       - name: guards-selfheal tests
         # Stub docker/curl/git/timeout/sleep on PATH; no container or network.
         run: bash guards/tests/guards-selfheal.test.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: MCP scan tool tests
@@ -122,7 +122,7 @@ jobs:
       matrix:
         awk: [gawk, mawk, busybox awk]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install the awks
         run: sudo apt-get update && sudo apt-get install -y gawk mawk busybox
       - name: Outbound parser tests (${{ matrix.awk }})
@@ -135,7 +135,7 @@ jobs:
     # macOS ships one-true-awk. Minimal on purpose: same test, the system awk.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Outbound parser tests (macOS awk)
         env:
           AWKBIN: awk
@@ -147,7 +147,7 @@ jobs:
     # expansion in scan.sh, a slow PATH copy) never ran in CI, which is Linux.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Hook suites under the system bash (3.2)
         run: |
           /bin/bash --version | head -1
@@ -159,7 +159,7 @@ jobs:
   scan-sh-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Check the drift check itself (local files, no network)
         # Identical files pass; a one-character difference fails.
         run: bash guards/tests/scan-sh-drift.test.sh
@@ -173,7 +173,7 @@ jobs:
   hadolint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Lint vendored Dockerfile
         # failure-threshold error: fail the build on real errors, not
         # DL30xx style nags (unpinned apt packages, ENV var naming) —
@@ -185,9 +185,9 @@ jobs:
   cve-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -201,7 +201,7 @@ jobs:
         # never come back unchanged.
         run: SCAN_IMAGE=secret-guard-core:ci bash guards/tests/scan-redaction.test.sh
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: secret-guard-core:ci
@@ -215,7 +215,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Open an issue — don't rely on anyone noticing the red check
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             await github.rest.issues.create({
