@@ -104,6 +104,7 @@ new_state() { S="$T/state.$RANDOM"; mkdir -p "$S"; : > "$S/docker.log"; : > "$S/
 run_heal() {
   local path="$T/shim:$T/sys"
   [ "$1" = docker ] && path="$T/dockerbin:$path"
+  [ -n "${EXTRA_SHIM:-}" ] && path="$EXTRA_SHIM:$path"
   env "PATH=$path" "HOME=$T/home" "GH_STATE=$S" "$BASH_BIN" "$SCRIPT" >"$S/out" 2>"$S/err"
   echo $? > "$S/rc"
 }
@@ -210,6 +211,38 @@ mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }  # GNU, then BSD
 chmod 644 "$ENV_FILE"; new_state; touch "$S/healthy"
 run_heal docker
 [ "$(mode_of "$ENV_FILE")" = 600 ] && ok || bad "an env file with loose permissions is set back to 600"
+
+# 14. the metrics directory is private to the host user (#92); the container (uid 1000) must still be able to write
+MDIR="$T/home/.local/share/gramatr-guards/metrics"
+mk_id() { # mk_id UID DIR: a shim `id` that reports UID
+  mkdir -p "$2"; printf '#!/usr/bin/env bash\n[ "$1" = -u ] && echo %s || exec /usr/bin/id "$@"\n' "$1" > "$2/id"; chmod +x "$2/id"
+}
+mk_id 1000 "$T/id1000"; mk_id 4242 "$T/id4242"
+# a host user 1000 gets 0700, and an old 0777 directory is tightened in place without losing its file
+mkdir -p "$MDIR"; chmod 777 "$MDIR"; echo "m1" > "$MDIR/metrics.jsonl"
+new_state; touch "$S/healthy"; EXTRA_SHIM="$T/id1000" run_heal docker
+[ "$(mode_of "$MDIR")" = 700 ] && ok || bad "uid 1000: metrics dir is mode 700 (got $(mode_of "$MDIR"))"
+[ "$(cat "$MDIR/metrics.jsonl" 2>/dev/null)" = m1 ] && ok || bad "an existing metrics file is kept when the directory is tightened"
+! grep -q "world-writable" "$S/err" && ok || bad "uid 1000: no world-writable warning"
+# another uid with setfacl: 0700 plus an ACL entry for uid 1000
+chmod 777 "$MDIR"; mkdir -p "$T/acl"
+mk "$T/acl/setfacl" '#!/usr/bin/env bash
+echo "setfacl $*" >> "$GH_STATE/acl.log"'
+new_state; touch "$S/healthy"; : > "$S/acl.log"; EXTRA_SHIM="$T/id4242:$T/acl" run_heal docker
+[ "$(mode_of "$MDIR")" = 700 ] && ok || bad "uid 4242 with setfacl: metrics dir is mode 700 (got $(mode_of "$MDIR"))"
+grep -q "u:1000:rwx" "$S/acl.log" && grep -q -- "-d -m u:1000:rwx" "$S/acl.log" && ok || bad "uid 4242 with setfacl: an ACL entry (and a default entry) for uid 1000 is set ($(tr '\n' ';' < "$S/acl.log"))"
+! grep -q "world-writable" "$S/err" && ok || bad "uid 4242 with setfacl: no world-writable warning"
+# another uid without setfacl: the previous mode, said out loud
+chmod 700 "$MDIR"
+new_state; touch "$S/healthy"; EXTRA_SHIM="$T/id4242" run_heal docker
+if command -v setfacl >/dev/null 2>&1; then
+  ok  # the system setfacl is on the test PATH on this host; the no-ACL case cannot be built here
+else
+  # a warning everywhere except macOS, where Docker Desktop maps the owner and the mode does not matter
+  [ "$(mode_of "$MDIR")" = 777 ] && { [ "$(uname -s)" = Darwin ] || grep -q "world-writable" "$S/err"; } && ok || bad "uid 4242 without setfacl: mode 777 and a warning (got $(mode_of "$MDIR"))"
+fi
+[ "$(cat "$S/rc")" = 0 ] && ok || bad "the script still exits 0"
+chmod 700 "$MDIR"
 
 echo "guards-selfheal: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
