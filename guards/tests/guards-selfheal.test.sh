@@ -121,7 +121,8 @@ called "compose -f $COMPOSE pull" && called "compose -f $COMPOSE up -d" && ok ||
 ! called " rm " && ok || bad "healthy: nothing is removed"
 [ ! -s "$S/out" ] && ok || bad "healthy, same version: no additionalContext (got: $(cat "$S/out"))"
 grep -q "Ensuring guards-unified is up" "$S/err" && ok || bad "healthy: logs what it is doing"
-! grep -q "WARNING" "$S/err" && ok || bad "healthy: no warnings ($(grep WARNING "$S/err" | head -1))"
+# flock is util-linux: without it (stock macOS) the script warns once, by design, and nothing else.
+! grep WARNING "$S/err" | { command -v flock >/dev/null 2>&1 && cat || grep -v "flock not found"; } | grep -q . && ok || bad "healthy: no warnings ($(grep WARNING "$S/err" | head -1))"
 
 # 2. service missing: it is started, and the health poll then succeeds
 new_state
@@ -204,10 +205,11 @@ called "rm -f stale1" && ok || bad "a stale guards-unified container from the pl
 # 13. env file: created empty and private when absent; loosened perms are fixed
 new_state; touch "$S/healthy"; rm -f "$ENV_FILE"
 run_heal docker
-[ -f "$ENV_FILE" ] && [ "$(stat -c %a "$ENV_FILE")" = 600 ] && grep -q "HF_TOKEN" "$S/err" && ok || bad "missing env file is created with mode 600 and the HF_TOKEN gap is reported"
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }  # GNU, then BSD
+[ -f "$ENV_FILE" ] && [ "$(mode_of "$ENV_FILE")" = 600 ] && grep -q "HF_TOKEN" "$S/err" && ok || bad "missing env file is created with mode 600 and the HF_TOKEN gap is reported"
 chmod 644 "$ENV_FILE"; new_state; touch "$S/healthy"
 run_heal docker
-[ "$(stat -c %a "$ENV_FILE")" = 600 ] && ok || bad "an env file with loose permissions is set back to 600"
+[ "$(mode_of "$ENV_FILE")" = 600 ] && ok || bad "an env file with loose permissions is set back to 600"
 
 echo "guards-selfheal: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -21,6 +21,15 @@ start_stub() { # start_stub NAME FLAG_DELAY_SECONDS
   python3 -I - "$1" "$2" "$T" >/dev/null 2>&1 <<'PY' &
 import json, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Quiet(ThreadingHTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
 name, delay, t = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -45,13 +54,16 @@ class H(BaseHTTPRequestHandler):
         data = json.dumps(out).encode()
         self.send_response(200); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
-s = ThreadingHTTPServer(("127.0.0.1", 0), H)
+s = Quiet(("127.0.0.1", 0), H)
 open(f"{t}/{name}.port", "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
   PIDS+=($!)
   for _ in $(seq 1 50); do [ -s "$T/$1.port" ] && break; sleep 0.1; done
 }
+# Timing budgets are multiplied by GUARDS_TEST_BUDGET_FACTOR (default 1). Only the shared macOS CI runner
+# sets it (2): the same checks pass at 1 on a real Mac, and correctness is asserted regardless.
+BF="${GUARDS_TEST_BUDGET_FACTOR:-1}"
 start_stub fast 0
 start_stub slow 6
 FAST="http://127.0.0.1:$(cat "$T/fast.port")"
@@ -62,13 +74,17 @@ pass=0 fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
+now_ms() { # BSD date has no %N (it prints a literal N); python3 is already required
+  local n; n="$(date +%s%N 2>/dev/null)"
+  case "$n" in *N|"") python3 -c 'import time; print(int(time.time() * 1000))' ;; *) echo $((n / 1000000)) ;; esac
+}
 hook() { # hook STDOUT STDERR ENDPOINT [ENV...] -> raw hook stdout; writes elapsed ms to $T/ms
   local s e out
   printf '%s' "$1" > "$T/h.out"; printf '%s' "$2" > "$T/h.err"
-  s=$(date +%s%N)
+  s=$(now_ms)
   out="$(jq -n --rawfile o "$T/h.out" --rawfile e "$T/h.err" '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:$o,stderr:$e,interrupted:false,isImage:false}}' \
     | env GUARDS_ENDPOINT="$3" "${@:4}" bash "$HOOK")"
-  e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > "$T/ms"
+  e=$(now_ms); echo $((e - s)) > "$T/ms"
   printf '%s' "$out"
 }
 field() { printf '%s' "$1" | jq -r ".hookSpecificOutput.updatedToolOutput.$2 // empty" 2>/dev/null; }
@@ -95,7 +111,7 @@ out="$(hook "x STUBSECRET123 y STUBPII" "" "$SLOW")"
 so="$(field "$out" stdout)"
 [[ -n "$out" && "$so" != *STUBSECRET123* ]] && ok || bad "secret redacted even though the model scan is slow"
 [[ "$so" != *"possible PII"* ]] && ok || bad "slow flags are dropped silently, not waited for"
-MS="$(cat "$T/ms")"; [ "$MS" -le 2000 ] && ok || bad "slow models held the hook for ${MS} ms (budget 2000)"
+MS="$(cat "$T/ms")"; [ "$MS" -le $((2000 * BF)) ] && ok || bad "slow models held the hook for ${MS} ms (budget $((2000 * BF)))"
 
 # 5b. the flag prefix is capped at 2 KB however large the output is
 : > "$T/fast.lens"
@@ -106,7 +122,7 @@ awk '$1=="/v1/scan" && $2>2048 {bad=1} END{exit bad}' "$T/fast.lens" && grep -q 
 big="$(python3 -I -c "print('log line number one two three four five six seven\n' * 4000)")"
 out="$(hook "${big}STUBSECRET123" "" "$FAST")"
 [[ -n "$out" && "$(field "$out" stdout)" != *STUBSECRET123* ]] && ok || bad "secret past 24 KB is redacted (output empty: ${#out} bytes)"
-MS="$(cat "$T/ms")"; [ "$MS" -le 2000 ] && ok || bad "190 KB output took ${MS} ms (budget 2000)"
+MS="$(cat "$T/ms")"; [ "$MS" -le $((2000 * BF)) ] && ok || bad "190 KB output took ${MS} ms (budget $((2000 * BF)))"
 
 # 7. service down: full local scan still redacts
 out="$(hook "DB_PASSWORD=Tq7vN2xLm9Kd4RzP8wYb" "" "$DOWN")"

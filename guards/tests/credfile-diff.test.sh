@@ -128,7 +128,7 @@ actual_output() {
 }
 
 new="$(results "$HOOKS/credfile-guard.sh")"
-total="$(printf '%s\n' "$new" | wc -l)"
+total="$(printf '%s\n' "$new" | wc -l | tr -d ' ')"  # BSD wc pads with spaces
 while IFS= read -r line; do
   want="$(grep -F -x -m1 -e "${line% *}"' '"${line##* }" "$GOLDEN" || true)"
   if [ "$line" = "$want" ]; then

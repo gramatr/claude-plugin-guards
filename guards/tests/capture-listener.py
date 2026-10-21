@@ -28,6 +28,17 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+
+class Quiet(ThreadingHTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
 HOLD = 1.5
 out_dir = sys.argv[1]
 count = 0
@@ -75,7 +86,7 @@ class Handler(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = handle_any
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = Quiet(("127.0.0.1", 0), Handler)
 with open(os.path.join(out_dir, "port.tmp"), "w") as f:
     f.write(str(server.server_address[1]))
 os.rename(os.path.join(out_dir, "port.tmp"), os.path.join(out_dir, "port"))

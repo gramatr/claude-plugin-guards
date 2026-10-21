@@ -36,6 +36,15 @@ start_stub() { # start_stub MODE -> prints port
   python3 -I - "$1" "$T/port.$1" >/dev/null 2>&1 <<'PY' &
 import json, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Quiet(HTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
 mode, portfile = sys.argv[1], sys.argv[2]
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -58,7 +67,7 @@ class H(BaseHTTPRequestHandler):
         data = json.dumps(out).encode()
         self.send_response(code); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
-s = HTTPServer(("127.0.0.1", 0), H)
+s = Quiet(("127.0.0.1", 0), H)
 open(portfile, "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
@@ -108,10 +117,14 @@ took=$((SECONDS - start))
 [ "$r" = "deny" ] && [ "$took" -le 5 ] && ok || bad "hanging service: $r in ${took}s (want deny, <= 5s)"
 
 # 4. speed budget on the fast path (stub answers instantly)
-start=$(date +%s%N)
+now_ms() { # BSD date has no %N (it prints a literal N); python3 is already required
+  local n; n="$(date +%s%N 2>/dev/null)"
+  case "$n" in *N|"") python3 -c 'import time; print(int(time.time() * 1000))' ;; *) echo $((n / 1000000)) ;; esac
+}
+start=$(now_ms)
 pub "$CMD_CLEAN" "$GOOD" >/dev/null
-ms=$(( ($(date +%s%N) - start) / 1000000 ))
-[ "$ms" -le 1500 ] && ok || bad "fast path took ${ms} ms (budget 1500 ms incl. process starts)"
+ms=$(( $(now_ms) - start ))
+[ "$ms" -le $((1500 * ${GUARDS_TEST_BUDGET_FACTOR:-1})) ] && ok || bad "fast path took ${ms} ms (budget $((1500 * ${GUARDS_TEST_BUDGET_FACTOR:-1})) ms incl. process starts)"
 
 # 5. MCP guard uses the same path
 out="$(jq -n --argjson r '[{"type":"text","text":"x STUBSECRET123 y"}]' '{tool_name:"mcp__x__get",tool_input:{},tool_response:$r}' \

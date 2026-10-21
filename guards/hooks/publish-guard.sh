@@ -78,6 +78,8 @@ MAX_BYTES="${PUBLISH_GUARD_MAX_BYTES:-524288}"
 RAW="$(cat)"
 # shellcheck source=guards/hooks/json-lib.sh
 . "$SCRIPT_DIR/json-lib.sh"   # HAVE_JQ, jfield, emit_pre, emit_context: works without jq
+# shellcheck source=guards/hooks/realpath-lib.sh
+. "$SCRIPT_DIR/realpath-lib.sh"   # gd_realpath: `realpath -m` is GNU-only; stock macOS has neither -m nor GNU realpath
 TOOL_NAME="$(jfield tool_name)"
 CWD="$(jfield cwd)"
 PERM_MODE="$(jfield permission_mode)"
@@ -218,20 +220,20 @@ case "$TOOL_NAME" in
     while [[ "$rest" =~ $FILE_FLAG_RE ]]; do
       f="${BASH_REMATCH[2]}"; m="${BASH_REMATCH[0]}"
       [[ "$f" == *=@* ]] && f="${f#*=@}"
-      case "$f" in -|/dev/stdin) ;; *) [ -d "$CWD" ] && f="$(cd "$CWD" && realpath -m -- "$f" 2>/dev/null || printf '%s' "$f")"; append_file "$f" ;; esac
+      case "$f" in -|/dev/stdin) ;; *) [ -d "$CWD" ] && f="$(cd "$CWD" && gd_realpath "$f")"; append_file "$f" ;; esac
       rest="${rest#*"$m"}"
     done
     rest="$CMD"
     while [[ "$rest" =~ $CAT_RE ]]; do
       f="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[0]}"
-      [ -d "$CWD" ] && f="$(cd "$CWD" && realpath -m -- "$f" 2>/dev/null || printf '%s' "$f")"
+      [ -d "$CWD" ] && f="$(cd "$CWD" && gd_realpath "$f")"
       append_file "$f"
       rest="${rest#*"$m"}"
     done
     if [[ "$CMD" =~ gh[[:space:]]+gist[[:space:]]+create ]]; then
       for tok in $CMD; do
         case "$tok" in -*|gh|gist|create) continue ;; esac
-        f="$tok"; [ -d "$CWD" ] && f="$(cd "$CWD" && realpath -m -- "$tok" 2>/dev/null || printf '%s' "$tok")"
+        f="$tok"; [ -d "$CWD" ] && f="$(cd "$CWD" && gd_realpath "$tok")"
         append_file "$f"
       done
     fi

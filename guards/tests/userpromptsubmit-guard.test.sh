@@ -80,13 +80,22 @@ out="$(prompt_hook "$DOWN" "key $SEC")"
 cat > "$T/odd.py" <<'PY'
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Quiet(HTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
 status, body = int(sys.argv[2]), sys.argv[3].encode()
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_POST(self):
         self.rfile.read(int(self.headers.get("content-length", 0)))
         self.send_response(status); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
-s = HTTPServer(("127.0.0.1", 0), H)
+s = Quiet(("127.0.0.1", 0), H)
 open(sys.argv[1], "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY

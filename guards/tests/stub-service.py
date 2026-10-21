@@ -20,6 +20,17 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+
+class Quiet(ThreadingHTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
 out_dir = sys.argv[1]
 delay = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 max_bytes = int(sys.argv[3]) if len(sys.argv) > 3 else 0
@@ -84,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, {"findings": [secret, pii, inj], "redacted_text": combined})
 
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+server = Quiet(("127.0.0.1", 0), Handler)
 with open(f"{out_dir}/port", "w") as f:
     f.write(str(server.server_address[1]))
 server.serve_forever()
