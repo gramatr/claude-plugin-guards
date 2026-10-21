@@ -1,0 +1,37 @@
+# Keeps the pins from #54 (Actions by SHA, base images by digest) from going stale.
+# Weekly, Monday. Every update is a PR that must pass the required checks; none
+# merges itself.
+#
+# Not covered, because Dependabot cannot read them: the gitleaks commit
+# (GITLEAKS_COMMIT) and Go module versions in the vendored Dockerfile, and the
+# gitleaks version in guards/bin/guards-selfheal.sh. Those are bumped by hand; the
+# procedure is in guards-unified docs/CONFIGURATION.md, "Refreshing the pins".
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/guards/vendor/secret-guard-core"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      # Digest refreshes of the pinned tags only; a new Python or Go release line is
+      # a deliberate change made by a person.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
