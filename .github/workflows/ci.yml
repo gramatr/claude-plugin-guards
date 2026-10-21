@@ -124,6 +124,21 @@ jobs:
           AWKBIN: awk
         run: bash guards/tests/outbound-parse.test.sh
 
+  hooks-macos:
+    # macOS has bash 3.2, a BSD userland, no `realpath -m` and no `timeout`. Four
+    # bugs only a Mac showed (symlinks not resolved, a lost deny, a bash 4
+    # expansion in scan.sh, a slow PATH copy) never ran in CI, which is Linux.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hook suites under the system bash (3.2)
+        run: |
+          /bin/bash --version | head -1
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback; do
+            echo "== $t"
+            /bin/bash "guards/tests/$t.test.sh" || exit 1
+          done
+
   scan-sh-drift:
     runs-on: ubuntu-latest
     steps:

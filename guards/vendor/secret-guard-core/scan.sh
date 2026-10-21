@@ -108,12 +108,18 @@ ctx_placeholder() {
 # match (the caller runs with nocasematch on) so that "secretValid" does not
 # read as "secret" + "Id".
 ctx_names_secret_ref() {
-  local kl="${1,,}" nc=0 rc=1
+  local nc=0 rc=1
   local sfx='(name|ref|id|type|path|file|version|count|ttl|namespace|store|manager|provider|url|arn)s?'
-  if [[ "$kl" =~ (secret|token|credential)s?[a-z0-9_.-]{1,40}[_.-]${sfx}$ ]]; then
+  shopt -q nocasematch && nc=1
+  # Case-insensitive for the snake/kebab/dotted and ALL_CAPS forms. The key is
+  # not lowercased first: bash's lowercase expansion is bash 4 only, and stock
+  # macOS bash 3.2 answers "bad substitution", which silently disabled every
+  # context rule there.
+  shopt -s nocasematch
+  if [[ "$1" =~ (secret|token|credential)s?[a-z0-9_.-]{1,40}[_.-]${sfx}$ ]]; then
+    [ "$nc" = 1 ] || shopt -u nocasematch
     return 0
   fi
-  shopt -q nocasematch && nc=1
   shopt -u nocasematch
   local camel='([Ss]ecret|[Tt]oken|[Cc]redential)s?[A-Za-z0-9_.-]{0,40}[a-z0-9](Name|Ref|Id|Type|Path|File|Version|Count|Ttl|Namespace|Store|Manager|Provider|Url|Arn)s?$'
   [[ "$1" =~ $camel ]] && rc=0
@@ -212,9 +218,13 @@ ctx_code_shape_cs() {
   # hunter2 never qualifies) or to repeat the key, and code punctuation or a
   # trailing , ; ) }
   if [[ "$core" =~ $ident ]]; then
-    local k="${key,,}" c="${core,,}" shaped=0
+    local k="$key" c="$core" shaped=0
     k="${k//[_.-]/}"; c="${c//[_.-]/}"
-    [ "$c" = "$k" ] && shaped=1
+    # Equal ignoring case, without the bash 4 lowercase expansion: nocasematch for
+    # this one comparison. The patterns after it are case-sensitive on purpose.
+    shopt -s nocasematch
+    [[ "$c" == "$k" ]] && shaped=1
+    shopt -u nocasematch
     [[ "$core" != *[0-9]* && ( "$core" == *[_.]* || "$core" =~ ^[a-z]{2,}([A-Z][a-z]{2,})+$ ) ]] && shaped=1
     if [ "$shaped" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ $endp ]]; }; then
       [ "$delim" = colon ] && [ "$prop" = 1 ] && return 0
