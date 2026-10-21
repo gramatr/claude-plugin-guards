@@ -129,7 +129,8 @@ out="$(run "$HOOKS" $H "$T/garbage.json")"
 # ---- negative control: the old behavior passes every one of those through -------
 OLD="$T/old/hooks"; mkdir -p "$OLD"; cp "$HOOKS"/*.sh "$OLD"/; ln -s "$(cd "$HERE/.." && pwd)/vendor" "$T/old/vendor"
 for h in publish-guard combined-hook mcp-output-guard sendmessage-guard; do
-  sed -i '0,/^set -uo pipefail$/s//set -uo pipefail\ncommand -v jq >\/dev\/null 2>\&1 || exit 0/' "$OLD/$h.sh"
+  # awk, not GNU `sed -i '0,/re/'`: BSD sed has neither the 0,/re/ address nor a bare -i.
+  awk '!d && /^set -uo pipefail$/ { print; print "command -v jq >/dev/null 2>&1 || exit 0"; d = 1; next } { print }' "$OLD/$h.sh" > "$OLD/$h.sh.new" && mv "$OLD/$h.sh.new" "$OLD/$h.sh"
 done
 out="$(run "$OLD" publish-guard.sh "$(payload --arg c "$GH" --arg w "$T" '{tool_name:"Bash",tool_input:{command:$c},cwd:$w,permission_mode:"auto"}')")"
 [ -z "$out" ] && ok || bad "negative control: the old publish-guard passes a credential through without jq"

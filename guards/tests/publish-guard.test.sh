@@ -163,7 +163,7 @@ has "STARTED"; check "message says the override only works from the starting env
 has "SHAPE"; check "message keeps the shape advice" $?
 
 # Marker semantics: honoured for added lines of the staged diff, nothing else.
-sed -i 's|$| # guards:synthetic|' "$LR/src/cfg.ts"
+sed 's|$| # guards:synthetic|' "$LR/src/cfg.ts" > "$LR/src/cfg.ts.new" && mv "$LR/src/cfg.ts.new" "$LR/src/cfg.ts"  # not sed -i: BSD sed needs a suffix argument
 git -C "$LR" add -A
 want allow "the marker on the same line allows the staged line" "$LR" 'git commit -m "add cfg"'
 git -C "$LR" reset -q

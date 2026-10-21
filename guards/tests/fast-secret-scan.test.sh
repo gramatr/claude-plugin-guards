@@ -108,9 +108,13 @@ took=$((SECONDS - start))
 [ "$r" = "deny" ] && [ "$took" -le 5 ] && ok || bad "hanging service: $r in ${took}s (want deny, <= 5s)"
 
 # 4. speed budget on the fast path (stub answers instantly)
-start=$(date +%s%N)
+now_ms() { # BSD date has no %N (it prints a literal N); python3 is already required
+  local n; n="$(date +%s%N 2>/dev/null)"
+  case "$n" in *N|"") python3 -c 'import time; print(int(time.time() * 1000))' ;; *) echo $((n / 1000000)) ;; esac
+}
+start=$(now_ms)
 pub "$CMD_CLEAN" "$GOOD" >/dev/null
-ms=$(( ($(date +%s%N) - start) / 1000000 ))
+ms=$(( $(now_ms) - start ))
 [ "$ms" -le 1500 ] && ok || bad "fast path took ${ms} ms (budget 1500 ms incl. process starts)"
 
 # 5. MCP guard uses the same path

@@ -62,13 +62,17 @@ pass=0 fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 
+now_ms() { # BSD date has no %N (it prints a literal N); python3 is already required
+  local n; n="$(date +%s%N 2>/dev/null)"
+  case "$n" in *N|"") python3 -c 'import time; print(int(time.time() * 1000))' ;; *) echo $((n / 1000000)) ;; esac
+}
 hook() { # hook STDOUT STDERR ENDPOINT [ENV...] -> raw hook stdout; writes elapsed ms to $T/ms
   local s e out
   printf '%s' "$1" > "$T/h.out"; printf '%s' "$2" > "$T/h.err"
-  s=$(date +%s%N)
+  s=$(now_ms)
   out="$(jq -n --rawfile o "$T/h.out" --rawfile e "$T/h.err" '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:$o,stderr:$e,interrupted:false,isImage:false}}' \
     | env GUARDS_ENDPOINT="$3" "${@:4}" bash "$HOOK")"
-  e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > "$T/ms"
+  e=$(now_ms); echo $((e - s)) > "$T/ms"
   printf '%s' "$out"
 }
 field() { printf '%s' "$1" | jq -r ".hookSpecificOutput.updatedToolOutput.$2 // empty" 2>/dev/null; }
