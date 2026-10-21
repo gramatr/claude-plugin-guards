@@ -71,6 +71,7 @@ jobs:
           bash guards/tests/credfile-diff.test.sh
           bash guards/tests/realpath-lib.test.sh
           bash guards/tests/deadline-fallback.test.sh
+          bash guards/tests/glob-order.test.sh
       - name: outbound-guard tests
         # A throwaway HOME with fabricated credential files, a stub service.
         run: bash guards/tests/outbound-guard.test.sh
