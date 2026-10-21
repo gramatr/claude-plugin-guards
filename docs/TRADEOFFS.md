@@ -115,6 +115,7 @@ platform side; the hook cannot get there by chunking.
 |---|---|---|
 | `GUARDS_CRED_ASK=0` | Harden | `.env`, kubeconfig, `.npmrc`/`.pypirc`, terraform state become hard denies in every mode, including `default`, `acceptEdits` and `plan` |
 | `GUARDS_CRED_ASK` set to `force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
+| `GUARDS_CRED_IDENTITY_USE=0` | Harden | Turns the identity-use exemption off: any reader word plus a sensitive path on one line is a deny again, even when the key is only the `-i` of `age` or `ssh`. | The default (`1`) exempts a key given as the identity or key-file of `age`, `rage`, `ssh`, `scp`, `sftp` or `ssh-keygen`, because those use the key without printing it and a command such as `SECRET=$(cat a) T=$(age -d -i KEY f)` was denied only because `cat` and the key shared a line. | A tool in the list could still print a key (none of these do). Anything else on the line that names the key still denies. |
 | `GUARDS_PUBLISH_ASK=force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
 | `GUARDS_PUBLISH_ASK=0` | Harden | Every match is a hard deny |
 | `GUARDS_ALLOW_CRED_READ=1`, `GUARDS_ALLOW_PUBLISH_SECRETS=1`, `GUARDS_MCP_SCAN=0` | Loosen | Turn a guard off for the session |

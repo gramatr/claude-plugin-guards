@@ -104,6 +104,21 @@ expect deny  "cat redirect-quoted path"           Bash "$(bash_in "cat '$HOME/.a
 expect deny  "python reading key"                 Bash "$(bash_in "python3 -c 'print(open(\"$HOME/.ssh/id_rsa\").read())'")"
 expect allow "ssh -i uses key without printing"   Bash "$(bash_in "ssh -i $HOME/.ssh/id_ed25519 host.invalid true")"
 expect allow "ssh-keygen -l fingerprint"          Bash "$(bash_in "ssh-keygen -l -f $HOME/.ssh/id_ed25519")"
+# A key named as the identity or key-file of a tool that only USES it is not a read, even
+# when a reader word (cat, sed, python ...) appears elsewhere in the same line.
+KEY="$HOME/.ssh/id_ed25519"
+expect allow "age -d -i key beside an unrelated cat"  Bash "$(bash_in "SECRET=\$(cat /tmp/x.secret) TOKEN=\"\$(age -d -i $KEY f.age)\" true")"
+expect allow "age --identity=key piped to cat"        Bash "$(bash_in "age -d --identity=$KEY f.age | cat")"
+expect allow "rage -d -i key then cat of notes"       Bash "$(bash_in "rage -d -i $KEY f.age; cat notes.txt")"
+expect allow "ssh -i key with a remote cat"           Bash "$(bash_in "ssh -i $KEY host.invalid cat /etc/hosts")"
+expect allow "scp -i key to a host"                   Bash "$(bash_in "scp -i $KEY ./f host.invalid:/tmp/ && cat ./f")"
+expect allow "ssh-keygen -y -f key beside cat"        Bash "$(bash_in "ssh-keygen -y -f $KEY > pub.txt; cat pub.txt")"
+expect deny  "age -i key then cat of the key"         Bash "$(bash_in "age -d -i $KEY f.age; cat $KEY")"
+expect deny  "cat of the key piped to age"            Bash "$(bash_in "cat $KEY | age -e -r x")"
+expect deny  "grep -i is not an identity flag"        Bash "$(bash_in "grep -i x $KEY")"
+expect deny  "sed -i on the key"                      Bash "$(bash_in "sed -i s/a/b/ $KEY")"
+expect deny  "age -i key and the key as an input"     Bash "$(bash_in "age -d -i $KEY $KEY; cat x")"
+expect deny  "identity use switched off"              Bash "$(bash_in "SECRET=\$(cat /tmp/x) T=\$(age -d -i $KEY f.age)")" GUARDS_CRED_IDENTITY_USE=0
 expect allow "cat public key"                     Bash "$(bash_in "cat $HOME/.ssh/id_ed25519.pub")"
 expect allow "cat ordinary file"                  Bash "$(bash_in 'cat README.md')"
 expect allow "cat .env.example"                   Bash "$(bash_in 'cat .env.example')"
