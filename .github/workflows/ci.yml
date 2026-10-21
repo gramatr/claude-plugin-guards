@@ -170,10 +170,15 @@ jobs:
         if: always()
         run: |
           set +e
-          /bin/bash -x guards/tests/combined-hook.test.sh > /tmp/ch.trace 2>&1
-          grep -n "^FAIL" /tmp/ch.trace | head
-          n=$(grep -n "^FAIL: secret redacted even though" /tmp/ch.trace | head -1 | cut -d: -f1)
-          echo "--- trace before the first slow-case failure"; sed -n "$((n-60)),${n}p" /tmp/ch.trace | cut -c1-220
+          which -a python3; python3 --version; D="$(mktemp -d)"; mkdir -p "$D/svc"
+          for i in 1 2 3; do
+            rm -f "$D/svc/port"; t0=$(date +%s)
+            python3 -I guards/tests/stub-service.py "$D/svc" > "$D/stub.out" 2>&1 &
+            sp=$!
+            for _ in $(seq 1 300); do [ -s "$D/svc/port" ] && break; sleep 0.1; done
+            echo "run $i: port='$(cat "$D/svc/port" 2>/dev/null)' after $(( $(date +%s) - t0 ))s"; head -c 400 "$D/stub.out"
+            kill $sp 2>/dev/null; wait $sp 2>/dev/null
+          done
           exit 0
 
   scan-sh-drift:
