@@ -394,6 +394,12 @@ if [ "$HAS_CONTENT" = "true" ]; then
   add_rawfile_arg con "$CON_FIELD_OUT"
 fi
 
+# A flag-mode PII note honours GUARDS_PII_IGNORE_ENTITIES and is shown once per session per type
+# (json-lib.sh). In redact mode the service already replaced the values, so the note is not filtered.
+if [ "$PII_GUARD_MODE" != "redact" ] && [ -n "$ALL_PII_TYPES" ]; then
+  ALL_PII_TYPES="$(pii_note_types "$ALL_PII_TYPES" "$(jfield session_id)")"
+fi
+
 if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ] && [ "$PII_UNAVAILABLE" -eq 0 ]; then
   exit 0
 fi

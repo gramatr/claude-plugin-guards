@@ -50,6 +50,9 @@ scans whatever text it is sent; the hook decides how much to send.
 | `INJECTION_MIN_SCORE` | `0.95` | The injection warning is shown only for a "malicious" verdict scoring at least this. Benign security-themed text scored 0.86 to 0.91; real attacks 0.977 and up. |
 | `PII_GUARD_MODE` | `flag` | `flag` notes PII types and leaves the values. `redact` replaces PII and also selects the older single-call path in the Bash hook. |
 | `SCAN_MAX_BYTES` | `24576` (24 KB) | Older single-call path only: bytes sent to the full `/v1/scan`; the rest is returned unscanned with a warning. |
+| `GUARDS_PII_IGNORE_ENTITIES` | unset | Comma-separated PII types the **note** never names, for example `IP_ADDRESS,LOCATION`. Case and spaces do not matter. Set it in the environment Claude Code starts from (a variable typed in a command has no effect). It filters the note only, in `flag` mode: it does not change what the service reports or what `redact` mode replaces, and it never touches secret redaction. Also read by `sendmessage-guard.sh`. |
+| `GUARDS_PII_NOTE_ONCE` | `1` | `1`: a PII type is named once per session, the first time it is seen, and not again for that session. `0` restores a note on every command. Needs the session id in the hook payload; without one, or if the state file cannot be written, the note is shown. Also read by `sendmessage-guard.sh`. |
+| `GUARDS_STATE_DIR` | `~/.local/state/gramatr-guards` | Where the once-per-session state lives: one small file per session under `pii-notes/` holding the type names already shown (no text). Files older than two days are removed when a new one is started. |
 
 ## Outbound messages (`sendmessage-guard.sh`)
 

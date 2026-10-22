@@ -82,7 +82,8 @@ hook() { # hook STDOUT STDERR ENDPOINT [ENV...] -> raw hook stdout; writes elaps
   local s e out
   printf '%s' "$1" > "$T/h.out"; printf '%s' "$2" > "$T/h.err"
   s=$(now_ms)
-  out="$(jq -n --rawfile o "$T/h.out" --rawfile e "$T/h.err" '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:$o,stderr:$e,interrupted:false,isImage:false}}' \
+  # SID, when set, is the session_id in the payload (the PII note is shown once per session per type).
+  out="$(jq -n --rawfile o "$T/h.out" --rawfile e "$T/h.err" --arg sid "${SID:-}" '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:$o,stderr:$e,interrupted:false,isImage:false}} + (if $sid == "" then {} else {session_id: $sid} end)' \
     | env GUARDS_ENDPOINT="$3" "${@:4}" bash "$HOOK")"
   e=$(now_ms); echo $((e - s)) > "$T/ms"
   printf '%s' "$out"
@@ -105,6 +106,29 @@ out="$(hook "fine" "err STUBSECRET123" "$FAST")"
 # 4. PII and injection flags still appear (from the first 2 KB)
 out="$(hook "hello STUBPII there" "" "$FAST")"; [[ "$(field "$out" stdout)" == *"possible PII"* ]] && ok || bad "PII flag note"
 out="$(hook "hello STUBINJECT there" "" "$FAST")"; [[ "$(field "$out" stdout)" == *"prompt-injection"* ]] && ok || bad "injection warning"
+
+# 4b. PII note controls: an ignore list (launch environment), and each type named once per session.
+note() { [[ "$(field "$1" stdout)" == *"possible PII"* ]]; }
+out="$(hook "hello STUBPII there" "" "$FAST" GUARDS_PII_IGNORE_ENTITIES=PERSON)"; [ -z "$out" ] && ok || bad "an ignored type produces no note"
+out="$(hook "hello STUBPII there" "" "$FAST" "GUARDS_PII_IGNORE_ENTITIES= person ,IP_ADDRESS")"; [ -z "$out" ] && ok || bad "the ignore list is case and space tolerant"
+out="$(hook "hello STUBPII there" "" "$FAST" GUARDS_PII_IGNORE_ENTITIES=LOCATION)"; note "$out" && ok || bad "an unrelated ignored type does not hide the note"
+out="$(hook "x STUBSECRET123 y STUBPII" "" "$FAST" GUARDS_PII_IGNORE_ENTITIES=PERSON)"
+so="$(field "$out" stdout)"
+[[ "$so" != *STUBSECRET123* && "$so" == *REDACTED* ]] && ! note "$out" && ok || bad "ignoring a PII type never weakens secret redaction ($so)"
+# a variable typed in the command is not the launch environment
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"GUARDS_PII_IGNORE_ENTITIES=PERSON echo hi"},"tool_response":{"stdout":"hello STUBPII there","stderr":"","interrupted":false,"isImage":false}}' \
+  | env GUARDS_ENDPOINT="$FAST" bash "$HOOK" > "$T/typed.out"; note "$(cat "$T/typed.out")" && ok || bad "a variable typed in the command does not ignore a type"
+
+export GUARDS_STATE_DIR="$T/state"
+SID="sess-a"; out="$(hook "hello STUBPII there" "" "$FAST")"; note "$out" && ok || bad "first sight of a type in a session: note shown"
+out="$(hook "hello STUBPII there" "" "$FAST")"; [ -z "$out" ] && ok || bad "same type, same session: no second note"
+SID="sess-b"; out="$(hook "hello STUBPII there" "" "$FAST")"; note "$out" && ok || bad "a different session: note shown again"
+SID="sess-b"; out="$(hook "hello STUBPII there" "" "$FAST" GUARDS_PII_NOTE_ONCE=0)"; note "$out" && ok || bad "GUARDS_PII_NOTE_ONCE=0 restores a note on every command"
+SID="sess/../x"; out="$(hook "hello STUBPII there" "" "$FAST")"; note "$out" && ok || bad "an unsafe session id is not used as a file name; the note is shown"
+[ -z "$(find "$T" -name 'x' -path '*pii-notes*' 2>/dev/null)" ] && ok || bad "no state file escaped the state directory"
+SID="sess-c"; out="$(hook "hello STUBPII there" "" "$FAST" GUARDS_STATE_DIR=/proc/nope/x)"; note "$out" && ok || bad "unwritable state: the note is shown"
+out="$(hook "hello STUBPII there" "" "$FAST" GUARDS_STATE_DIR=/proc/nope/x)"; note "$out" && ok || bad "unwritable state: still shown the next time"
+SID=""; unset GUARDS_STATE_DIR
 
 # 5. THE hot-path guarantee: slow PII/injection models never delay the secret scan
 out="$(hook "x STUBSECRET123 y STUBPII" "" "$SLOW")"
