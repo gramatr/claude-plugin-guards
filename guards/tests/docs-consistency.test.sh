@@ -102,6 +102,17 @@ if command -v jq > /dev/null 2>&1; then
   [ "$(jq -r '[.. | objects | select(has("version"))] | length' "$REPO/.claude-plugin/marketplace.json")" = 0 ] && ok || bad "marketplace.json has no version field"
 fi
 
+# The prefix table tells a guards block from another hook's (coordination#100): the guide has it, names every
+# hook that prints a message, and guards_status returns the same two prefixes.
+guide="$REPO/docs/AGENTS-GUIDE.md"
+grep -q '^## Whose message is it?' "$guide" && ok || bad "AGENTS-GUIDE.md has no 'Whose message is it?' section"
+grep -F '| `Blocked by guards <hook>:`' "$guide" > /dev/null && ok || bad "AGENTS-GUIDE.md prefix table has no 'Blocked by guards <hook>:' row"
+grep -F '| `guards <hook>:`' "$guide" > /dev/null && ok || bad "AGENTS-GUIDE.md prefix table has no 'guards <hook>:' row"
+for h in $(jq -r '[.hooks[][].hooks[].args[0]] | .[] | split("/") | last | sub("\\.sh$"; "")' "$REPO/guards/hooks/hooks.json" | grep -v selfheal); do
+  grep -F "\`$h\`" "$guide" > /dev/null && ok || bad "AGENTS-GUIDE.md prefix table does not name the hook $h"
+done
+grep -q 'Blocked by guards <hook>:' "$REPO/guards/mcp/guards_tools.py" && grep -q '"guards <hook>:"' "$REPO/guards/mcp/guards_tools.py" && ok || bad "guards_status does not return the message prefixes"
+
 # The limits of the identity-use exemption are written down where the setting is (coordination#87).
 grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'decrypted' && ok || bad "CONFIGURATION.md says the exemption does not cover a tool's decrypted output"
 grep -F 'GUARDS_CRED_IDENTITY_USE' "$REPO/docs/CONFIGURATION.md" | grep -q 'rewrite' && ok || bad "CONFIGURATION.md says ssh-keygen -p can rewrite a key"

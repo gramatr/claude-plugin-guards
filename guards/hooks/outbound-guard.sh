@@ -91,7 +91,7 @@ fi
 # The payload could not be read and there is no jq to say why: the call names a
 # client (the prefilter matched), so refuse rather than guess.
 if [ "$HAVE_JQ" -eq 0 ] && [ -z "$TOOL_NAME" ]; then
-  deny "Blocked by guards outbound-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked. Install jq (apt install jq, brew install jq) and retry. If the user really wants the call to go through unchecked, they must start Claude Code with GUARDS_ALLOW_OUTBOUND_SECRETS=1."
+  deny "Blocked by guards outbound-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked. Fix: install jq (apt install jq, brew install jq) and retry. If the user really wants the call to go through unchecked, they must start Claude Code with GUARDS_ALLOW_OUTBOUND_SECRETS=1."
 fi
 [ "$TOOL_NAME" = "Bash" ] || exit 0
 [ -n "$CMD" ] || exit 0
@@ -101,9 +101,9 @@ SNIFF_MAX_BYTES="${CREDFILE_SNIFF_MAX_BYTES:-10485760}"
 PRIVATE_KEY_RE='-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 
 # shellcheck source=guards/hooks/credclass-lib.sh
-. "$HOOK_DIR/credclass-lib.sh" 2> /dev/null || deny "Blocked by guards outbound-guard: its classification library credclass-lib.sh is missing or unreadable next to the hook ($HOOK_DIR/credclass-lib.sh), so this call cannot be checked and is denied. Reinstall or update the guards plugin."
+. "$HOOK_DIR/credclass-lib.sh" 2> /dev/null || deny "Blocked by guards outbound-guard: its classification library credclass-lib.sh is missing or unreadable next to the hook ($HOOK_DIR/credclass-lib.sh), so this call cannot be checked and is denied. Fix: reinstall or update the guards plugin."
 # shellcheck source=guards/hooks/outbound-lib.sh
-. "$HOOK_DIR/outbound-lib.sh" 2> /dev/null || deny "Blocked by guards outbound-guard: its parser library outbound-lib.sh is missing or unreadable next to the hook ($HOOK_DIR/outbound-lib.sh), so this call cannot be checked and is denied. Reinstall or update the guards plugin."
+. "$HOOK_DIR/outbound-lib.sh" 2> /dev/null || deny "Blocked by guards outbound-guard: its parser library outbound-lib.sh is missing or unreadable next to the hook ($HOOK_DIR/outbound-lib.sh), so this call cannot be checked and is denied. Fix: reinstall or update the guards plugin."
 
 # A person can answer an ask only in these modes; elsewhere Claude Code answers it
 # itself (verified live in auto mode), so the guard denies instead.
@@ -113,7 +113,7 @@ case "$PERM_MODE" in default | acceptEdits | plan) HUMAN=1 ;; esac
 CAN_ASK=0
 { [ "${GUARDS_OUTBOUND_ASK:-1}" = "1" ] || [ "${GUARDS_OUTBOUND_ASK:-1}" = "force" ]; } && [ "$HUMAN" -eq 1 ] && CAN_ASK=1
 
-SAFE_FORMS="To authenticate a request without putting the credential in the command, keep it in a file only you can read and pass that file: for curl use -K <config file>, --netrc-file <file> or -H @<headers file>; for wget use --config <file>. To check that a key works without sending it, use ssh -i <key> or ssh-keygen -l -f <key>."
+SAFE_FORMS="Fix: to authenticate a request without putting the credential in the command, keep it in a file only you can read and pass that file: for curl use -K <config file>, --netrc-file <file> or -H @<headers file>; for wget use --config <file>. To check that a key works without sending it, use ssh -i <key> or ssh-keygen -l -f <key>."
 OVERRIDE="If the user really wants this to go through, they must start Claude Code with GUARDS_ALLOW_OUTBOUND_SECRETS=1."
 # Case ids in guards/tests/outbound-safeforms.test.sh that prove each safe form
 # the messages name; outbound-guard.test.sh checks every one of them exists there.
@@ -172,7 +172,7 @@ flag_cred() {
     [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: this would send credential-adjacent material ($why) to a remote host, via $where${mode}. ${SAFE_FORMS} ${OVERRIDE}"
     return 0
   fi
-  [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: this would send credential material ($why) to a remote host, via $where. Send the data you mean to send, not the credential store. ${SAFE_FORMS} ${OVERRIDE}"
+  [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: this would send credential material ($why) to a remote host, via $where. Fix: send the data you mean to send, not the credential store. ${SAFE_FORMS} ${OVERRIDE}"
 }
 
 classify_path() { # classify_path RAWPATH WHERE
@@ -210,12 +210,12 @@ while IFS=$'\t' read -r kind a b c; do
     S)
       case "$b" in
         envdump)
-          [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: the whole environment ($c) would be sent to a remote host by $a. It holds every secret the session can see. Send only the variables you need, by name, or write them to a file you intend to send. ${SAFE_FORMS} ${OVERRIDE}" ;;
+          [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: the whole environment ($c) would be sent to a remote host by $a. It holds every secret the session can see. Fix: send only the variables you need, by name, or write them to a file you intend to send. ${SAFE_FORMS} ${OVERRIDE}" ;;
         envdump-filtered)
           if [ "$CAN_ASK" -eq 1 ]; then
             [ -n "$ASK_MSG" ] || ASK_MSG="guards outbound-guard: a filtered dump of the environment ($c, then a filter) would be sent to a remote host by $a. Approve only if the filter leaves out every secret. ${SAFE_FORMS}"
           else
-            [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: a filtered dump of the environment ($c, then a filter) would be sent to a remote host by $a, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Send only the variables you need, by name. ${SAFE_FORMS} ${OVERRIDE}"
+            [ -n "$DENY_MSG" ] || DENY_MSG="Blocked by guards outbound-guard: a filtered dump of the environment ($c, then a filter) would be sent to a remote host by $a, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Fix: send only the variables you need, by name. ${SAFE_FORMS} ${OVERRIDE}"
           fi ;;
         pipearg) classify_path "$c" "a pipe into $a" ;;
         subst) classify_path "$c" "a command substitution passed to $a" ;;
@@ -225,7 +225,7 @@ while IFS=$'\t' read -r kind a b c; do
     U) note "guards outbound-guard: a file operand of $a is named through a variable or substitution, so it could not be checked (allowed). The guard only sees paths written in the command." ;;
     X)
       if [ "$a" = "awk-failed" ]; then
-        deny "Blocked by guards outbound-guard: the command parser (awk) could not run, so this command, which names a network client, cannot be checked and is denied. Check that a POSIX awk is on PATH. $OVERRIDE"
+        deny "Blocked by guards outbound-guard: the command parser (awk) could not run, so this command, which names a network client, cannot be checked and is denied. Fix: check that a POSIX awk is on PATH. $OVERRIDE"
       fi
       note "guards outbound-guard: this command was not fully checked ($a); the literal-credential and file checks that could run did." ;;
     L)
@@ -271,7 +271,7 @@ literal_scan() {
   local w in rules r hard=0 loc where="" total=0 mode_note="" cname="${CLIENT_NAME:-a network client}"
   w="$(mktemp -d 2> /dev/null)" || {
     LIT_KIND=deny
-    LIT_MSG="Blocked by guards outbound-guard: no temporary directory could be created, so the text of this command, which names a network client, cannot be checked for a credential. $OVERRIDE"
+    LIT_MSG="Blocked by guards outbound-guard: no temporary directory could be created, so the text of this command, which names a network client, cannot be checked for a credential. Fix: make a temporary directory available (check TMPDIR and free disk space) and retry. $OVERRIDE"
     return 0
   }
   in="$w/in.txt"
@@ -282,9 +282,9 @@ literal_scan() {
   . "$HOOK_DIR/secret-scan-lib.sh"
   if ! secret_scan "$in"; then
     if [ "${SS_TIMED_OUT:-0}" = 1 ]; then
-      LIT_MSG="Blocked by guards outbound-guard: the local secret scan did not finish in time, so the text of this command, which names $cname, cannot be checked for a credential before it is sent. Fail-closed: sent text cannot be recalled. $OVERRIDE"
+      LIT_MSG="Blocked by guards outbound-guard: the local secret scan did not finish in time, so the text of this command, which names $cname, cannot be checked for a credential before it is sent. Fail-closed: sent text cannot be recalled. Fix: retry; if the text is very large, send a shorter one. $OVERRIDE"
     else
-      LIT_MSG="Blocked by guards outbound-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so the text of this command, which names $cname, cannot be checked for a credential before it is sent. Start the service (docker compose up -d in the plugin's docker directory) or install gitleaks and jq. $OVERRIDE"
+      LIT_MSG="Blocked by guards outbound-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so the text of this command, which names $cname, cannot be checked for a credential before it is sent. Fix: start the service (docker compose up -d in the plugin's docker directory) or install gitleaks and jq. $OVERRIDE"
     fi
     LIT_KIND=deny
     rm -rf "$w"
@@ -320,14 +320,14 @@ $LIT_WHAT"
   fi
   if [ "$hard" -eq 1 ]; then
     LIT_KIND=deny
-    LIT_MSG="Blocked by guards outbound-guard: this command would send text that looks like a credential (detector rule(s): $rules_csv) to a remote host via $cname. Do not put the value in the command, not even a prefix.${explain}"
+    LIT_MSG="Blocked by guards outbound-guard: this command would send text that looks like a credential (detector rule(s): $rules_csv) to a remote host via $cname. Fix: do not put the value in the command, not even a prefix; describe its shape only.${explain}"
   elif [ "$CAN_ASK" -eq 1 ]; then
     LIT_KIND=ask
-    LIT_MSG="guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname. Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and use one of the safe forms.${explain}"
+    LIT_MSG="guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname. Approve only if it shows a SHAPE or a documented example. Fix: if it contains a real value, deny it and use one of the safe forms.${explain}"
   else
     [ "${GUARDS_OUTBOUND_ASK:-1}" != "0" ] && mode_note=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so an ambiguous match is blocked instead of asked]"
     LIT_KIND=deny
-    LIT_MSG="Blocked by guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname${mode_note}. Do not put the value in the command, not even a prefix.${explain}"
+    LIT_MSG="Blocked by guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname${mode_note}. Fix: do not put the value in the command, not even a prefix; describe its shape only.${explain}"
   fi
   return 0
 }
@@ -342,7 +342,7 @@ if [ "$HAVE_CLIENT" -eq 1 ] && [ -z "$DENY_MSG" ]; then
     if [ "$LIT_KIND" = deny ] && [ "$LIT_FROM_RULES" -eq 1 ]; then
       DENY_MSG="$LIT_MSG"
     else
-      DENY_MSG="Blocked by guards outbound-guard: this command would send a literal credential to a remote host: a vendor-shaped value in $LIT_SURE. Do not put the value in the command, not even a prefix.
+      DENY_MSG="Blocked by guards outbound-guard: this command would send a literal credential to a remote host: a vendor-shaped value in $LIT_SURE. Fix: do not put the value in the command, not even a prefix.
 $LIT_WHAT"
     fi
   else
@@ -353,10 +353,10 @@ $LIT_WHAT"
       *)
         if [ -n "$LIT_AMBIG" ]; then
           if [ "$CAN_ASK" -eq 1 ]; then
-            [ -n "$ASK_MSG" ] || ASK_MSG="guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text. Approve only if it is not a real value.
+            [ -n "$ASK_MSG" ] || ASK_MSG="guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text. Approve only if it is not a real value. Fix: if it is real, do not put the value in the command, not even a prefix.
 $LIT_WHAT"
           else
-            DENY_MSG="Blocked by guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Do not put the value in the command, not even a prefix.
+            DENY_MSG="Blocked by guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Fix: do not put the value in the command, not even a prefix.
 $LIT_WHAT"
           fi
         fi ;;

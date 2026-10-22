@@ -79,6 +79,22 @@ other mode. A command that names its file through a variable (`-d @$F`) is allow
 note, because the guard cannot see the path; that is a limit, not permission. Do not split,
 encode or rename a value to get past the guard.
 
+## Whose message is it?
+
+A call can be stopped by something other than the guards: another PreToolUse hook (yours,
+the project's or another plugin's), a permission rule, or Claude Code itself. In one replay,
+93 of 749 `kubectl` results were blocked by a hook that was not a guard. The prefix tells
+them apart, and `guards_status` returns the same table in its `message_prefixes` field.
+
+| The message starts with | Who sent it | What it means |
+|---|---|---|
+| `Blocked by guards <hook>:` | a guards hook | The call did not run. The message ends with a `Fix:` clause: the exact thing to do instead. |
+| `guards <hook>:` | a guards hook | An ask (a person is prompted and the call has not run yet), a note, or a withheld output. For a withheld output the command or tool **already ran**; only its output was replaced by a notice, so do not assume it failed. |
+| anything else | not a guard | Look at the hook, rule or tool that wrote it. The guards cannot change it. |
+
+`<hook>` is one of `credfile-guard`, `publish-guard`, `outbound-guard`, `sendmessage-guard`,
+`userpromptsubmit-guard`, `combined-hook` (Bash output) or `mcp-output-guard` (MCP output).
+
 ## Diagnosing a block
 
 1. Call `explain_block` with the message. A publish-guard message has the detector

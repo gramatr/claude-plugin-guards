@@ -67,7 +67,7 @@ out="$(run "$HOOKS" $H "$(payload --arg b "leak $SEC" --arg w "$T" '{tool_name:"
 is_deny "$out" && ok || bad "publish: a GitHub MCP write is scanned without jq ($out)"
 printf 'not json at all' > "$T/garbage.json"
 out="$(run "$HOOKS" $H "$T/garbage.json")"
-if is_deny "$out" && [[ "$out" == *"Install jq"* ]]; then ok; else bad "publish: an unreadable payload is denied with an install-jq reason ($out)"; fi
+if is_deny "$out" && [[ "$out" == *"nstall jq"* ]]; then ok; else bad "publish: an unreadable payload is denied with an install-jq reason ($out)"; fi
 
 # ---- credfile-guard ---------------------------------------------------------
 out="$(run "$HOOKS" credfile-guard.sh "$(payload --arg f "$HOME/.ssh/id_rsa" --arg w "$T" '{tool_name:"Read",tool_input:{file_path:$f},cwd:$w,permission_mode:"auto"}')")"
@@ -78,7 +78,7 @@ if is_deny "$out" && [[ "$out" == *"jq"* ]]; then ok; else bad "credfile: an unr
 # ---- combined-hook (Bash output) --------------------------------------------
 H=combined-hook.sh
 out="$(run "$HOOKS" $H "$(payload --arg o "line $SEC" '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:$o,stderr:"",interrupted:false,isImage:false}}')")"
-if [[ "$out" == *updatedToolOutput* && "$out" == *withheld* && "$out" == *"Install jq"* && "$out" != *"$VAL"* ]]; then ok; else bad "bash output: a secret result is withheld, naming jq ($out)"; fi
+if [[ "$out" == *updatedToolOutput* && "$out" == *withheld* && "$out" == *"nstall jq"* && "$out" != *"$VAL"* ]]; then ok; else bad "bash output: a secret result is withheld, naming jq ($out)"; fi
 out="$(run "$HOOKS" $H "$(payload '{tool_name:"Bash",tool_input:{command:"x"},tool_response:{stdout:"hello world",stderr:"",interrupted:false,isImage:false}}')")"
 if [[ "$out" == *additionalContext* && "$out" == *"jq is not installed"* && "$out" != *updatedToolOutput* ]]; then ok; else bad "bash output: a clean result passes with a partial-check note ($out)"; fi
 out="$(run "$HOOKS" $H "$(payload '{tool_name:"Read",tool_response:{stdout:"x"}}')")"
@@ -87,7 +87,7 @@ out="$(run "$HOOKS" $H "$(payload '{tool_name:"Read",tool_response:{stdout:"x"}}
 # ---- mcp-output-guard ---------------------------------------------------------
 H=mcp-output-guard.sh
 out="$(run "$HOOKS" $H "$(payload --arg o "see $SEC" '{tool_name:"mcp__x__get",tool_input:{},tool_response:[{type:"text",text:$o}]}')")"
-if [[ "$out" == *updatedToolOutput* && "$out" == *withheld* && "$out" == *"Install jq"* && "$out" != *"$VAL"* ]]; then ok; else bad "mcp output: a secret result is withheld, naming jq ($out)"; fi
+if [[ "$out" == *updatedToolOutput* && "$out" == *withheld* && "$out" == *"nstall jq"* && "$out" != *"$VAL"* ]]; then ok; else bad "mcp output: a secret result is withheld, naming jq ($out)"; fi
 out="$(run "$HOOKS" $H "$(payload '{tool_name:"mcp__x__get",tool_input:{},tool_response:[{type:"text",text:"all good"}]}')")"
 if [[ "$out" == *additionalContext* && "$out" != *updatedToolOutput* ]]; then ok; else bad "mcp output: a clean result passes with a note ($out)"; fi
 out="$(run "$HOOKS" $H "$(payload --arg o "see $SEC" '{tool_name:"mcp__plugin_gramatr_gramatr__x",tool_input:{},tool_response:[{type:"text",text:$o}]}')")"
@@ -122,7 +122,7 @@ out="$(run "$HOOKS" $H "$(payload --arg w "$T" '{tool_name:"Bash",tool_input:{co
 [ -z "$out" ] && ok || bad "outbound: a command naming no client is untouched without jq ($out)"
 printf 'not json at all, but it mentions curl' > "$T/garbage-curl.json"
 out="$(run "$HOOKS" $H "$T/garbage-curl.json")"
-if is_deny "$out" && [[ "$out" == *"Install jq"* ]]; then ok; else bad "outbound: an unreadable payload that names a client is denied with an install-jq reason ($out)"; fi
+if is_deny "$out" && [[ "$out" == *"nstall jq"* ]]; then ok; else bad "outbound: an unreadable payload that names a client is denied with an install-jq reason ($out)"; fi
 out="$(run "$HOOKS" $H "$T/garbage.json")"
 [ -z "$out" ] && ok || bad "outbound: an unreadable payload that names no client is left alone ($out)"
 
