@@ -33,6 +33,11 @@ services:
       # injection model at startup and exits on the 401), so PII and
       # injection detection are unavailable until a token is added; secret
       # detection continues through the hooks' local fallback.
+      #
+      # The same file takes the service's PII settings (PII_ENTITIES, PII_MIN_SCORE,
+      # PII_IGNORE_NAMES): since server v0.2.10 the default looks only for email,
+      # phone, SSN, passport, card and IBAN, not IP addresses, places or names.
+      # docs/CONFIGURATION.md has the table and a recorded run.
       - ${HOME}/.config/gramatr-guards/injection-guard.env
     volumes:
       # Local-only metrics — one JSON line per finding (timestamp,
