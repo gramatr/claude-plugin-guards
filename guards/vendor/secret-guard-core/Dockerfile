@@ -10,6 +10,9 @@
 # known HIGH CVEs (klauspost/compress, x/crypto, x/text, the Go stdlib), and a
 # secret scanner should not ship a vulnerable dependency. The build pins the
 # tag, bumps the modules to fixed versions and uses a current Go toolchain.
+# The module list below is the same as guards-unified's Dockerfile.cpu (the xz and
+# rardecode bumps and x/crypto v0.56.0 clear the MEDIUM findings Trivy reported);
+# guards/tests/dockerfile-go-drift.sh fails CI if the two lists differ.
 # When gitleaks publishes a release that already carries these fixes, drop
 # the `go get` line (and the bumps) and go back to the tag alone.
 FROM golang:1.26-bookworm@sha256:fe3da92a5cb2881e4aa75e625cb0b7c50571632fb4cf340cbe53e6ccdcffdd51 AS gitleaks
@@ -21,7 +24,8 @@ RUN git init -q /src && cd /src \
     && git fetch -q --depth 1 origin "${GITLEAKS_COMMIT}" \
     && git checkout -q --detach FETCH_HEAD
 WORKDIR /src
-RUN go get github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0 \
+RUN go get github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 \
+       github.com/ulikunitz/xz@v0.5.15 github.com/nwaples/rardecode/v2@v2.2.0 github.com/mholt/archives@v0.1.5 \
     && go mod tidy \
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/zricethezav/gitleaks/v8/version.Version=${GITLEAKS_VERSION}" -o /usr/bin/gitleaks .
 

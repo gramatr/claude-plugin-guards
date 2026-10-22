@@ -293,10 +293,10 @@ masking), which this guard complements and does not replace.
   vendored Dockerfile) and kept equal by hand.
 - **Known CVEs** in the Go modules bundled with the pinned gitleaks release
   are not suppressed. The scan image builds gitleaks from its tag with fixed
-  `klauspost/compress`, `x/crypto` and `x/text` and a current Go toolchain (the
-  guards-unified image also fixes `ulikunitz/xz`, `nwaples/rardecode/v2` and
-  `mholt/archives`: six modules, listed in its `Dockerfile.cpu`), and
-  `.trivyignore` is empty. For a machine without Docker, the self-heal script
+  `klauspost/compress`, `x/crypto`, `x/text`, `ulikunitz/xz`,
+  `nwaples/rardecode/v2` and `mholt/archives` (six modules) and a current Go
+  toolchain, the same list as guards-unified's `Dockerfile.cpu`; a CI check
+  (`dockerfile-go-drift`) fails if the two lists differ. `.trivyignore` is empty. For a machine without Docker, the self-heal script
   downloads the patched gitleaks that guards-unified publishes with each release
   (from the first release that carries it) and checks it against SHA-256 values
   this plugin carries, `guards/vendor/secret-guard-core/gitleaks-assets.sha256`.
