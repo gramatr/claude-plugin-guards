@@ -99,4 +99,4 @@ Each advisory states its CVSS vector and a short reason for the confidentiality 
 
 ## When we publish an advisory
 
-Every in-scope defect that shipped in a release and rates Low or above gets a repository security advisory, on this repository's Security tab, with the affected and patched versions. We do not request CVE identifiers by default. If one is ever requested, the maintainer decides, case by case, after seeing the exact request.
+Every in-scope defect that shipped in a release and rates Low or above gets a repository security advisory, on this repository's Security tab, with the affected and patched versions. This rule applies from 2026-10-22. Defects fixed in earlier releases are described in the changelog and the release notes, not in advisories. We do not request CVE identifiers by default. If one is ever requested, the maintainer decides, case by case, after seeing the exact request.
