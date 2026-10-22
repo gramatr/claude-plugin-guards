@@ -329,7 +329,14 @@ ctx_redact() {
         continue
       fi
     fi
-    if ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
+    # A route string, not a key: a credential word that is a path segment (the character before it is a
+    # slash) followed by a colon, as in an API custom-method suffix or a sentence about a route. What
+    # follows the colon is not a value (coordination#99). Only a colon: an equals sign after the segment
+    # and every key that is not a path segment still redact.
+    if [ -n "$key" ] && [[ "$pfx" != *=* ]] && [[ "$pfx" =~ :[[:blank:]]*[\"\']?$ ]] \
+      && { [[ "$key" == /* ]] || [ "${out: -1}" = "/" ]; }; then
+      out+="$m"
+    elif ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
       || { [ -n "$key" ] && ctx_dependency_spec "$key" "$val" "$out$pre"; } \
       || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then

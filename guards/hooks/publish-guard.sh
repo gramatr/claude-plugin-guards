@@ -206,6 +206,41 @@ case "$TOOL_NAME" in
     fi
 
     printf '%s\n' "$CMD" > "$WORK/cmd.txt"
+    # A commit is judged on its message and its staged diff, not on unrelated commands chained on the
+    # same line (coordination#99): a heredoc that only writes a file (cat > f <<EOF, tee f <<EOF) is
+    # dropped from the command text, because the text is either committed (then the staged diff
+    # carries it) or not published at all. Only when nothing on the line can pull that file into the
+    # commit: no git add/stage/update-index/apply in the command, no -a/--all, no pathspec. Otherwise,
+    # and when the awk script is missing or fails, the whole command is scanned as before.
+    # GUARDS_PUBLISH_COMMIT_SCOPE=0 turns it off. A credential in a -m message or in the staged diff
+    # still denies.
+    if [ "$IS_COMMIT" -eq 1 ] && [ "${GUARDS_PUBLISH_COMMIT_SCOPE:-1}" != 0 ] && [[ "$CMD" == *'<<'* ]] \
+       && [ -r "$(dirname "${BASH_SOURCE[0]}")/heredoc-strip.awk" ]; then
+      scope_ok=1
+      if [[ "$CMDL" =~ (^|[^A-Za-z0-9_-])git([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(add|stage|update-index|apply)([[:space:]]|$) ]]; then
+        scope_ok=0
+      fi
+      scope_tail=""
+      if [[ "$NQ" =~ $COMMIT_RE ]]; then
+        scope_tail="${NQ#*"${BASH_REMATCH[0]}"}"; scope_tail="${scope_tail%%[;&|]*}"
+      fi
+      if [[ "$scope_tail" =~ (^|[[:space:]])(-[A-Za-z]*a[A-Za-z]*|--all)([[:space:]]|$) ]]; then scope_ok=0; fi
+      skip_next=0
+      for scope_tok in $scope_tail; do
+        if [ "$skip_next" -eq 1 ]; then skip_next=0; continue; fi
+        case "$scope_tok" in
+          -m|-F|-C|-c|-t|--message|--file|--author|--date|--reuse-message|--reedit-message|--template|--fixup|--squash|--cleanup|--trailer) skip_next=1 ;;
+          --) scope_ok=0 ;;
+          -*) ;;
+          *) scope_ok=0 ;;
+        esac
+      done
+      if [ "$scope_ok" -eq 1 ] \
+         && scoped="$(printf '%s\n' "$CMD" | awk -f "$(dirname "${BASH_SOURCE[0]}")/heredoc-strip.awk" 2>/dev/null)" \
+         && [ -n "$scoped" ]; then
+        printf '%s\n' "$scoped" > "$WORK/cmd.txt"
+      fi
+    fi
     if [ "$IS_COMMIT" -eq 1 ]; then
       emit_src "the command text (for a git commit this includes the -m message)" "$WORK/cmd.txt"
     else
