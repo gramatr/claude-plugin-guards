@@ -80,8 +80,9 @@ Prerequisites:
   v8.30.1 for Linux or macOS (x64 or arm64), checks its SHA-256 against the
   release checksum file, and installs it to `~/.local/bin`. Other platforms get
   a warning and the built-in passes only.
-- For the injection finding only: a Hugging Face token whose account has
-  accepted the Llama Prompt Guard 2 license (below).
+- A Hugging Face token whose account has accepted the Llama Prompt Guard 2
+  license (below). Only the injection model needs it, but without it the
+  service does not start, so PII detection is lost too.
 
 In Claude Code 2.1.275 or later, one step:
 
