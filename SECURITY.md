@@ -4,8 +4,9 @@
 
 Please report security problems privately, through GitHub's private
 vulnerability reporting: open the **Security** tab of this repository and choose
-**Report a vulnerability**. Issues are disabled on this repository, and please
-do not describe a vulnerability in any public place (a pull request, a
+**Report a vulnerability**. If you cannot use GitHub, write to
+security@gramatr.com instead. Please do not open an issue for a vulnerability,
+and do not describe it in any public place (an issue, a pull request, a
 discussion, a social post): a public report discloses it to everyone at once.
 
 This is a small open-source project. Replies are best effort and no response

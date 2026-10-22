@@ -617,7 +617,7 @@ before it is returned). None of them disables, bypasses or weakens a guard; the
 | `prepare_publication(kind, title, body)` | Writes commit-message, pr-body or issue-body text to a 0600 file under the state directory, scans it, lists the lines the scanner would redact (shown redacted), and returns the command (`git commit -F`, `gh pr create --body-file`, `gh issue create --body-file`). A file with findings holds the redacted text only. |
 | `guards_status()` | Registered hooks, plugin and service versions, whether the service answers, the permission-mode rules, environment overrides that switch a guard off, and degraded modes (no `jq`, no `gitleaks`, service down). |
 | `mark_synthetic(path, lines, reason)` | Appends `guards:synthetic` with the right comment syntax for the file type. Refuses lines shaped like a real credential (PEM header, AKIA/ASIA id, `ghp_`/`gho_`/`github_pat_`, `xox*-`, `sk-`, JWT, 40+ character base64), an empty reason, paths outside the cwd's git repo, and file types with no comment syntax. |
-| `report_false_positive(rule, redacted_line, context)` | Writes a value-free JSON report under the state directory and returns its path and a line for the user to forward (the public repos have Issues disabled). Refuses input that does not look redacted. |
+| `report_false_positive(rule, redacted_line, context)` | Writes a value-free JSON report under the state directory and returns its path and a line for the user to forward (please do not paste it into a public issue). Refuses input that does not look redacted. |
 
 Prompts: `fix_a_block`, `safe_pr_body`, `fake_fixture_checklist`. The plugin
 skill `skills/guards-for-agents/SKILL.md` carries the same rules and triggers

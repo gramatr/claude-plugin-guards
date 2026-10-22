@@ -842,7 +842,7 @@ class ReportFalsePositive(Base):
         self.assertEqual(oct(os.stat(res["path"]).st_mode & 0o777), "0o600")
         self.assertNotIn("@", res["forward"])
         self.assertIn("vulnerability reporting", res["forward"])
-        self.assertIn("Issues disabled", res["forward"])
+        self.assertIn("public issue", res["forward"])
         self.assertValueFree(res)
 
     def test_input_that_is_not_redacted_is_refused_and_nothing_is_written(self):
