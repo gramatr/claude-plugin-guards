@@ -6,7 +6,7 @@
 # download against, and a CI check keeps the copy equal to this file.
 # Change the recipe, the Go image, a module version or the gitleaks commit: regenerate this file in
 # the same change (build, then copy gitleaks-patched_<ver>_binary-sha256.txt over the lines below).
-3b4e2ac1f8393e565be4ceae24b66f21aaa1933cb4138291813ce4603c840406  darwin_x64
-9192b1066064adce90f26fa0fc712be9cb7556a686e44a12cf9071ee30140f9e  darwin_arm64
-a1e3941f4ce3b44722076aeca89795800564608d7db45c0c565e4977ed87a8d0  linux_x64
-b84b96d8d494b8a8ca289a8a6ef94ed88de09a1866f9fce7e7516b205fd32d41  linux_arm64
+d9d6e98c54b756df346a064760d415a9de5e438c280630643037899b7f5234dd  darwin_x64
+48d7a1935e66bc1222fcbb41bdd7fc907b6574f2ed51dbc5acc8f0e587bf30a3  darwin_arm64
+945d8dd202d1ab6da5cc6fca5e29d4bfc91be453c433117b8278f6d04a257940  linux_x64
+5cbd90d0ee8f4b53a7d538a1080549bb976fa3a254682fed09b3e72a3ddf7213  linux_arm64
