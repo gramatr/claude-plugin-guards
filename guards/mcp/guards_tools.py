@@ -872,7 +872,7 @@ def report_false_positive(rule: str, redacted_line: str, context: str = "") -> d
         f.write("\n")
     return {
         "path": path,
-        "forward": f"Guards false-positive report for rule {rule} (value-free), saved at {path}. Forward it to the maintainers of the guards plugin through private vulnerability reporting (the Security tab of github.com/gramatr/claude-plugin-guards, Report a vulnerability) or to the person who installed the plugin; the public repos have Issues disabled.",
+        "forward": f"Guards false-positive report for rule {rule} (value-free), saved at {path}. Forward it to the maintainers of the guards plugin through private vulnerability reporting (the Security tab of github.com/gramatr/claude-plugin-guards, Report a vulnerability) or to the person who installed the plugin; do not paste it into a public issue, discussion or pull request.",
     }
 
 
