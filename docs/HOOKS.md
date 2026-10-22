@@ -12,17 +12,18 @@ For why the hooks are arranged this way (one rewriter per tool), see the
 | Event | Matcher | Script | Timeout | What it does |
 |---|---|---|---|---|
 | `SessionStart` | `*` | `bin/guards-selfheal.sh` | 270 s | Installs gitleaks if missing, checks for a plugin update, starts and updates the guards-unified container. Always exits 0. |
-| `PostToolUse` | `Bash` | `hooks/combined-hook.sh` | 15 s | Scans stdout and stderr. Redacts secrets; prepends a note for PII and for likely injection. Rewrites the Bash output shape only. |
+| `PostToolUse` | `Bash` | `hooks/combined-hook.sh` | 15 s | Scans stdout and stderr. Redacts secrets; prepends a note for PII (each type named once per session by default, and filterable) and for likely injection. Rewrites the Bash output shape only. |
 | `PostToolUse` | `mcp__.*` | `hooks/mcp-output-guard.sh` | 30 s | Redacts secrets in MCP tool results of recognised shapes. Skips `^mcp__plugin_gramatr_` by default. |
-| `PreToolUse` | `SendMessage` | `hooks/sendmessage-guard.sh` | 15 s | Redacts secrets in `message`, `summary`, `content` before the message is sent; flags PII. Must stay the only `PreToolUse` hook on `SendMessage`. |
+| `PreToolUse` | `SendMessage` | `hooks/sendmessage-guard.sh` | 15 s | Redacts secrets in `message`, `summary`, `content` before the message is sent; notes PII (each type once per session by default). Must stay the only `PreToolUse` hook on `SendMessage`. |
 | `PreToolUse` | `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | 10 s | Denies reads of credential files and of any file containing a private-key header; for `.env`, kubeconfig, `.npmrc`/`.pypirc` and terraform state it asks where a person can answer and denies otherwise. |
 | `PreToolUse` | `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | 40 s | Denies (or asks about) `gh` publishes, `gh api` with a body, `git commit` and GitHub MCP writes that carry credentials. |
 | `PreToolUse` | `Bash` | `hooks/outbound-guard.sh` | 15 s | Denies (or asks about) a Bash command that would send credential material to a remote host: a credential file, or the whole environment, given to `curl`, `wget`, HTTPie, `nc`, `scp`/`rsync`/`sftp` or `ssh`, or a literal credential in the command text. A deny teaches the safe forms. See [`OUTBOUND-SAFE-FORMS.md`](OUTBOUND-SAFE-FORMS.md). |
 | `UserPromptSubmit` | none (all prompts) | `hooks/userpromptsubmit-guard.sh` | 15 s | Adds a note if the prompt contains a secret. Cannot redact or block. |
 
-MCP server: `mcp/server.py`, with the tools `scan(text)` and
-`check_before_publish(text_or_command, cwd, kind)`, four `guards://guide/...`
-resources and server `instructions` (see "Working with the guards as a coding
+MCP server: `mcp/server.py`, with seven tools (`scan(text)`,
+`check_before_publish(text_or_command, cwd, kind)`, `explain_block`,
+`prepare_publication`, `guards_status`, `mark_synthetic`, `report_false_positive`),
+three prompts, four `guards://guide/...` resources and server `instructions` (see "Working with the guards as a coding
 agent" below). `scan` calls the service's
 `POST /v1/scan` with a 15 s client timeout. Anything that is not a real scan
 result comes back as `{"error": ...}`, never as a clean-looking result:
@@ -159,7 +160,7 @@ tests are the specification for the points listed.
 - A secret is redacted and the hook answers `allow` with `updatedInput` and a note; it never denies.
 - `message`, `summary` and `content` are each scanned from their own text. An empty `message` does not stop `content` from being scanned.
 - `summary` is cut to 200 characters on the redaction path. A clean 300-character summary with nothing else to report produces no output, so it is not cut.
-- PII is flagged and left intact by default; `PII_GUARD_MODE=redact` replaces it.
+- PII is noted and left intact by default, each type once per session unless `GUARDS_PII_NOTE_ONCE=0`; `PII_GUARD_MODE=redact` replaces it.
 - A field past `SCAN_MAX_BYTES` (default 24576): only that many bytes are sent, the rest is reattached unchanged, and the note says so. This applies even when nothing else was found.
 - Service down, or answering 200 without a `findings` list: local secret-only scan of every field, `allow`, and a note that PII scanning could not run. With no executable `scan.sh` as well, the text passes unchanged but the hook still answers `allow` (**open**).
 
@@ -170,7 +171,7 @@ tests are the specification for the points listed.
 - PII and injection findings in the prompt add nothing.
 - Service down, error answer, malformed answer, curl timeout, `jq` missing: no note, exit 0.
 - Length: the hook sends the prompt to the secret-only route (`/v1/scan/secret`), never the full route, and passes it to `jq` on stdin, so the operating system's per-argument limit (about 128 KB) does not apply. A 200 KB prompt is sent whole and a credential at its very end gets the note. A prompt past 900000 bytes is cut to that length so the route's 1 MiB cap is never hit; a credential in the first 900000 bytes still gets the note, one after that is not seen (**open**). A service refusal (413) or an outage gives no note (**open**).
-- Latency, measured 2026-10-20 against the live service (guards-unified 0.2.4, `http://127.0.0.1:8700`, one host, CPU image): the whole hook, from process start to exit, six runs each with small fabricated prompts. A 70-byte clean prompt: 199 to 231 ms (median about 209 ms). A 70-byte prompt holding a fabricated token: 210 to 220 ms (median about 214 ms). This is one machine on one day, with prompts far below the sizes where the model cost grows (about 0.25 s per KB per the service docs); larger prompts were not measured and will be slower, up to the 8 s request limit.
+- Latency: the hook sends the prompt to the secret-only route with an 8 s request limit. The earlier timings (2026-10-20, guards-unified 0.2.4, one host) described a different server release and are dropped; the models cost about 0.25 s per KB per the service docs.
 
 **Outbound guard** (`outbound-guard.test.sh`, a throwaway HOME with fabricated credential files and ssh-keygen keys, a stub service)
 
@@ -206,7 +207,7 @@ tests are the specification for the points listed.
 
 **MCP server** (`mcp-server.test.py`)
 
-- The instructions are at most 150 words and carry the rules and the four resource URIs; a client over stdio receives them with the resources and both tools.
+- The instructions are at most 150 words and carry the rules and the four resource URIs; a client over stdio receives them with the resources and the tools.
 - The guides state the marker scope and the defaults, and pass the scanner unchanged.
 - `check_before_publish` denies text and commits with the located, value-free explanation, allows a marked staged line, ignores an inline override, reports `inspected: false` for a command that is not a publish, and returns `{"error": ...}`, never an allow, when the hook is missing, crashes or answers garbage.
 

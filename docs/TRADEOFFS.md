@@ -12,11 +12,11 @@ changes are made in
 vendored `scan.sh` here by a sync PR; the sync PR is the number given. "Version"
 is the first release tag that contains the change; plugin installs track `main`,
 so a change is live as soon as it is merged and the plugin updates. Tags that
-exist: v0.1.0 to v0.1.4, v0.2.2 and v0.2.3; there are no plugin tags for
-v0.1.5 to v0.2.1.
+exist are in the repository's tag list; there are no plugin tags for v0.1.5 to
+v0.2.1, and "Unreleased" marks a change that no tag contains yet.
 
-Dates are 2026-10-17 to 2026-10-20. Anything described as "verified live" comes
-from the PR descriptions; it was not re-run for this page.
+Anything described as "verified live" comes from the PR descriptions; it was
+not re-run for this page.
 
 ## Hardening
 
@@ -36,12 +36,12 @@ from the PR descriptions; it was not re-run for this page.
 | #59 | v0.2.2 | Bash hook fast path: secrets scanned up to 256 KB without waiting for the models | The old hook took 10 s on 24 KB and did not redact a secret later in a large output | See the PII and injection loosening below |
 | #61 | v0.2.2 | Scanner sync: decode long base64 tokens and scan the decoded text | A secret wrapped in base64 had no key name to match | Up to 25 candidates per scan; no other encodings |
 | #62 | v0.2.2 | Publish guard denies instead of asking when no person can answer (modes `auto`, `bypassPermissions`, `dontAsk`, unknown) | An `ask` in `auto` mode was seen to let a command carrying a fake password run through | An ambiguous match in an unattended session blocks work until a person intervenes |
-| #101, #102 | Unreleased | `outbound-guard`: deny a Bash command that sends a credential file, the whole environment or a literal credential to a remote host, and teach the safe form | A credential leaves the machine in one command and no other guard looked at a network client; the spike found 74 candidates in 95,879 Bash commands of one machine's history, 71 of them uncaught by the earlier guards | About 3 ms on a command that names no client, about 190 to 230 ms on one that does (about 2 percent of Bash calls); best effort, see LIMITS.md |
-| #101 | Unreleased | The outbound override is read from the environment only, and the guard fails closed for a command that names a client | The caller is usually an AI agent, so the override must be something it cannot type; sent text cannot be recalled | A hung service or a bug blocks curl until the switch is set |
-| #101 | Unreleased | A file named through a variable or a substitution that builds the path is allowed with a note | The agent cannot fix a command it wrote correctly, and a deny there would teach it to split commands | A credential file named through a variable is not seen |
-| #94, #98 | Unreleased | The bash deadline watchdog no longer reports a timeout that did not happen, and its work-directory cleanup no longer deletes the hook's answer | Without `timeout` (stock macOS) a hook that finished in time was denied at random, and under load a deny could come out as nothing | None known; only the path without `timeout` changed |
-| #95 | Unreleased | Path resolution works without GNU `realpath -m` | On macOS a symlink to a credentials file was not recognised | About 4 ms per call on a Mac; none on Linux |
-| #100, guards-unified#43 | Unreleased | `scan.sh` uses no bash 4 syntax; a static check and a macOS CI job guard it | The bash 4 lowercase expansion made every context rule fail on stock macOS bash 3.2, so `KEY=value` was not redacted by the local scan | `scan.sh` is slow on bash 3.2 for a very long unbroken run followed by a key (tracked in #71) |
+| #101, #102 | v0.2.10 | `outbound-guard`: deny a Bash command that sends a credential file, the whole environment or a literal credential to a remote host, and teach the safe form | A credential leaves the machine in one command and no other guard looked at a network client; the spike found 74 candidates in 95,879 Bash commands of one machine's history, 71 of them uncaught by the earlier guards | About 3 ms on a command that names no client, about 190 to 230 ms on one that does (about 2 percent of Bash calls); best effort, see LIMITS.md |
+| #101 | v0.2.10 | The outbound override is read from the environment only, and the guard fails closed for a command that names a client | The caller is usually an AI agent, so the override must be something it cannot type; sent text cannot be recalled | A hung service or a bug blocks curl until the switch is set |
+| #101 | v0.2.10 | A file named through a variable or a substitution that builds the path is allowed with a note | The agent cannot fix a command it wrote correctly, and a deny there would teach it to split commands | A credential file named through a variable is not seen |
+| #94, #98 | v0.2.10 | The bash deadline watchdog no longer reports a timeout that did not happen, and its work-directory cleanup no longer deletes the hook's answer | Without `timeout` (stock macOS) a hook that finished in time was denied at random, and under load a deny could come out as nothing | None known; only the path without `timeout` changed |
+| #95 | v0.2.10 | Path resolution works without GNU `realpath -m` | On macOS a symlink to a credentials file was not recognised | About 4 ms per call on a Mac; none on Linux |
+| #100, guards-unified#43 | v0.2.10 | `scan.sh` uses no bash 4 syntax; a static check and a macOS CI job guard it | The bash 4 lowercase expansion made every context rule fail on stock macOS bash 3.2, so `KEY=value` was not redacted by the local scan | `scan.sh` is slow on bash 3.2 for a very long unbroken run followed by a key (tracked in #71) |
 
 ## Loosening and walk-backs
 
@@ -54,15 +54,17 @@ from the PR descriptions; it was not re-run for this page.
 | #21 | v0.1.0 | `SendMessage` when the service is down: degrade (local secret scan, allow, disclose) instead of deny | Denying blocked all cross-agent coordination on one dependency | PII is not scanned during an outage, only disclosed |
 | #27 | v0.1.2 | Injection warning needs a 0.95 confidence floor (`INJECTION_MIN_SCORE`) | Benign security-themed text scored 0.86 to 0.91 as malicious; real attacks 0.977 and up | Text that discusses override phrasing can still score above it; recall on indirect injection is about 6% |
 | #38 | v0.1.3 | Self-heal removes only a container it can prove is its own stale instance | A copy running in a sandbox once removed the production container | An unmanaged container holding port 8700 needs manual cleanup |
-| coordination #55 | Unreleased | Self-heal installs the patched gitleaks that guards-unified publishes with its release, checked against SHA-256 values this plugin carries; it falls back to the upstream binary with a warning if that fails. | A host without Docker ran upstream gitleaks, which bundles Go modules with known HIGH CVEs that the image no longer has. Hashes carried in the plugin (and kept equal to the server's by a CI check) mean a tampered release page cannot pass, which a checksum served beside the download cannot promise. | Another file to keep in step with the server's. A failed patched install silently (a warning in the log) leaves the weaker binary in place. Proven end to end only at the first release that carries the assets. |
+| coordination #55 | v0.2.10 | Self-heal installs the patched gitleaks that guards-unified publishes with its release, checked against SHA-256 values this plugin carries; it falls back to the upstream binary with a warning if that fails. | A host without Docker ran upstream gitleaks, which bundles Go modules with known HIGH CVEs that the image no longer has. Hashes carried in the plugin (and kept equal to the server's by a CI check) mean a tampered release page cannot pass, which a checksum served beside the download cannot promise. | Another file to keep in step with the server's. A failed patched install silently (a warning in the log) leaves the weaker binary in place. Proven end to end only at the first release that carries the assets. |
 | #57 | v0.2.2 | A scan that times out keeps the original text; withholding on timeout was tried and dropped | A timeout was withholding a user's whole result to protect against a rare case; a policy choice made inside a bug fix was backed out | A scan that runs out of time leaks rather than blocks |
-| #59 | v0.2.2 | PII and injection flags only on the first 2 KB (`FLAG_MAX_BYTES`), abandoned after a budget | The models cost about 0.3 s per KB and parallel requests did not help; the hook runs on every Bash call | **PII and injection beyond 2 KB are never flagged;** the hook is still not always under one second |
+| #59 | v0.2.2 | PII and injection flags only on the first 2 KB (`FLAG_MAX_BYTES`), abandoned after a budget | The models cost about 0.25 s per KB (the server's figure) and parallel requests did not help; the hook runs on every Bash call | **PII and injection beyond 2 KB are never flagged;** the hook is still not always under one second |
 | #60 | v0.2.2 | Credential-file and publish guards ask the person for ambiguous cases instead of denying | Blocking every match stopped ordinary work (a `.env` being debugged, an issue documenting flag syntax) | A distracted person can approve a real leak; the original incident (a punctuation-heavy key after "secret key") is now an ask. Sure things still deny |
 | #62, #63 | v0.2.2 | Scanner sync: a value that is an existing path is never a password; `PWD` and `OLDPWD` are skipped | The `PWD` environment variable matched a password alias, so every mention of the working directory was redacted and the publish guard blocked a commit that only contained it | A password that is also a real path on the scanning host is not redacted |
 | #65 | v0.2.3 | Scanner sync: the key-name rules' delimiter is a space or tab only, no longer a newline | A heading that ended in "token:" or "secret:" followed by an indented line had that line's first word redacted | **Removed real protection:** a value on the line after its key (a YAML scalar) was no longer caught |
 | #66 | v0.2.3 | Scanner sync: YAML next-line rule restored narrowly (key line is only the key and a colon, next line a single bare token) | Restore the YAML scalar case without the heading false positive | A heading ending in a keyword and a colon, followed by exactly one word, still redacts that word |
-| #15, #16, #92 | v0.1.0; narrowed after v0.2.9 | Metrics directory made `chmod 777`, then private when it can be | The container's non-root user (uid 1000) could not write to a root-owned bind mount | v0.1.0 made it world-writable (verdicts only, never scanned text, but any local user could read, fill or replace the log). Now mode 0700 for a host user with uid 1000, 0700 plus an ACL entry for uid 1000 where `setfacl` exists, and `0777` with a warning only otherwise (not warned on macOS, where Docker Desktop maps the owner) |
+| #15, #16, #92 | v0.1.0; narrowed in v0.2.10 | Metrics directory made `chmod 777`, then private when it can be | The container's non-root user (uid 1000) could not write to a root-owned bind mount | v0.1.0 made it world-writable (verdicts only, never scanned text, but any local user could read, fill or replace the log). Now mode 0700 for a host user with uid 1000, 0700 plus an ACL entry for uid 1000 where `setfacl` exists, and `0777` with a warning only otherwise (not warned on macOS, where Docker Desktop maps the owner) |
 | #50 (decision pending) | Unreleased | A guard that scans content written with `Write`, `Edit`, `MultiEdit` and `NotebookEdit` is **not built** (declined for now). | The commit guard already scans the staged diff, so a committed file is caught at `git commit`. A replay of a fixed random sample of 1,500 real writes (from 21,887 distinct writes in one maintainer's sessions) through the scanner changed 95 of them (6.3%: 3.0% of edits, 14.2% of whole-file writes), and 93 of the 95 were the ambiguous key-name rule, not a vendor token shape. A guard that denied or asked would have interrupted about 1 write in 16, and 1 whole-file write in 7. | An uncommitted file with a credential in it, a file shared another way, and a value from your own prompt that is written out are not scanned, so the value lands on disk and in the transcript. The 95 were not reviewed one by one (their content was not read), so some may be real secrets; the replay measures how often a guard would fire, not how often it would be right. Revisit when a path-aware rule (test and fixture directories, `*.example` files) can bring the rate under 1% on the same sample. |
+| guards-unified#55 (server change) | v0.2.10 | The server's default PII types are narrowed to six structured kinds (email, phone, SSN, passport, card, IBAN); `IP_ADDRESS`, `PERSON` and `LOCATION` are off unless `PII_ENTITIES` adds them. The plugin sees it as fewer notes with no plugin change | The server changelog gives the reason: addresses, host or city-like names and tool names are routine in operator output, and on one set of real transcripts these three were 96% of all PII notices (a figure from the changelog, not re-run here). With no `PERSON` or `LOCATION` the model is also not run, so a scan is faster | A name, place or IP address in output is no longer noted unless the server opts in. PII is still never redacted by default, so nothing changes for the text itself |
+| #132 | Unreleased | A PII type is named once per session (`GUARDS_PII_NOTE_ONCE=1`, state kept per session), and `GUARDS_PII_IGNORE_ENTITIES` filters the note, set from the launch environment only so an agent cannot loosen it | After the default change a person on an older server default, or who re-enables a type, still got one note per command (coordination issue #97) | A second finding of the same type in the same session raises no note, so a new PII value of a type already named goes unannounced for the rest of the session. Secret redaction is untouched. Without a session id, or if the state file cannot be written, the note is shown |
 
 Not a plugin change but a deliberate non-hardening: access-key and client IDs
 are not redacted by default (the scanner switch is `SECRET_GUARD_REDACT_KEY_IDS`),
@@ -103,9 +105,9 @@ kubeconfig is denied and cannot be approved in-session; the person must read it
 themselves, or start Claude Code with `GUARDS_CRED_ASK` set to `force` (ask in every mode,
 only if a person is attached) or `GUARDS_ALLOW_CRED_READ=1`.
 
-Another open item: `FLAG_MAX_BYTES`. Measured by the maintainers (not re-measured
-for this page), the hook with flags on took about 0.6 s at 1 KB and about 1.0 s
-at 3 KB and above, worst case 1.4 s; with `FLAG_MAX_BYTES=0` about 0.3 to 0.8 s.
+Another open item: `FLAG_MAX_BYTES`. With flags on the hook waits for the models
+at about 0.25 s per KB of the prefix. Earlier timings were taken before v0.2.10
+changed the default PII setup and were removed instead of re-measured.
 A 2 KB prefix covers roughly 80% of outputs completely (measured over 120
 sessions), 3 KB roughly 90%. A real fix needs an asynchronous tier on the
 platform side; the hook cannot get there by chunking.
@@ -120,7 +122,7 @@ platform side; the hook cannot get there by chunking.
 | `GUARDS_PUBLISH_ASK=force` | Loosen in unattended modes | Ask in every mode, including those where no person answers. Only for an operator who knows a person is attached |
 | `GUARDS_PUBLISH_ASK=0` | Harden | Every match is a hard deny |
 | `GUARDS_ALLOW_CRED_READ=1`, `GUARDS_ALLOW_PUBLISH_SECRETS=1`, `GUARDS_MCP_SCAN=0` | Loosen | Turn a guard off for the session |
-| `FLAG_MAX_BYTES` larger | Harden (PII, injection), slower | More of the output is flagged; each KB costs about 0.3 s |
+| `FLAG_MAX_BYTES` larger | Harden (PII, injection), slower | More of the output is flagged; each KB costs about 0.25 s |
 | `FLAG_MAX_BYTES=0` | Loosen (PII, injection), faster | No PII or injection notes |
 | `GUARDS_FAST_BASH=0` or `PII_GUARD_MODE=redact` | Mixed | Older path: scans only the first 24 KB for secrets, but redacts PII |
 | `GUARDS_MCP_SKIP` | Either | A narrower pattern scans more tools; the default skips grāmatr's own server |
@@ -135,7 +137,7 @@ here because the plugin vendors it.
 
 1. **One hard rule: no secrets.** It is the one control that must be fast and
    synchronous. PII and injection are best-effort notices on a prefix, because
-   their models cost about 0.3 s per KB and cannot be sped up by parallelism.
+   their models cost about 0.25 s per KB and cannot be sped up by parallelism.
    Policy, asynchronous delivery and audit belong to a platform behind
    `GUARDS_ENDPOINT`, not to this open-source plugin.
 2. **Context beats shape.** gitleaks keys on value shape; real credentials often

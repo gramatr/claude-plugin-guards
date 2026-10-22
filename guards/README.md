@@ -9,7 +9,7 @@ The detection logic lives in the
 [guards-unified](https://github.com/gramatr/guards-unified) service, one
 container that bundles the secret, PII and injection detectors behind
 `POST /v1/scan` and `POST /v1/scan/secret`. This repository is the thin
-Claude Code side: hooks, an MCP `scan` tool, and a self-heal script that
+Claude Code side: hooks, an MCP server (seven tools, three prompts, four resources), and a self-heal script that
 keeps the container running. For what changed between versions, read
 guards-unified's
 [CHANGELOG.md](https://github.com/gramatr/guards-unified/blob/main/CHANGELOG.md).
@@ -50,7 +50,7 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | 8 | `UserPromptSubmit` | `hooks/userpromptsubmit-guard.sh` | Adds a note when your own prompt contains a secret. Advisory only |
 
 Plus an MCP server (`mcp/server.py`, started with `uv run --script`) that
-exposes one tool, `scan`.
+exposes seven tools (`scan`, `check_before_publish` and five more for agents, listed under "Agent tools, prompts and skill" below), three prompts and four resources.
 
 Matchers, timeouts and what each hook does when the service is down are in
 [`docs/HOOKS.md`](../docs/HOOKS.md).
@@ -75,7 +75,7 @@ Prerequisites:
   decide (awk reads the payload), the output and SendMessage hooks withhold or
   deny what they cannot redact and say to install `jq`, and the prompt hook is
   silent (advisory). Install it anyway: the vendor-token pass needs it too.
-- `uv`, for the MCP `scan` tool (`.mcp.json` runs it with `uv run --script`).
+- `uv`, for the MCP server (`.mcp.json` runs it with `uv run --script`).
 - `gitleaks` is optional. If it is missing, the self-heal script downloads
   v8.30.1 for Linux or macOS (x64 or arm64), checks its SHA-256 against the
   release checksum file, and installs it to `~/.local/bin`. Other platforms get
@@ -111,8 +111,8 @@ exits if the injection model cannot be downloaded ("gated repo ... 401"). The
 compose file restarts it, so it loops. While it is down, PII and injection
 detection are unavailable, and secret detection continues through the plugin's
 local fallback (`scan.sh`) with the notices described in
-[`docs/HOOKS.md`](../docs/HOOKS.md). Measured with the published `v0.2.9` image
-on 2026-10-21; tracked as gramatr/guards-coordination#93.
+[`docs/HOOKS.md`](../docs/HOOKS.md). Observed on 2026-10-21; tracked as
+gramatr/guards-coordination#93.
 
 ### Stopping and uninstalling
 
@@ -216,7 +216,9 @@ holds port 8700 is deliberately not removed; clean it up by hand.
 ### Bash output (PostToolUse): `combined-hook.sh`
 
 Runs after every Bash call. stdout and stderr are scanned separately. Secrets
-are redacted. PII and injection are noted without changing the text. Only the
+are redacted. PII and injection are noted without changing the text; by default
+each PII type is named once per session, and `GUARDS_PII_IGNORE_ENTITIES` filters
+the note (see [`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md)). Only the
 Bash output shape `{stdout, stderr, interrupted, isImage}` is rewritten.
 
 The default path (`GUARDS_FAST_BASH=1`) does two things at once:
@@ -231,9 +233,9 @@ The default path (`GUARDS_FAST_BASH=1`) does two things at once:
    without notice. An injection warning is shown only for a "malicious" verdict
    scoring at least `INJECTION_MIN_SCORE` (0.95).
 
-The models cost roughly 0.3 s per KB and are not made faster by parallel
-requests, which is why they see a prefix only. Measured end to end, with flags
-on the hook is not always under one second (see [`docs/LIMITS.md`](../docs/LIMITS.md)).
+The models cost roughly 0.25 s per KB (the figure the server documents) and are
+not made faster by parallel requests, which is why they see a prefix only. With
+flags on, the hook is not always under one second (see [`docs/LIMITS.md`](../docs/LIMITS.md)).
 `FLAG_MAX_BYTES` and `FLAG_BUDGET` are read by this hook, not by the server.
 
 `GUARDS_FAST_BASH=0` and `PII_GUARD_MODE=redact` select the older single-call
@@ -241,10 +243,11 @@ path: the first `SCAN_MAX_BYTES` (24 KB) go to `/v1/scan`, and PII is replaced
 too (`redact`). The old path is also the fallback if the library or every
 scanner is unavailable.
 
-PII is flagged, not redacted, by default because the PII model produced false
-positives on engineering output (a tool name tagged as a person, a git remote
-tagged as an email address, a timestamp tagged as a phone number). Secrets are
-always redacted.
+PII is noted, not redacted, by default. The choice dates from when the PII model
+produced false positives on engineering output (a tool name tagged as a person,
+a git remote tagged as an email address, a timestamp tagged as a phone number);
+the server's default entity set has since been narrowed (v0.2.10), so none of
+the three occurs with the defaults. Secrets are always redacted.
 
 ### MCP result guard (PostToolUse): `mcp-output-guard.sh`
 
@@ -281,8 +284,9 @@ protects what leaves the session.
   limited to 200 characters). Each scan covers the first `SCAN_MAX_BYTES`
   (24 KB) of a field, and the hook says so when it truncated what it scanned.
   After redaction, `summary` is cut to 200 characters.
-- Secrets are redacted. PII is flagged in `additionalContext` and left in place
-  by default; `PII_GUARD_MODE=redact` replaces it. Injection findings are
+- Secrets are redacted. PII is noted in `additionalContext` and left in place
+  by default (a type is named once per session unless `GUARDS_PII_NOTE_ONCE=0`);
+  `PII_GUARD_MODE=redact` replaces it. Injection findings are
   ignored on purpose: the sending agent wrote the message.
 - It returns `permissionDecision: "allow"` together with `updatedInput` and
   `additionalContext` only when something changed (a secret, PII, or a
@@ -291,8 +295,10 @@ protects what leaves the session.
   gets a local secret-only scan, and the hook returns `allow` with the updated
   input and a note that PII scanning was unavailable. In this branch the hook
   returns `allow` even when nothing was found.
-- It has no automated test. To check the redaction path without sending
-  anything, build a fake value at run time and pipe a crafted payload in:
+- It is tested by `guards/tests/sendmessage-guard.test.sh`, which runs in CI
+  (also under the macOS bash 3.2 job). To check the redaction path by hand
+  without sending anything, build a fake value at run time and pipe a crafted
+  payload in:
 
 ```bash
 FAKE="$(printf 'A%.0s' {1..40})"
@@ -524,7 +530,7 @@ The server is named `guards`. It exposes:
   `{"error": ...}`, never an allow. `GUARDS_ALLOW_PUBLISH_SECRETS` in the
   server's environment is ignored (and mentioned). The tool talks to the
   service only through the hook, which falls back to the local scanner.
-- **Instructions** (about 135 words): what the guards do, the three rules an
+- **Instructions** (about 150 words): what the guards do, the three rules an
   agent must follow, and where to look. MCP clients add server instructions to
   the agent's system prompt, so this is the channel that reaches the agent.
 - **Resources** `guards://guide/publishing`, `guards://guide/false-positives`,
@@ -616,7 +622,9 @@ Prompts: `fix_a_block`, `safe_pr_body`, `fake_fixture_checklist`. The plugin
 skill `skills/guards-for-agents/SKILL.md` carries the same rules and triggers
 when an agent hits a block, writes fixtures, or writes commit, PR or issue text.
 Files written by the tools live in `$GUARDS_STATE_DIR` (default
-`~/.local/share/gramatr-guards`). Tests: `guards/tests/mcp-tools.test.py`.
+`$XDG_DATA_HOME/gramatr-guards`, else `~/.local/share/gramatr-guards`). The
+once-per-session PII note state is a different default for the same variable:
+`${XDG_STATE_HOME:-~/.local/state}/gramatr-guards/pii-notes`. Tests: `guards/tests/mcp-tools.test.py`.
 
 ## Verified live
 
@@ -652,9 +660,9 @@ This runs every suite twice, once with gitleaks hidden from `PATH` (what CI
 sees) and once with it visible, and once inside the built scanner image if
 Docker is usable. Suites cover the credential-file guard, the publish guard,
 the fast secret path, the Bash hook, the MCP result guard and `scan.sh`
-redaction. There are **no** tests for `sendmessage-guard.sh`,
-`userpromptsubmit-guard.sh`, `guards-selfheal.sh` or the `scan` tool in `mcp/server.py`
-(the agent tools in `mcp/guards_tools.py` have `mcp-tools.test.py`).
+redaction, `sendmessage-guard.sh`, `userpromptsubmit-guard.sh`, `guards-selfheal.sh`,
+the `scan` tool in `mcp/server.py` (`mcp-server.test.py`) and the agent tools in
+`mcp/guards_tools.py` (`mcp-tools.test.py`). All of them run in CI.
 
 ## Server-side or hosted deployment
 

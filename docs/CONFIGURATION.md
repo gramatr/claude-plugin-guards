@@ -83,7 +83,7 @@ flag scan entirely; secret redaction is unaffected.
 | `SCAN_MAX_BYTES` | `24576` (24 KB) | Older single-call path only: bytes sent to the full `/v1/scan`; the rest is returned unscanned with a warning. |
 | `GUARDS_PII_IGNORE_ENTITIES` | unset | Comma-separated PII types the **note** never names, for example `IP_ADDRESS,LOCATION`. Case and spaces do not matter. Set it in the environment Claude Code starts from (a variable typed in a command has no effect). It filters the note only, in `flag` mode: it does not change what the service reports or what `redact` mode replaces, and it never touches secret redaction. Also read by `sendmessage-guard.sh`. |
 | `GUARDS_PII_NOTE_ONCE` | `1` | `1`: a PII type is named once per session, the first time it is seen, and not again for that session. `0` restores a note on every command. Needs the session id in the hook payload; without one, or if the state file cannot be written, the note is shown. Also read by `sendmessage-guard.sh`. |
-| `GUARDS_STATE_DIR` | `~/.local/state/gramatr-guards` | Where the once-per-session state lives: one small file per session under `pii-notes/` holding the type names already shown (no text). Files older than two days are removed when a new one is started. |
+| `GUARDS_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/gramatr-guards` | Where the once-per-session state lives: one small file per session under `pii-notes/` holding the type names already shown (no text). Files older than two days are removed when a new one is started. Setting the variable moves this state and the files the MCP tools write; the MCP tools alone default to `${XDG_DATA_HOME:-~/.local/share}/gramatr-guards` (`guards/mcp/guards_tools.py`). |
 
 ## Outbound messages (`sendmessage-guard.sh`)
 

@@ -10,12 +10,14 @@ prompt-injection guards for Claude Code sessions.
   and the block names the matching line with the value redacted.
 - A command that would send a credential file, the whole environment or a literal
   credential to a remote host is blocked.
-- PII and likely prompt injection are flagged as notices. They never change the text.
+- PII and likely prompt injection are noted, never redacted. By default each PII type is named once
+  per session and the note can be filtered (see [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)).
+  They never change the text.
 
 The detection logic runs in the
 [guards-unified](https://github.com/gramatr/guards-unified) service, one container
 behind `POST /v1/scan` and `POST /v1/scan/secret`. This repository is the Claude Code
-side: hooks, an MCP `scan` tool, and a self-heal script that keeps the container running.
+side: hooks, an MCP server (seven tools, three prompts, four resources), and a self-heal script that keeps the container running.
 
 **One hard rule, everything else best effort.** The only control that must be fast,
 synchronous and strict is "no secrets". PII and injection findings are notices.
