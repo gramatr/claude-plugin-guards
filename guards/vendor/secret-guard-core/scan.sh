@@ -288,7 +288,7 @@ ctx_code_shape() {
 # ctx_redact RE PREFIX_IDX VALUE_IDX SUFFIX_IDX(0=none) KEY_IDX(0=none) RULE_ID [QUOTE]
 # QUOTE (" or '): the rule's value opens with that quote; see the wrapped-key
 # check below.
-ctx_redact() {
+ctx_redact_one() {
   local re="$1" pi="$2" vi="$3" si="$4" ki="$5" rule="$6" qg="${7:-}"
   local rest="$CTX_TEXT" out="" m pre pfx val sfx key tmp sent lead cb
   # A sentinel byte that does not occur in the text, so the matched span can
@@ -351,6 +351,27 @@ ctx_redact() {
     rest="${tmp:$((${#pre} + 1))}"
   done
   CTX_TEXT="$out$rest"
+}
+
+# ctx_redact ...: ctx_redact_one over CTX_TEXT, one piece at a time when long lines were cut (see
+# ctx_chunk_long_lines). Every regexec costs time that grows with the length of the string it is given, so the
+# pieces between the cut markers are scanned separately and put back in order. Same arguments and effects.
+ctx_redact() {
+  if [ "${CTX_CHUNKED:-0}" != 1 ]; then ctx_redact_one "$@"; return; fi
+  local full="$CTX_TEXT" acc="" piece more sep=$'\n'"$CTX_CUT_MARK"$'\n'
+  while :; do
+    if [[ "$full" == *"$sep"* ]]; then
+      piece="${full%%"$sep"*}"; full="${full#*"$sep"}"; more=1
+    else
+      piece="$full"; more=0
+    fi
+    CTX_TEXT="$piece"
+    ctx_redact_one "$@"
+    acc+="$CTX_TEXT"
+    [ "$more" = 1 ] || break
+    acc+="$sep"
+  done
+  CTX_TEXT="$acc"
 }
 
 # count_groups STR: number of capture groups in an ERE fragment.
@@ -448,6 +469,77 @@ ctx_unmask_runs() {
 }
 ctx_mask_runs
 
+# --- Very long lines: cut them into small pieces for the context rules ---------
+# The context rules re-scan the rest of the text for every match (one regexec per hit), so a single
+# long line with many credential words costs time that grows with its length times its hits: a 20 KB
+# line took 17 s and 40 KB did not finish in 2 minutes (coordination#48). A line longer than
+# CTX_LINE_MAX bytes with at least CTX_LINE_HITS credential words (so a long line of ordinary text is left
+# alone: cutting it only adds regex set-up) is cut into pieces of about CTX_CHUNK bytes for the rules below, at a space or a
+# punctuation mark (never right after a ':' or '='), with a marker line between the pieces, and the
+# markers are removed again afterwards. Only the context rules see the cuts: the private-key pass,
+# gitleaks and the vendor shapes run on the whole line. Known limit (docs/LIMITS.md): a quoted value
+# that contains spaces and straddles a cut is not found by these rules. A line with no cut point within
+# 8 KB is left whole. CTX_LINE_MAX=0 turns it off. The marker is skipped when the text already has it.
+CTX_LINE_MAX="${SECRET_GUARD_CTX_LINE_MAX:-2048}"
+CTX_CHUNK=1024
+CTX_LINE_HITS="${SECRET_GUARD_CTX_LINE_HITS:-150}"   # credential words in a long line from which it is cut  # guards:synthetic
+CTX_CUT_MARK="~~LL~~"
+CTX_CHUNKED=0
+ctx_chunk_long_lines() {
+  [ "$CTX_LINE_MAX" -gt 0 ] 2>/dev/null || return 0
+  [[ "$CTX_TEXT" == *"$CTX_CUT_MARK"* ]] && return 0
+  [ "${#CTX_TEXT}" -gt "$CTX_LINE_MAX" ] || return 0
+  local cut
+  cut="$(printf '%s' "$CTX_TEXT" | awk -v limit="$CTX_LINE_MAX" -v size="$CTX_CHUNK" -v minhits="$CTX_LINE_HITS" -v mark="$CTX_CUT_MARK" '
+    function safe(line, i,    c, k, p) {
+      c = substr(line, i, 1)
+      if (c != " " && c != "\t" && index(",;{}[]()", c) == 0) return 0
+      # not right after a key delimiter: walk back over blanks to the previous character
+      k = i - 1
+      while (k > 0 && (substr(line, k, 1) == " " || substr(line, k, 1) == "\t")) k--
+      p = substr(line, k, 1)
+      if (p == ":" || p == "=") return 0
+      return 1
+    }
+    function density(line,    low, w, k, c, rest, i) {
+      # rough count of credential words; an overcount only chunks more
+      low = tolower(line); c = 0
+      for (k = 1; k <= nw; k++) {
+        rest = low
+        while ((i = index(rest, words[k])) > 0) { c++; rest = substr(rest, i + length(words[k])) }
+      }
+      return c
+    }
+    BEGIN { nw = split("secret passw pwd token credential api_key api-key apikey private auth", words, " ") }
+    {
+      line = $0; n = length(line)
+      if (n <= limit) { print line; next }
+      # Slow only when a long line is also full of credential words (cost ~ length x hits). Each piece costs
+      # a fixed regex set-up, so below about 75 hits cutting costs more than it saves: leave the line whole.
+      if (density(line) < minhits) { print line; next }
+      pos = 1
+      while (n - pos + 1 > limit) {
+        cutat = 0
+        for (i = pos + size - 1; i >= pos + int(size / 2); i--) if (safe(line, i)) { cutat = i; break }
+        if (!cutat) for (i = pos + size; i <= pos + 8192 && i <= n; i++) if (safe(line, i)) { cutat = i; break }
+        if (!cutat) break
+        print substr(line, pos, cutat - pos + 1)
+        print mark
+        pos = cutat + 1
+      }
+      print substr(line, pos)
+    }')" || return 0
+  [ -n "$cut" ] || return 0
+  CTX_TEXT="$cut"
+  CTX_CHUNKED=1
+}
+ctx_join_chunks() {
+  [ "$CTX_CHUNKED" = 1 ] || return 0
+  CTX_TEXT="${CTX_TEXT//$'\n'"$CTX_CUT_MARK"$'\n'/}"
+  CTX_CHUNKED=0
+}
+ctx_chunk_long_lines
+
 # --- key <delim> value, in the three quoting styles, for both key families
 for KEYRE in "$KEY_A" "$KEY_B"; do
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
@@ -495,6 +587,7 @@ ctx_plain pgpass-password '(^|[[:space:]])[A-Za-z0-9_.*-]+:[0-9*]+:[A-Za-z0-9_.*
 ctx_plain k8s-env-value '(^|[^A-Za-z0-9_.-])name:[[:space:]]*["'"'"']?'"${KEY_ANY}"'["'"'"']?[[:space:]]+value:[[:space:]]*["'"'"']?' '[^[:space:]"'"'"']{4,}'
 ctx_plain json-key-value '"(name|key)"[[:space:]]*:[[:space:]]*"'"${KEY_ANY}"'"[[:space:]]*,[[:space:]]*"value"[[:space:]]*:[[:space:]]*"' '[^"]{4,}' '"'
 
+ctx_join_chunks
 ctx_unmask_runs
 
 # --- Vendor token shapes gitleaks' default ruleset lacks (P2)
