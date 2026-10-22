@@ -22,7 +22,7 @@ command -v jq >/dev/null 2>&1 || HAVE_JQ=0
 jfield() {
   if [ "$HAVE_JQ" -eq 1 ]; then
     case "$1" in
-      tool_name|cwd|permission_mode) printf '%s' "$RAW" | jq -r ".$1 // \"\"" 2>/dev/null ;;
+      tool_name|cwd|permission_mode|session_id) printf '%s' "$RAW" | jq -r ".$1 // \"\"" 2>/dev/null ;;
       *) printf '%s' "$RAW" | jq -r ".tool_input.$1 // \"\"" 2>/dev/null ;;
     esac
     return
@@ -60,6 +60,55 @@ jfield() {
         i = j + 1
       }
     }'
+}
+
+# pii_note_types "A, B" SESSION_ID -> the entity types a PII note should still name, comma-and-space
+# separated; empty means "say nothing". Used by the hooks that only FLAG PII (PII_GUARD_MODE=flag).
+#   GUARDS_PII_IGNORE_ENTITIES  comma-separated types never named (for example IP_ADDRESS,LOCATION).
+#                               Read from the environment Claude Code started in, like the other
+#                               switches, so a variable typed in a command does not count. It filters
+#                               the note only: it does not change what the service redacts.
+#   GUARDS_PII_NOTE_ONCE        1 (default): name a type once per session, the first time it is seen.
+#                               0 restores a note on every command. Needs a session id; without one,
+#                               or when the state file cannot be written, the note is shown (a quiet
+#                               failure never hides a notice).
+# State: one small file per session under ${GUARDS_STATE_DIR:-~/.local/state/gramatr-guards}/pii-notes,
+# holding the types already named. Files older than two days are removed when a new one is started.
+pii_note_types() {
+  local types="$1" sid="${2:-}" ignore out="" t dir f seen IFS
+  [ -n "$types" ] || return 0
+  ignore="${GUARDS_PII_IGNORE_ENTITIES:-}"
+  if [ -n "$ignore" ]; then
+    ignore=",$(printf '%s' "$ignore" | tr -d ' ' | tr '[:lower:]' '[:upper:]'),"
+    IFS=','
+    for t in $(printf '%s' "$types" | tr -d ' '); do
+      case "$ignore" in *",$t,"*) continue ;; esac
+      out="${out:+$out, }$t"
+    done
+    unset IFS
+    types="$out"; out=""
+  fi
+  [ -n "$types" ] || return 0
+  if [ "${GUARDS_PII_NOTE_ONCE:-1}" = 1 ] && [ -n "$sid" ]; then
+    case "$sid" in *[!A-Za-z0-9_-]*) printf '%s' "$types"; return 0 ;; esac
+    dir="${GUARDS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gramatr-guards}/pii-notes"
+    if mkdir -p "$dir" 2>/dev/null; then
+      f="$dir/$sid"
+      [ -e "$f" ] || find "$dir" -type f -mtime +2 -delete 2>/dev/null
+      seen="$(cat "$f" 2>/dev/null)"
+      IFS=','
+      for t in $(printf '%s' "$types" | tr -d ' '); do
+        case $'\n'"$seen"$'\n' in *$'\n'"$t"$'\n'*) continue ;; esac
+        out="${out:+$out, }$t"
+        seen="$seen"$'\n'"$t"
+        printf '%s\n' "$t" >> "$f" 2>/dev/null
+      done
+      unset IFS
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  printf '%s' "$types"
 }
 
 # json_escape -- stdin to a JSON string body (no surrounding quotes).

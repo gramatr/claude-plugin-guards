@@ -92,6 +92,24 @@ n="$(jqo "$out" '.hookSpecificOutput.updatedInput.summary | length')"
 out="$(hook "$UP" '{"to":"a","message":"ask STUBPII about it"}')"
 [ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" = "ask STUBPII about it" ] && ok || bad "PII flag mode leaves the message intact"
 jqo "$out" '.hookSpecificOutput.additionalContext' | grep -q "PERSON" && ok || bad "PII flag mode names the entity type"
+# The flag-mode PII note honours GUARDS_PII_IGNORE_ENTITIES and names a type once per session (json-lib.sh).
+hook_sid() { # hook_sid ENDPOINT INPUT_JSON SESSION_ID [ENV...]
+  jq -nc --argjson i "$2" --arg sid "$3" '{tool_name:"SendMessage", tool_input:$i, session_id:$sid}' \
+    | env "GUARDS_ENDPOINT=$1" "${@:4}" bash "$HOOK"
+}
+MSG='{"to":"a","message":"ask STUBPII about it"}'
+out="$(hook_sid "$UP" "$MSG" s1 GUARDS_PII_IGNORE_ENTITIES=PERSON "GUARDS_STATE_DIR=$T/state")"
+[ -z "$out" ] && ok || bad "an ignored PII type produces no SendMessage note"
+out="$(hook_sid "$UP" "$MSG" s1 GUARDS_PII_IGNORE_ENTITIES=LOCATION "GUARDS_STATE_DIR=$T/state")"
+jqo "$out" '.hookSpecificOutput.additionalContext' | grep -q "PERSON" && ok || bad "an unrelated ignored type leaves the SendMessage note"
+out="$(hook_sid "$UP" "$MSG" s2 "GUARDS_STATE_DIR=$T/state")"
+jqo "$out" '.hookSpecificOutput.additionalContext' | grep -q "PERSON" && ok || bad "first sight in a session: the SendMessage note is shown"
+out="$(hook_sid "$UP" "$MSG" s2 "GUARDS_STATE_DIR=$T/state")"
+[ -z "$out" ] && ok || bad "same type, same session: no second SendMessage note"
+out="$(hook_sid "$UP" "$MSG" s2 GUARDS_PII_NOTE_ONCE=0 "GUARDS_STATE_DIR=$T/state")"
+jqo "$out" '.hookSpecificOutput.additionalContext' | grep -q "PERSON" && ok || bad "GUARDS_PII_NOTE_ONCE=0 restores the note"
+out="$(hook_sid "$UP" '{"to":"a","message":"STUBSECRET123 and STUBPII"}' s3 GUARDS_PII_IGNORE_ENTITIES=PERSON "GUARDS_STATE_DIR=$T/state")"
+[ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" != "STUBSECRET123 and STUBPII" ] && ok || bad "ignoring a PII type never weakens secret redaction in a message"
 out="$(hook "$UP" '{"to":"a","message":"ask STUBPII about it"}' PII_GUARD_MODE=redact)"
 [ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" = "ask <PERSON> about it" ] && ok || bad "PII_GUARD_MODE=redact replaces the value"
 

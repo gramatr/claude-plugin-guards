@@ -208,6 +208,7 @@ scan_and_redact() {
         fi
       else
         pii_types="$(echo "$response" | jq -r '[.findings[] | select(.type=="pii") | .detail.entities[]?.entity_type] | unique | join(", ")' 2>/dev/null)"
+        [ -n "$pii_types" ] && pii_types="$(pii_note_types "$pii_types" "$(jfield session_id)")"
         if [ -n "$pii_types" ]; then
           note="ℹ️  pii-guard flagged possible PII in this output (${pii_types}) — values left intact, not redacted. Verify before sharing or logging this output outside this session.
 
@@ -370,6 +371,7 @@ scan_and_redact_fast() {
     pii_verdict="$(jq -r '.findings[]? | select(.type=="pii") | .verdict // ""' "$w/flags.json" 2>/dev/null)"
     if [ "$pii_verdict" = "found" ]; then
       pii_types="$(jq -r '[.findings[] | select(.type=="pii") | .detail.entities[]?.entity_type] | unique | join(", ")' "$w/flags.json" 2>/dev/null)"
+      [ -n "$pii_types" ] && pii_types="$(pii_note_types "$pii_types" "$(jfield session_id)")"
       if [ -n "$pii_types" ]; then
         note="ℹ️  pii-guard flagged possible PII in this output (${pii_types}) — values left intact, not redacted. Verify before sharing or logging this output outside this session.
 
