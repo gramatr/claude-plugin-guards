@@ -386,7 +386,7 @@ marked_hits() { # marked_hits -> lines "family<TAB>where" (never the value)
 }
 MARKED_HITS="$(marked_hits | sort -u | head -n 5)"
 if [ -n "$MARKED_HITS" ]; then
-  deny "Blocked by guards publish-guard: a line marked guards:synthetic looks like a REAL vendor credential or key. The marker means 'fake fixture' and is not checked for anything else, so private-key headers, AWS access key ids, GitHub, Slack, Stripe and OpenAI-style live keys are still denied on a marked line.
+  deny "Blocked by guards publish-guard: a line marked guards:synthetic looks like a REAL vendor credential or key. The marker means 'fake fixture' and is not checked for anything else, so private-key headers, AWS access key ids, GitHub, Slack, Stripe and OpenAI-style live keys are still denied on a marked line. Fix: use an obviously fake value, or build the real-looking one at run time (details under 'What to do').
 
 Where (the value is never printed):
 $(printf '%s\n' "$MARKED_HITS" | awk -F'\t' '{ printf "  %d. %s: %s\n", NR, $2, $1 }')
@@ -404,9 +404,9 @@ SS_WORK="$WORK"
 . "$SCRIPT_DIR/secret-scan-lib.sh"
 if ! secret_scan "$SCAN_INPUT"; then
   if [ "$SS_TIMED_OUT" = 1 ]; then
-    deny "Blocked by guards publish-guard: the local secret scan did not finish in time, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Retry; if the text is very large, publish a shorter one. Long lines and long unbroken runs (base64, hashes, bundles) are no longer slow, so the likely causes are a very large input, thousands of matches in one text (each is redacted one at a time), or a loaded machine. Split the text, or commit the large generated part separately. The guards:synthetic marker is for fake fixture lines, not a way past a size limit."
+    deny "Blocked by guards publish-guard: the local secret scan did not finish in time, so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Fix: retry; if the text is very large, publish a shorter one. Long lines and long unbroken runs (base64, hashes, bundles) are no longer slow, so the likely causes are a very large input, thousands of matches in one text (each is redacted one at a time), or a loaded machine. Split the text, or commit the large generated part separately. The guards:synthetic marker is for fake fixture lines, not a way past a size limit."
   fi
-  deny "Blocked by guards publish-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
+  deny "Blocked by guards publish-guard: no secret scanner could run (the guards-unified service is unreachable and the local scanner at $SECRET_SCAN is missing or failed), so ${LABEL} cannot be checked for credentials before it is published. Fail-closed: a publish cannot be un-done. Fix: reinstall the plugin, or the user can set GUARDS_ALLOW_PUBLISH_SECRETS=1 to bypass."
 fi
 
 RULES="$(printf '%s' "$SS_RULES" | tr ' ' ',')"
@@ -507,7 +507,7 @@ $(explain)"
 fi
 
 if [ -n "$RULES" ]; then
-  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Describe the SHAPE only. Put real material nowhere in a public repo, issue, PR, comment or commit.
+  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.
 $(explain)"
 fi
 

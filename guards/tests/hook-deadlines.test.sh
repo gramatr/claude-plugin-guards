@@ -91,8 +91,8 @@ declare -A SCRIPT=(
 outcome_publish()     { [ -s "$1" ] && jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$1"; }
 outcome_credfile()    { outcome_publish "$1"; }
 outcome_sendmessage() { outcome_publish "$1"; }
-outcome_combined()    { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput | (.stdout | test("withheld")) and .stderr == ""' "$1"; }
-outcome_mcp()         { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput[0].text | test("withheld")' "$1"; }
+outcome_combined()    { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput | (.stdout | test("the command ran, but its output was withheld")) and .stderr == ""' "$1"; }
+outcome_mcp()         { [ -s "$1" ] && jq -e '.hookSpecificOutput.updatedToolOutput[0].text | test("the tool ran, but its result was withheld")' "$1"; }
 outcome_userprompt()  { [ ! -s "$1" ]; }   # advisory: no note, no decision
 
 echo "plain text" > "$T/notes.txt"

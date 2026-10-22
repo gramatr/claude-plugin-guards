@@ -39,18 +39,18 @@ gd_outcome() {
   echo "guards ${name}: ${why} (internal deadline ${secs} s); applying the ${kind} outcome" >&2
   case "$kind" in
     deny)
-      msg="Blocked by guards ${name}: ${why}, so this call could not be checked and is denied (fail-closed: Claude Code would otherwise have let it through unchecked). Retry the call. If it keeps happening, check that the guards-unified service answers on GUARDS_ENDPOINT (docs/HOOKS.md lists the deadlines and what each hook does on expiry)."
+      msg="Blocked by guards ${name}: ${why}, so this call could not be checked and is denied (fail-closed: Claude Code would otherwise have let it through unchecked). Fix: retry the call. If it keeps happening, check that the guards-unified service answers on GUARDS_ENDPOINT (docs/HOOKS.md lists the deadlines and what each hook does on expiry)."
       printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$msg"
       ;;
     withhold-bash)
-      msg="guards ${name}: the output of this command was withheld because ${why}, so it could not be checked for secrets before the model saw it. Run the command again; for large output, redirect it to a file and look at the part you need."
+      msg="guards ${name}: the command ran, but its output was withheld because ${why}, so it could not be checked for secrets before the model saw it. Fix: do not assume the command failed; if it is safe to repeat, run it again, and for large output redirect it to a file and look at the part you need."
       if command -v jq >/dev/null 2>&1 && [ -s "$raw" ]; then
         jq -c --arg n "$msg" '{hookSpecificOutput: {hookEventName: "PostToolUse", updatedToolOutput: {stdout: $n, stderr: "", interrupted: (.tool_response.interrupted // false), isImage: false}}}' < "$raw" 2>/dev/null && return 0
       fi
       printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{"stdout":"%s","stderr":"","interrupted":false,"isImage":false}}}\n' "$msg"
       ;;
     withhold-mcp)
-      msg="guards ${name}: the result of this tool call was withheld because ${why}, so it could not be checked for secrets before the model saw it. Call the tool again."
+      msg="guards ${name}: the tool ran, but its result was withheld because ${why}, so it could not be checked for secrets before the model saw it. Fix: do not assume the call failed; if it is safe to repeat, call the tool again."
       if ! command -v jq >/dev/null 2>&1; then
         # No jq to match the result's shape: the usual array of text blocks.
         printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":[{"type":"text","text":"%s"}]}}\n' "$msg"

@@ -495,6 +495,25 @@ _PERMISSION_RULES = {
     "ask_modes": ["default", "acceptEdits", "plan"],
     "deny_modes": "every other mode (auto, bypassPermissions, dontAsk, unknown): an ambiguous publish match is a deny, because nobody can answer an ask",
 }
+# The message prefixes, so a block from another PreToolUse hook is not mistaken for a guard
+# (coordination#100). docs/AGENTS-GUIDE.md has the same table; docs-consistency.test.sh checks it.
+_MESSAGE_PREFIXES = [
+    {
+        "prefix": "Blocked by guards <hook>:",
+        "meaning": "a guards hook denied the call and it did not run; the message ends with a 'Fix:' clause",
+    },
+    {
+        "prefix": "guards <hook>:",
+        "meaning": "a guards hook asked a person to approve the call, added a note, or withheld an output: "
+        "the command or tool already ran and only its output was replaced by a notice",
+    },
+    {
+        "prefix": "anything else",
+        "meaning": "not a guard: another PreToolUse hook, a permission rule or Claude Code itself; "
+        "look at that hook, the guards cannot change it",
+    },
+]
+
 _ENV_FLAGS = (
     "GUARDS_ALLOW_PUBLISH_SECRETS",
     "GUARDS_ALLOW_CRED_READ",
@@ -601,6 +620,7 @@ def guards_status() -> dict:
         "hooks": hooks,
         "permission_mode_rules": _PERMISSION_RULES,
         "env_overrides": env,
+        "message_prefixes": _MESSAGE_PREFIXES,
         "degraded": degraded,
         "ok": not degraded,
     }

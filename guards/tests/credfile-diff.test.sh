@@ -100,13 +100,18 @@ payload() { # payload TOOL INPUT MODE
     '{tool_name: $t, tool_input: $i, cwd: $cwd, permission_mode: $m}'
 }
 
+# norm: compare messages without the "Fix: " label (coordination#100 added it to every deny) and without
+# letter case (the clause it labels now starts lower case). Decisions, file names and everything else in the
+# output stay compared byte for byte.
+norm() { awk '{ gsub(/Fix: /, ""); print tolower($0) }'; }
+
 # results HOOK -> "case mode sha" lines
 results() {
   local hook="$1" n=0 c tool input m
   for c in "${CASES[@]}"; do
     n=$((n + 1)); tool="${c%%	*}"; input="${c#*	}"
     for m in "${MODES[@]}"; do
-      printf '%s %s %s\n' "$n" "$m" "$(payload "$tool" "$input" "$m" | bash "$hook" 2>&1 | sed "s|$HOME|<HOME>|g" | sha)"
+      printf '%s %s %s\n' "$n" "$m" "$(payload "$tool" "$input" "$m" | bash "$hook" 2>&1 | sed "s|$HOME|<HOME>|g" | norm | sha)"
     done
   done
 }

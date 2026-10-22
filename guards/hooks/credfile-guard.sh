@@ -98,12 +98,12 @@ deny() {
 # resolve_path, sensitive_reason, sensitive_dir_reason, is_ask_class. Without
 # it nothing can be classified, so refuse rather than let the call through.
 # shellcheck source=guards/hooks/credclass-lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh" 2>/dev/null || deny "Blocked by guards credfile-guard: its classification library credclass-lib.sh is missing or unreadable next to the hook ($(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh), so this call cannot be checked and is denied. Reinstall or update the guards plugin."
+. "$(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh" 2>/dev/null || deny "Blocked by guards credfile-guard: its classification library credclass-lib.sh is missing or unreadable next to the hook ($(dirname "${BASH_SOURCE[0]}")/credclass-lib.sh), so this call cannot be checked and is denied. Fix: reinstall or update the guards plugin."
 
 # The payload could not be read at all and there is no jq to say why: the guard
 # cannot tell what the call is, so it refuses rather than guess.
 if [ "$HAVE_JQ" -eq 0 ] && [ -z "$TOOL_NAME" ]; then
-  deny "Blocked by guards credfile-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked. Install jq (apt install jq, brew install jq) and retry. If the user really wants the call to go through unchecked, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
+  deny "Blocked by guards credfile-guard: jq is not installed and the hook payload could not be read without it, so this call cannot be checked. Fix: install jq (apt install jq, brew install jq) and retry. If the user really wants the call to go through unchecked, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
 fi
 
 # ask: hand the decision to the HUMAN via Claude Code's built-in permission
@@ -129,14 +129,14 @@ ASK_MSG=""
 block() {
   if { [ "${GUARDS_CRED_ASK:-1}" = "1" ] || [ "${GUARDS_CRED_ASK:-1}" = "force" ]; } && [ "$HUMAN" -eq 1 ] && is_ask_class "$1"; then
     # Remember it and keep checking: a later deny-class path must still win.
-    [ -n "$ASK_MSG" ] || ASK_MSG="guards credfile-guard: this would put the contents of $2 ($1) into the session transcript, where the model can read it. Approve only if you need Claude to see it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>."
+    [ -n "$ASK_MSG" ] || ASK_MSG="guards credfile-guard: this would put the contents of $2 ($1) into the session transcript, where the model can read it. Approve only if you need Claude to see it. Fix: to check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>."
     return 0
   fi
   local note=""
   if is_ask_class "$1" && [ "$HUMAN" -eq 0 ] && [ "${GUARDS_CRED_ASK:-1}" != "0" ]; then
     note=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so this is blocked instead of asked]"
   fi
-  deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript${note}. Do not read it. To check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
+  deny "Blocked by guards credfile-guard: this would print credential material ($1: $2) into the session transcript${note}. Do not read it. Fix: to check a key exists or works without printing it, use e.g. test -f, ssh-keygen -l -f <key>, or ssh -i <key>. If the user really wants it read, they must start Claude Code with GUARDS_ALLOW_CRED_READ=1."
 }
 
 # path_allowed P: P (already resolved) is one of the exact paths in

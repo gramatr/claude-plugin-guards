@@ -137,7 +137,7 @@ emit_context() {
   fi
 }
 
-NOJQ_INSTALL="Install jq (apt install jq, brew install jq) and retry."
+NOJQ_INSTALL="Fix: install jq (apt install jq, brew install jq) and retry."
 
 # nojq_scan SCAN_SH -> exit status 0 clean, 1 text changed (a secret was found),
 # 2 the scan could not run or ran out of time. Scans the whole payload with the
@@ -172,9 +172,9 @@ nojq_post_guard() {
     exit 0
   fi
   if [ "$rc" -eq 1 ]; then
-    msg="guards ${name}: this result was withheld because it contains credential material and jq is not installed, so it cannot be redacted. ${NOJQ_INSTALL}"
+    msg="guards ${name}: the tool ran, but its result was withheld because it contains credential material and jq is not installed, so it cannot be redacted. ${NOJQ_INSTALL}"
   else
-    msg="guards ${name}: this result was withheld because jq is not installed and the built-in scan could not finish, so it could not be checked for secrets. ${NOJQ_INSTALL}"
+    msg="guards ${name}: the tool ran, but its result was withheld because jq is not installed and the built-in scan could not finish, so it could not be checked for secrets. ${NOJQ_INSTALL}"
   fi
   msg="$(printf '%s' "$msg" | json_escape)"
   if [ "$kind" = "bash" ]; then
@@ -193,7 +193,7 @@ nojq_pre_guard() {
   nojq_scan "$scan"; rc=$?
   case "$rc" in
     0) emit_context PreToolUse "guards ${name}: jq is not installed, so only the built-in checks (private keys, key-name context, values from this session's environment) ran on this message; vendor token formats and PII were not checked. ${NOJQ_INSTALL}" ;;
-    1) emit_pre deny "Blocked by guards ${name}: this message contains credential material and jq is not installed, so it cannot be redacted. Remove the value (describe its shape) or ${NOJQ_INSTALL}" ;;
+    1) emit_pre deny "Blocked by guards ${name}: this message contains credential material and jq is not installed, so it cannot be redacted. ${NOJQ_INSTALL} Or remove the value (describe its shape)." ;;
     *) emit_pre deny "Blocked by guards ${name}: jq is not installed and the built-in scan could not finish, so this message cannot be checked for credentials. ${NOJQ_INSTALL}" ;;
   esac
   exit 0
