@@ -198,6 +198,19 @@ case "$TOOL_NAME" in
   Bash)
     CMD="$(jfield command)"
     [ -n "$CMD" ] || exit 0
+    # A heredoc that only writes data (cat > file <<EOF, tee file <<EOF) carries text, not a read: drop
+    # its body before looking for readers and paths, so a key path named in that text does not count
+    # (issue gramatr/guards-coordination#98). A heredoc fed to an interpreter, a shell or a pipe keeps
+    # its body. Only a command that has << pays for this. A missing awk script, an awk failure or an
+    # unterminated heredoc leaves the command as written, so the fallback only ever denies more.
+    # GUARDS_CRED_HEREDOC_STRIP=0 turns it off.
+    case "$CMD" in
+      *'<<'*)
+        if [ "${GUARDS_CRED_HEREDOC_STRIP:-1}" != 0 ] && [ -r "$(dirname "${BASH_SOURCE[0]}")/heredoc-strip.awk" ]; then
+          stripped_here="$(printf '%s\n' "$CMD" | awk -f "$(dirname "${BASH_SOURCE[0]}")/heredoc-strip.awk" 2>/dev/null)" && CMD="$stripped_here"
+        fi ;;
+    esac
+    [ -n "$CMD" ] || exit 0
     # Only commands that print file content are in scope.
     READERS='(^|[^A-Za-z0-9_./-])(cat|tac|nl|head|tail|less|more|bat|batcat|sed|awk|gawk|grep|egrep|fgrep|rg|ag|xxd|od|hexdump|strings|base64|cut|paste|diff|cmp|python3?|perl|ruby|node)([^A-Za-z0-9_-]|$)'
     printf '%s' "$CMD" | grep -qE -e "$READERS" || exit 0

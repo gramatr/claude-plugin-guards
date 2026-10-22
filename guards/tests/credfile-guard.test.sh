@@ -104,6 +104,26 @@ expect deny  "cat redirect-quoted path"           Bash "$(bash_in "cat '$HOME/.a
 expect deny  "python reading key"                 Bash "$(bash_in "python3 -c 'print(open(\"$HOME/.ssh/id_rsa\").read())'")"
 expect allow "ssh -i uses key without printing"   Bash "$(bash_in "ssh -i $HOME/.ssh/id_ed25519 host.invalid true")"
 expect allow "ssh-keygen -l fingerprint"          Bash "$(bash_in "ssh-keygen -l -f $HOME/.ssh/id_ed25519")"
+
+# --- heredocs that write data (coordination #98) ---
+# A heredoc that feeds a data sink carries text, not a read. The same text as an argument to a reader,
+# a heredoc fed to an interpreter or a shell, and a path on the command line itself all still deny.
+HK="$HOME/.ssh/id_rsa"
+NL=$'\n'
+expect allow "heredoc writes text naming a key path (cat >)"   Bash "$(bash_in "cat > note.txt <<EOF${NL}the key lives at $HK${NL}EOF")"
+expect allow "heredoc appends text naming a key path (cat >>)" Bash "$(bash_in "cat >> note.txt <<'EOF'${NL}see cat $HK for details${NL}EOF")"
+expect allow "heredoc to tee names a key path"                 Bash "$(bash_in "tee note.txt <<EOF${NL}path: $HK${NL}EOF")"
+expect allow "indented <<- heredoc writes text"                Bash "$(bash_in "cat > note.txt <<-EOF${NL}	$HK${NL}	EOF")"
+expect allow "heredoc writes a script that names a key path"   Bash "$(bash_in "cat > run.sh <<'EOF'${NL}cat $HK${NL}EOF${NL}chmod +x run.sh")"
+expect deny  "same text as a cat argument still denies"        Bash "$(bash_in "cat $HK")"
+expect deny  "cat of the key with a heredoc still denies"      Bash "$(bash_in "cat $HK <<EOF${NL}x${NL}EOF")"
+expect deny  "path after the heredoc still denies"             Bash "$(bash_in "cat > note.txt <<EOF${NL}hello${NL}EOF${NL}cat $HK")"
+expect deny  "python3 - heredoc that opens the key denies"     Bash "$(bash_in "python3 - <<EOF${NL}print(open('$HK').read())${NL}EOF")"
+expect deny  "bash heredoc that cats the key denies"           Bash "$(bash_in "bash <<EOF${NL}cat $HK${NL}EOF")"
+expect deny  "heredoc piped to a reader denies"                Bash "$(bash_in "cat <<EOF | sh${NL}cat $HK${NL}EOF")"
+expect deny  "heredoc to cat > on a pipe line denies"          Bash "$(bash_in "cat <<EOF | tee out.txt | head${NL}$HK${NL}EOF")"
+expect deny  "unterminated writing heredoc falls back"         Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK")"
+expect deny  "off switch: writing heredoc is scanned again"    Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK${NL}EOF")" GUARDS_CRED_HEREDOC_STRIP=0
 # A key named as the identity or key-file of a tool that only USES it is not a read, even
 # when a reader word (cat, sed, python ...) appears elsewhere in the same line.
 KEY="$HOME/.ssh/id_ed25519"
