@@ -18,8 +18,11 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
 - **Tool inputs are mostly not scanned.** Only `SendMessage` input, the publish
   verbs and, for a command that names a network client, the outbound guard (see
   [Outbound commands](#outbound-commands)) are checked. A secret written with
-  `Write` or `Edit`, or passed to a tool the guards do not name, is not looked
-  at.
+  `Write`, `Edit`, `MultiEdit` or `NotebookEdit`, or passed to a tool the guards do
+  not name, is not looked at. A file that is then committed is caught by the
+  publish guard's scan of the staged diff. A write guard was considered and
+  declined for now: a replay of 1,500 real writes through the scanner changed 6.3% of
+  them, nearly all on the ambiguous key-name rule (see [TRADEOFFS.md](TRADEOFFS.md)).
 - **A secret typed in your own prompt cannot be removed by a hook.**
   `UserPromptSubmit` can only block the whole prompt or add a note, and this
   plugin adds a note. The prompt reaches the model and the API as typed. If the
