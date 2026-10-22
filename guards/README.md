@@ -30,6 +30,8 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | [`docs/HOOKS.md`](../docs/HOOKS.md) | Per-hook table (matcher, timeout) and the failure-mode matrix |
 | [`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md) | Every environment variable the plugin reads |
 | [`docs/LIMITS.md`](../docs/LIMITS.md) | What the guards do not catch |
+| [`docs/DATA-FLOW.md`](../docs/DATA-FLOW.md) | What the guards read, send, keep and download, and what was and was not checked |
+| [Verify it yourself](https://github.com/gramatr/guards-unified/blob/main/docs/VERIFY.md) | How to check a release's signed provenance and SBOM, and what that proves (in guards-unified) |
 | [`docs/TRADEOFFS.md`](../docs/TRADEOFFS.md) | Where the guards were tightened or loosened, and why |
 | [Threat model](https://github.com/gramatr/guards-unified/blob/main/docs/THREAT-MODEL.md) | Assets, actors, trust boundaries, and what is and is not defended (in guards-unified) |
 | [`SECURITY.md`](../SECURITY.md) | How to report a vulnerability privately |
