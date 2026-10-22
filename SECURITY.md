@@ -85,3 +85,18 @@ in guards-unified:
   container runtime or the user's account.
 
 If you are unsure whether something is in scope, report it privately and say so.
+
+## How we rate severity
+
+We rate a defect with the CVSS v3.1 Base metrics and use the standard bands: Low 0.1 to 3.9, Medium 4.0 to 6.9, High 7.0 to 8.9, Critical 9.0 to 10.0. CVSS has no field for some of what a small local tool gets wrong, so we apply these conventions and say so on each advisory:
+
+- **Chance.** Attack complexity is High when the defect depends on chance (below about 5 percent of events) or on an uncommon environment the user chose, and Low when it happens every time for a kind of input or an attacker can cause it.
+- **Where it runs.** Attack vector is Local for anything that runs on the user's machine (the hooks and the loopback service), scope is Unchanged, and user interaction is Required for a path that runs inside a session a person has open.
+- **Confidentiality.** Low when the loss is bounded: one value, or a small fraction of events, and the recipient is inside the session's own trust boundary (the model and the transcript). High when a whole class of credential is exposed, a credential store is read, or the exposure is outside that boundary (a public repository, a world-readable file). None when the user is told (a warning, a deny, withheld output).
+- **Not a vulnerability.** A documented limit (listed above), a failure that is loud and fails closed with nothing leaked, and a finding in a third-party dependency. For the last we point to the upstream advisory.
+
+Each advisory states its CVSS vector and a short reason for the confidentiality and complexity choices.
+
+## When we publish an advisory
+
+Every in-scope defect that shipped in a release and rates Low or above gets a repository security advisory, on this repository's Security tab, with the affected and patched versions. We do not request CVE identifiers by default. If one is ever requested, the maintainer decides, case by case, after seeing the exact request.
