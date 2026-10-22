@@ -54,6 +54,22 @@ expect ask   "body via \$(cat file)"               Bash "$(bash_in "gh issue com
 expect ask   "gh api -f body with secret"          Bash "$(bash_in "gh api repos/o/r/issues -f title=t -f body='token=$PW'")"
 expect deny  "gist of a private key"               Bash "$(bash_in "gh gist create $T/key.pem")"
 expect ask   "commit message with secret"          Bash "$(bash_in "git commit -m 'add config password=$PW'")"
+
+# --- a commit is judged on its message and staged diff, not on unrelated commands on the line (coordination#99) ---
+NL=$'\n'
+CMT_OK="git commit --allow-empty -q -m 'unrelated change'"
+expect allow "commit after an unrelated heredoc that writes a secret-looking file" Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}password: $PW${NL}EOF${NL}$CMT_OK")"
+expect allow "commit after a tee heredoc that writes a secret-looking file"        Bash "$(bash_in "tee fixture.txt <<EOF${NL}DB_PASSWORD=$PW${NL}EOF${NL}$CMT_OK")"
+expect ask   "secret in the message still asks after such a heredoc"               Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}hello${NL}EOF${NL}git commit -m 'add config password=$PW'")"
+expect ask   "heredoc then git add then commit still asks (the file is committed)" Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}password: $PW${NL}EOF${NL}git add fixture.txt && $CMT_OK")"
+expect ask   "heredoc then commit -a still asks"                                   Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}password: $PW${NL}EOF${NL}git commit -a -q -m x")"
+expect ask   "heredoc then commit with a pathspec still asks"                      Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}password: $PW${NL}EOF${NL}git commit -q -m x -- fixture.txt")"
+expect ask   "a heredoc fed to a shell is still scanned"                           Bash "$(bash_in "bash <<'EOF'${NL}echo password: $PW${NL}EOF${NL}$CMT_OK")"
+expect ask   "off switch: the writing heredoc is scanned again"                    Bash "$(bash_in "cat > fixture.txt <<'EOF'${NL}password: $PW${NL}EOF${NL}$CMT_OK")" GUARDS_PUBLISH_COMMIT_SCOPE=0
+# a route string that ends in a credential word is a path, not a key
+ROUTE_A="/v1/secret"; ROUTE_B="/api/v1/secret"
+expect allow "route string with a custom-method colon in a commit message"         Bash "$(bash_in "git commit --allow-empty -q -m 'document the ${ROUTE_A}:rotate route'")"
+expect allow "route string followed by prose in a commit message"                  Bash "$(bash_in "git commit --allow-empty -q -m 'GET ${ROUTE_B}: returns the stored value'")"
 printf 'DB_PASSWORD=%s\n' "$PW" > config.env && git add config.env
 expect ask   "git commit with secret in staged diff" Bash "$(bash_in 'git commit -m "add config"')"
 git reset -q config.env && rm -f config.env
