@@ -31,6 +31,37 @@ guards-unified's README. They have no effect on the hooks.
 server**. Setting them in the container's environment does nothing. The server
 scans whatever text it is sent; the hook decides how much to send.
 
+## Server settings that change what you are told about PII
+
+These are **container** variables: they are read by the guards-unified service, not by the hooks. Put
+them in the container's env file, `~/.config/gramatr-guards/injection-guard.env` for the plugin's
+compose file, one `NAME=value` per line. Docker Compose recreates the container when that file
+changes, so run `docker compose -f <the plugin's guards/docker/docker-compose.yml> up -d`, or just
+restart Claude Code (the self-heal script runs the same command at session start). A recreated
+container downloads the injection model again; see [DATA-FLOW.md](DATA-FLOW.md).
+
+| Variable | Default (server v0.2.10) | What it does |
+|---|---|---|
+| `PII_ENTITIES` | `EMAIL_ADDRESS,PHONE_NUMBER,US_SSN,US_PASSPORT,CREDIT_CARD,IBAN_CODE` | The entity types the PII axis looks for. The default is the structured kinds a validator can confirm. `IP_ADDRESS`, `LOCATION` and `PERSON` are off: addresses, hosts and tool names are routine in operator and infrastructure output. With no `PERSON` or `LOCATION` the language model is not run at all. |
+| `PII_MIN_SCORE` | `0.4` | Lowest score a `PERSON` or `LOCATION` match needs to be reported. Only matters if you turn those back on. |
+| `PII_IGNORE_NAMES` | empty | Names (comma-separated, matched whole and case-insensitively) that are never reported as a `PERSON`, added to a built-in list of tool and product names. Only matters if `PERSON` is on. |
+
+The PII notes are advisory: they leave the text as it is. Secret redaction does not depend on any of
+these.
+
+**Recorded run** (the v0.2.10 image, 2026-10-22, the PII engine on one fabricated sentence containing a
+name, a place, an IP address, an email address and an SSN):
+
+| `PII_ENTITIES` | Entity types reported |
+|---|---|
+| not set (the default) | `EMAIL_ADDRESS`, `US_SSN` |
+| the default plus `IP_ADDRESS` | `EMAIL_ADDRESS`, `IP_ADDRESS`, `US_SSN` |
+| `PERSON,LOCATION,EMAIL_ADDRESS,PHONE_NUMBER,US_SSN,US_PASSPORT,CREDIT_CARD,IBAN_CODE,IP_ADDRESS` (the previous default) | `EMAIL_ADDRESS`, `IP_ADDRESS`, `LOCATION`, `PERSON`, `US_SSN` |
+
+**To get no PII or injection notes at all**, and the wait for them, set `FLAG_MAX_BYTES=0` in the
+environment Claude Code starts from (a **hook** setting, see above). The Bash output hook then skips the
+flag scan entirely; secret redaction is unaffected.
+
 ## Service connection
 
 | Variable | Default | Meaning |
