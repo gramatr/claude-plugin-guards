@@ -33,7 +33,7 @@ step() { # step LABEL CMD...
   fi
 }
 
-SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift
+SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift dockerfile-go-drift
         sendmessage-guard userpromptsubmit-guard guards-selfheal gitleaks-install
         cred-use-registry credfile-battery
         credclass-lib credfile-diff deadline-fallback realpath-lib outbound-guard scan-bash-compat docs-consistency glob-order build-pins)

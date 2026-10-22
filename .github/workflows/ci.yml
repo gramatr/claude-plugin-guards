@@ -190,6 +190,11 @@ jobs:
         env:
           SERVER_REF: ${{ inputs.server_ref }}
         run: bash guards/tests/gitleaks-assets-drift.sh
+      - name: Vendored Dockerfile patches the same Go modules as guards-unified Dockerfile.cpu
+        # The scan image must fix the modules the server image fixes (same tag on a tag build, else main).
+        env:
+          SERVER_REF: ${{ inputs.server_ref }}
+        run: bash guards/tests/dockerfile-go-drift.sh
 
   hadolint:
     runs-on: ubuntu-latest
