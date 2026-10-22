@@ -148,6 +148,21 @@ Details and the reasoning are in [`TRADEOFFS.md`](TRADEOFFS.md).
 | Outbound guard, ambiguous literal (`-u user:pw`, an `X-Api-Key` or `Authorization` value, URL userinfo, `password=` in a body, `--password`) | ask | **deny** |
 | Outbound guard, sure thing (a credential store or the whole environment sent, a vendor-shaped token, a private-key header, a value from the session's own environment) | deny | deny |
 
+### Organisations: the guards cannot protect themselves in `bypassPermissions`
+
+In `bypassPermissions` Claude Code lets the agent write to protected paths without a
+prompt, and `.claude` is one of them (permission-modes page, read 2026-10-22), so
+disabling these hooks is one write away in that mode. Whether the plugin's own install
+directory is covered is not documented (unverified). An organisation that needs the
+guards to hold should deliver them through managed settings: set `allowManagedHooksOnly`
+and force-enable the plugin with managed `enabledPlugins` (the marketplace registered
+with `extraKnownMarketplaces`). Claude Code's hooks page says plugin hooks are blocked
+by `allowManagedHooksOnly` except "hooks from plugins force-enabled in managed settings
+`enabledPlugins`", and that a `disableAllHooks` set below the managed level cannot
+disable managed hooks. Whether the managed settings file is protected from the agent is
+not documented; the managed-settings page says an administrator on the machine can edit
+it. The threat-model entry is in guards-unified `docs/THREAT-MODEL.md`.
+
 ## Behavior pinned by the tests
 
 Each hook below has a test in `guards/tests/` that runs in `run-all.sh` and in
