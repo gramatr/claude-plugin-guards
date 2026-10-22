@@ -69,8 +69,8 @@ These are documented limits, not vulnerabilities. They are listed in
 in guards-unified:
 
 - Anything the documentation already says is not covered: `git push`, Read,
-  Grep and WebFetch output, tool inputs other than the publish verbs and
-  `SendMessage`, a secret typed in your own prompt (a hook cannot remove it)
+  Grep and WebFetch output, tool inputs other than the publish verbs,
+  `SendMessage` and the network-client commands the outbound guard inspects, a secret typed in your own prompt (a hook cannot remove it)
   and similar. Also anything it says is not detected (short values, a bare
   high-entropy value with no context, encodings other than base64, text split
   across calls, and similar).
@@ -80,7 +80,12 @@ in guards-unified:
   be reachable on loopback only, and `GUARDS_ENDPOINT` sends raw output wherever
   it points. Exposing it to a network and then reporting
   that anyone can reach it is a deployment mistake, not a flaw.
-- A scan that times out returns the text unscanned, deliberately.
+- A scan by the service that times out is not the whole story: each hook has its
+  own shorter deadline, at which it denies (publish, credential-file, outbound
+  and SendMessage guards) or withholds (Bash and MCP output) instead of letting
+  the text through, and the prompt note stays silent (see
+  [`docs/HOOKS.md`](docs/HOOKS.md)). A late PII or injection answer is dropped
+  without a note, deliberately.
 - Findings that need an attacker who already controls the machine, the
   container runtime or the user's account.
 

@@ -75,7 +75,9 @@ credential material to a remote host. It is best effort, not a sandbox.
 
 **What it covers.** Commands whose command word is `curl`, `wget`, HTTPie
 (`http`, `https`, `xh`), `nc`/`ncat`/`netcat`, `scp`/`rsync`/`sftp` (a local
-source with a remote destination) or `ssh` (standard input only), including
+source with a remote destination), `ssh` (standard input only) or `ftp`,
+`telnet` and `socat` (the environment or a file piped or redirected in, and
+literal credentials), including
 behind `sudo`, `env`, `timeout`, `xargs`, `bash -c` and `eval`:
 
 - a **file** the client would send (`-d @file`, `-F f=@file`, `-T file`,
@@ -96,7 +98,7 @@ behind `sudo`, `env`, `timeout`, `xargs`, `bash -c` and `eval`:
   interpreters** (a python `requests.post`, a node `fetch`);
 - **state across commands**: a file created or copied by an earlier command, a
   `cd` earlier in the same command, `tee >(client) < file`, a named fifo;
-- **other clients**: `ftp`, `telnet`, `socat`, `openssl s_client`, `aria2c`,
+- **other clients**: `openssl s_client`, `aria2c`,
   `lftp`, `git push` and `git remote` URLs, `docker run <client image>`, and
   cloud CLIs (`aws s3 cp`, `gsutil`, `rclone`, `kubectl cp`, `gh api -F @file`);
 - the **content** of a file sent as a body: it is judged by its name and a
@@ -128,7 +130,7 @@ masking), which this guard complements and does not replace.
 - **PII and injection are flagged on the first 2 KB of a Bash output only**
   (`FLAG_MAX_BYTES`). Personal data or an injected instruction later in a long
   output is never flagged. This is the price of keeping the hook fast: the
-  models cost roughly 0.3 s per KB, and splitting the work in parallel made
+  models cost roughly 0.25 s per KB (the server documents the same figure), and splitting the work in parallel made
   them slower, not faster. `FLAG_MAX_BYTES` is read by the hook, not the
   server. Raising it costs latency; `0` turns the flags off.
 - **Secrets are scanned in the first 256 KB of each Bash stream only**
@@ -141,8 +143,8 @@ masking), which this guard complements and does not replace.
 - **The plugin's own `scan` MCP tool posts the whole text to the server's
   `/v1/scan`**, which refuses bodies over 64 KiB with HTTP 413 (guards-unified
   #17, released after 0.2.3). The tool then returns its `{"error": ...}` shape,
-  never a "clean" result, but its wording says the backend is unreachable,
-  which is misleading for a 413.
+  never a "clean" result, and its message names the real cause ("guards backend
+  refused the text: HTTP 413, N bytes is over the limit ...").
 - **The publish guard reads at most 512 KB** per named file and of the staged
   diff (`PUBLISH_GUARD_MAX_BYTES`); it says so when it cuts a diff, and nothing
   past the cut is scanned.
@@ -208,10 +210,13 @@ masking), which this guard complements and does not replace.
   attacks (InjecAgent, n=200). A "clean" verdict is not a safety guarantee. The
   warning is also shown only above a 0.95 confidence floor, because benign
   security-themed text scored 0.86 to 0.91.
-- **PII:** only the entity types the PII model is configured for are found, and
-  the model produces false positives on engineering text. PII is flagged,
-  never removed, by default (`PII_GUARD_MODE=redact` changes that for the Bash
-  hook and outgoing messages).
+- **PII:** only the entity types the server is configured for are found: six by
+  default since v0.2.10 (`IP_ADDRESS`, `PERSON` and `LOCATION` are off unless
+  `PII_ENTITIES` adds them). PII is noted, never removed, by default
+  (`PII_GUARD_MODE=redact` changes that for the Bash hook and outgoing
+  messages). Each type is named once per session by default
+  (`GUARDS_PII_NOTE_ONCE`), so a second match of the same type in the same
+  session raises no note, and `GUARDS_PII_IGNORE_ENTITIES` filters the note.
 
 ## False positives you will meet
 
@@ -225,17 +230,19 @@ masking), which this guard complements and does not replace.
   elsewhere it denies. The credential-file guard does the same for a `.env`,
   kubeconfig, `.npmrc`/`.pypirc` or terraform state: it asks only where a person
   can answer, so in `auto` an agent that needs one is denied, not prompted.
-- **PII notes on ordinary developer output** (a tool name tagged as a person,
-  a git remote as an email address). They are notes only.
+- **PII notes on ordinary developer output** were a common nuisance before
+  v0.2.10 (a tool name tagged as a person, a git remote as an email address, a
+  timestamp as a phone number); with the current defaults none of the three
+  occurs. They are notes only.
 
 ## Operational limits
 
-- **Latency is not always under one second with the flags on.** Measured by the
-  maintainers on a development machine (not re-measured for this page): about
-  0.6 s at 1 KB of output, 1.0 s at 3 KB and above, worst case 1.4 s, against
-  0.3 to 0.8 s with `FLAG_MAX_BYTES=0`. The Bash hook runs after every Bash
-  call, so you feel this on all work. `FLAG_MAX_BYTES=0` removes it at the cost
-  of no PII or injection notes.
+- **Latency is not always under one second with the flags on.** The Bash hook
+  waits for the PII and injection models on up to `FLAG_MAX_BYTES` (2 KB) of
+  output, at about 0.25 s per KB, and it runs after every Bash call, so you feel
+  this on all work. `FLAG_MAX_BYTES=0` removes it at the cost of no PII or
+  injection notes. Earlier timings were taken before v0.2.10 changed the
+  default PII setup and were removed instead of re-measured.
 - **Scan latency scales with your CPU.** The compose file allows 16 CPUs and 4 GB
   of memory for the service; a small machine will be slower, and a container
   killed for exceeding memory looks like an intermittent outage.
@@ -286,7 +293,9 @@ masking), which this guard complements and does not replace.
   vendored Dockerfile) and kept equal by hand.
 - **Known CVEs** in the Go modules bundled with the pinned gitleaks release
   are not suppressed. The scan image builds gitleaks from its tag with fixed
-  `klauspost/compress`, `x/crypto` and `x/text` and a current Go toolchain, and
+  `klauspost/compress`, `x/crypto` and `x/text` and a current Go toolchain (the
+  guards-unified image also fixes `ulikunitz/xz`, `nwaples/rardecode/v2` and
+  `mholt/archives`: six modules, listed in its `Dockerfile.cpu`), and
   `.trivyignore` is empty. For a machine without Docker, the self-heal script
   downloads the patched gitleaks that guards-unified publishes with each release
   (from the first release that carries it) and checks it against SHA-256 values
