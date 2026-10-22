@@ -26,8 +26,11 @@
 #      *.keystore/*.kdbx, *.tfstate, service-account / client-secret
 #      JSON files, id_rsa/id_dsa/id_ecdsa/id_ed25519.
 #   2. ANY readable file, whatever its name, whose content contains a
-#      PEM/OpenSSH private-key header. The sniff uses grep -q, so the
-#      content is never printed.
+#      PEM/OpenSSH private-key header and looks like a key (a header that
+#      starts or ends its line, a key inside JSON, or a header plus a base64
+#      body). A document that only names the header in a sentence reads
+#      (key_header_is_a_key in credclass-lib.sh; GUARDS_CRED_SNIFF_STRICT=1
+#      denies any header). The sniff never prints the content.
 #   For Bash, only commands that PRINT file content (cat, head, tail,
 #   less, sed, awk, grep, base64, xxd, strings, python ... ) AND name a
 #   sensitive path are denied. `ssh -i ~/.ssh/id_ed25519 host`,

@@ -78,6 +78,30 @@ expect ask   "Read .env"                          Read "$(read_in "$HOME/proj/.e
 expect ask   "Read kubeconfig"                    Read "$(read_in "$HOME/.kube/config")"
 expect allow "Read public key"                    Read "$(read_in "$HOME/.ssh/id_rsa.pub")"
 expect allow "Read ssh config"                    Read "$(read_in "$HOME/.ssh/config")"
+
+# --- a document that only quotes the key header reads; a key does not (coordination#86) ---
+# The header text is built at run time so this file never holds one.
+KH="-----BEGIN ""RSA PRIVATE KEY-----"
+printf 'Design note.\nThe sniff looks for %s in a file and denies it.\nSee also `%s` as quoted above.\n' "$KH" "$KH" > "$HOME/proj/design-note.md"
+printf 'Runbook step 3: if the file starts with %s then it is a key, do not paste it.\n' "$KH" > "$HOME/proj/runbook.txt"
+# a truncated key: the header alone on its line, and the header at the end of a line
+printf '%s\n' "$KH" > "$HOME/proj/truncated-key.txt"
+printf 'copied from the terminal: %s\n' "$KH" > "$HOME/proj/header-ends-line.txt"
+# a header in prose with a real body on its own lines below it (a key pasted into a note)
+{ printf 'my key, quoted: %s see below\n' "$KH"; sed -n '2,5p' "$HOME/proj/deploy.pem"; } > "$HOME/proj/pasted-note.txt"
+# a quoted markdown list item that starts with the header
+printf '> %s\nMIIEowIBAAKCAQEA\n' "$KH" > "$HOME/proj/quoted-key.txt"
+expect allow "Read a design note that quotes the header in a sentence"   Read "$(read_in "$HOME/proj/design-note.md")"
+expect allow "Read a runbook that names the header mid-line"             Read "$(read_in "$HOME/proj/runbook.txt")"
+expect deny  "Read a truncated key (the header alone on its line)"       Read "$(read_in "$HOME/proj/truncated-key.txt")"
+expect deny  "Read a file whose line ends with the header"               Read "$(read_in "$HOME/proj/header-ends-line.txt")"
+expect deny  "Read a note with the header in prose and a key body below" Read "$(read_in "$HOME/proj/pasted-note.txt")"
+expect deny  "Read a markdown-quoted header line"                        Read "$(read_in "$HOME/proj/quoted-key.txt")"
+expect deny  "Read a real key (still)"                                   Read "$(read_in "$HOME/proj/deploy.pem")"
+expect deny  "Read a key inside JSON with escaped newlines (still)"      Read "$(read_in "$HOME/proj/sa.json")"
+expect deny  "off switch: the design note is a key again"                Read "$(read_in "$HOME/proj/design-note.md")" GUARDS_CRED_SNIFF_STRICT=1
+expect allow "cat of the design note"                                    Bash "$(bash_in 'cat design-note.md')"
+expect deny  "cat of a truncated key"                                    Bash "$(bash_in 'cat truncated-key.txt')"
 expect allow "Read public certificate .pem"       Read "$(read_in "$HOME/proj/public-cert.pem")"
 expect allow "Read .env.example"                  Read "$(read_in "$HOME/proj/.env.example")"
 expect allow "Read ordinary file"                 Read "$(read_in "$HOME/proj/README.md")"
