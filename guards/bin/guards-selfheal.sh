@@ -206,6 +206,29 @@ check_plugin_update() {
 
 check_plugin_update
 
+# endpoint_is_managed_local: true only when GUARDS_ENDPOINT is the address this plugin's own
+# docker stack serves (loopback, port 8700, which is also the default when it is unset).
+# Anything else is a service somebody else runs: a remote host, or a different local port.
+# Starting a container on :8700 for it would put a second copy of the model on the machine
+# and leave every hook still pointed at the other one.
+endpoint_is_managed_local() {
+  local ep="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
+  ep="${ep#http://}"; ep="${ep%%/*}"
+  case "$ep" in
+    127.0.0.1:8700|localhost:8700|"[::1]:8700") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# remote_endpoint_check: the endpoint is not ours to start, so only say whether it answers.
+remote_endpoint_check() {
+  local ep="${GUARDS_ENDPOINT%/}"
+  log "GUARDS_ENDPOINT is ${ep}, not the local stack on 127.0.0.1:8700 -- not starting a local guards-unified container (the hooks send scans to that endpoint). Secret detection still falls back to the local scan.sh if it is unreachable."
+  if ! curl -sS --connect-timeout 2 -m 3 "${ep}/health" >/dev/null 2>&1; then
+    log "WARNING: ${ep}/health did not answer. Until it does, PII and injection detection are unavailable and secret detection uses the local scan.sh fallback."
+  fi
+}
+
 docker_usable() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
 }
@@ -492,7 +515,9 @@ fallback_non_docker() {
   log "Docker not usable on this machine — guards-unified (and with it, PII and injection detection) cannot run here. Secret detection still works via combined-hook.sh's local scan.sh fallback, as long as gitleaks/jq are on PATH (checked above). Install Docker for full coverage — see README."
 }
 
-if docker_usable; then
+if ! endpoint_is_managed_local; then
+  remote_endpoint_check
+elif docker_usable; then
   # ensure_docker_stack has no mutual-exclusion primitive of its own
   # (migrate_from_previous_architecture + reconcile_port_8700 + docker
   # compose up all act on shared Docker state), and this script runs
