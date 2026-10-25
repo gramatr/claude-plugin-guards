@@ -12,7 +12,8 @@
 > - The bundle inherits the strictest posture of its parts: treat the whole
 >   service as **loopback-only**. `docker-compose.yml` publishes it as
 >   `127.0.0.1:8700:8700`; that prefix is load-bearing. Never publish it on
->   `0.0.0.0` or behind a shared load balancer.
+>   `0.0.0.0` from this compose file. A shared instance for several machines is
+>   a separate deployment with its own requirements, listed below.
 > - The service has no authentication and receives raw tool output, which can
 >   contain the credentials and personal data it exists to catch.
 > - `GUARDS_ENDPOINT` can point at another host, and the hooks will send raw
@@ -20,10 +21,31 @@
 >   assumptions as a local one. Hosting an implementation of the same endpoint
 >   contract (`POST /v1/scan`, `POST /v1/scan/secret`) elsewhere is a separate
 >   architecture and privacy decision, not something this repository enables.
-> - Open items from the notes below are still open: whether request logging is
->   disabled, whether scanned text can reach access logs or error traces, and
->   memory handling after a request. The service's metrics file stores verdicts
->   only, never the scanned text.
+>   When the endpoint is not the local stack (loopback, port 8700), the
+>   SessionStart self-heal does not pull, start or update a local container; it
+>   only checks the endpoint's `/health` and warns if it does not answer. If the
+>   endpoint is unreachable the hooks fall back to the local secret scan only.
+> - If you do run one shared instance for several machines, treat these as
+>   requirements, not suggestions:
+>   - **Private network only.** No public route, tunnel or public DNS name. The
+>     service has no authentication, so the network is the only boundary.
+>   - **TLS from a certificate the clients already trust**, so `curl` in the
+>     hooks verifies it and nothing is sent in the clear.
+>   - **No body capture anywhere on the path.** Do not enable request or
+>     response body logging or tracing at the ingress, proxy, mesh or sidecar.
+>     Scanned text must never reach a log, trace or metric.
+>   - **Pin the image by digest** and update it by change request, not through a
+>     floating tag and an auto-updater, and run at least two replicas with a
+>     disruption budget so an update does not drop the service.
+>   - Treat it as temporary until it sits behind real authentication.
+> - Logs: a live test of v0.2.12 (unique marker strings and an email address sent
+>   through both scan routes, including malformed, oversized and
+>   error-triggering requests) found no scanned text in the service's logs or in
+>   an ingress controller's. The service's own log calls write fixed strings
+>   only, the scan script's stderr is never logged, and the metrics file stores
+>   verdicts only. One residual: tracebacks print exception messages, and this
+>   was not shown to hold for every error a dependency can raise. Memory
+>   handling after a request is still an open item.
 > - Current behavior is documented in [`../README.md`](../README.md),
 >   [`../../docs/HOOKS.md`](../../docs/HOOKS.md) and
 >   [`../../docs/LIMITS.md`](../../docs/LIMITS.md).
