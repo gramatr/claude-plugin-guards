@@ -40,7 +40,7 @@ nothing.
 | mcp-output-guard | After an MCP tool call | The tool's result text | Up to `MCP_GUARD_MAX_BYTES` (512 KiB) | `hooks/mcp-output-guard.sh` |
 | userpromptsubmit-guard | When you submit a prompt | Your prompt | Up to 900,000 bytes, as a secret-only request. It adds a note; it never blocks. | `hooks/userpromptsubmit-guard.sh` |
 | MCP server (`guards_status`, `scan`, ...) | When the agent calls it | What the tool is given | The text of a scan call, to the endpoint; `guards_status` reads the endpoint's `/about` | `guards/mcp/server.py`, `guards/mcp/guards_tools.py` |
-| self-heal | At session start | Docker state, the plugin cache, the endpoint's `/health` and `/about` on `127.0.0.1:8700` | See the first table | `guards/bin/guards-selfheal.sh` |
+| self-heal | At session start | Docker state, the plugin cache, the endpoint's `/health` and `/about` (on `127.0.0.1:8700` for the local stack; for any other `GUARDS_ENDPOINT` only `/health`, and no container is started) | See the first table | `guards/bin/guards-selfheal.sh` |
 
 **Changing `GUARDS_ENDPOINT` moves where your text goes.** Observed: with it set to another
 host, the output hook sent its request there. Point it only at a service you control.

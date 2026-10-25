@@ -244,5 +244,26 @@ fi
 [ "$(cat "$S/rc")" = 0 ] && ok || bad "the script still exits 0"
 chmod 700 "$MDIR"
 
+# 15. GUARDS_ENDPOINT is not the local stack: no container work at all, one health check, exit 0
+for ep in "https://guards.lab.example:8700" "http://10.0.0.5:8700/" "http://127.0.0.1:9000"; do
+  new_state; touch "$S/healthy"
+  GUARDS_ENDPOINT="$ep" run_heal docker
+  [ "$(rcof)" = 0 ] && ok || bad "endpoint $ep: exit 0"
+  [ ! -s "$S/docker.log" ] && ok || bad "endpoint $ep: docker is never called ($(head -1 "$S/docker.log"))"
+  grep -q "not starting a local guards-unified container" "$S/err" && ok || bad "endpoint $ep: says it is leaving the local stack alone"
+  grep -q "^curl ${ep%/}/health$" "$S/curl.log" && ok || bad "endpoint $ep: checks the endpoint's /health"
+  ! grep -q "127.0.0.1:8700" "$S/curl.log" && ok || bad "endpoint $ep: does not poll the local address"
+done
+# an unreachable remote endpoint warns but still exits 0
+new_state
+GUARDS_ENDPOINT="https://guards.lab.example:8700" run_heal docker
+[ "$(rcof)" = 0 ] && grep -q "did not answer" "$S/err" && ok || bad "unreachable remote endpoint: warns, exit 0"
+# the explicit default (and localhost) still manage the local stack
+for ep in "http://127.0.0.1:8700" "http://localhost:8700/"; do
+  new_state; touch "$S/healthy"
+  GUARDS_ENDPOINT="$ep" run_heal docker
+  called "compose -f $COMPOSE up -d" && ok || bad "endpoint $ep: local stack is still managed"
+done
+
 echo "guards-selfheal: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

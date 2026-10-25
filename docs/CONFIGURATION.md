@@ -66,7 +66,7 @@ flag scan entirely; secret redaction is unaffected.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GUARDS_ENDPOINT` | `http://127.0.0.1:8700` | Base URL of the guards-unified service. Used by the Bash hook, the secret-scan library (so also the publish guard and the MCP result guard), `sendmessage-guard.sh`, `userpromptsubmit-guard.sh` and `mcp/server.py`. Pointing it at a remote host sends raw tool output, which may contain secrets, to that host; read `guards/docker/SERVER-SIDE.md` first. |
+| `GUARDS_ENDPOINT` | `http://127.0.0.1:8700` | Base URL of the guards-unified service. Used by the Bash hook, the secret-scan library (so also the publish guard and the MCP result guard), `sendmessage-guard.sh`, `userpromptsubmit-guard.sh` and `mcp/server.py`. Pointing it at a remote host sends raw tool output, which may contain secrets, to that host; read `guards/docker/SERVER-SIDE.md` first. When it is anything other than `http://127.0.0.1:8700`, self-heal does not start or update the local container; it only checks the endpoint's `/health` and warns if it does not answer. |
 | `SS_SERVICE_TIMEOUT` | `2` | Seconds to wait for the secret-only route (`POST /v1/scan/secret`) before the hook runs the full local scan. Read by `hooks/secret-scan-lib.sh`. |
 | `GUARDS_SECRET_SCAN` | `<plugin>/vendor/secret-guard-core/scan.sh` | Path of the local scanner. Honoured by the publish guard, the outbound guard and the MCP result guard only; the Bash hook and `sendmessage-guard.sh` always use the vendored copy. Mainly used by tests to simulate a missing or broken scanner. |
 
