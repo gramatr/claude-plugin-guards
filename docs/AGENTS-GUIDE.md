@@ -108,7 +108,16 @@ them apart, and `guards_status` returns the same table in its `message_prefixes`
      the same line (`mark_synthetic`), then stage the file again.
    - **A key name that only names an identifier** (`secret_vault_id`, `token_store_ref`):
      a false positive. Rename or reword it if you can, and `report_false_positive`.
-3. Re-run `check_before_publish` on the same command or text.
+   - **A false positive you cannot reword** (a manifest field that names a Secret, code
+     that forwards a variable), in a mode with no person to ask: the block message ends
+     with an `Approval:` paragraph, an id and a command. Show the person the lines above
+     it and ask them to run the command in their own session with the `!` prefix; it
+     approves that exact text once, for ten minutes. Then retry the **identical**
+     command. Never run that command, or read or write the approve-once store, yourself:
+     it is refused, and an approval you made would not be the person's. A sure-thing
+     match (a private key, a vendor token format) never carries one.
+3. Re-run `check_before_publish` on the same command or text. (It only reports; it does
+   not use up the person's approval.)
 4. Other messages: "did not finish in time" means the input was very large or held thousands of
    matches (long lines and long unbroken runs are no longer slow; split the text or commit a
    large generated file separately); "no secret scanner could run" means the

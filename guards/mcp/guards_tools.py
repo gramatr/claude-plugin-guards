@@ -340,6 +340,10 @@ def explain_block(message: str) -> dict:
                 steps.append(
                     "This session has no person to answer an approval prompt, so an ambiguous match is a deny instead of an ask (expected in auto mode)."
                 )
+            if "guards-approve" in low:
+                steps.append(
+                    "If it is a false positive you cannot reword, show the person the lines above and ask them to run the approval command printed in the message, in their own session with the ! prefix. It approves that exact text once, for ten minutes; then retry the identical command. Never run that command or touch the approve-once store yourself: it is refused."
+                )
             if "staged diff" in kinds:
                 steps.append(
                     "For a deliberately fake fixture line in the staged diff: put guards:synthetic on the SAME line in that file's comment syntax (mark_synthetic does it), then git add the file again."
@@ -493,7 +497,7 @@ def prepare_publication(kind: str, title: str, body: str) -> dict:
 
 _PERMISSION_RULES = {
     "ask_modes": ["default", "acceptEdits", "plan"],
-    "deny_modes": "every other mode (auto, bypassPermissions, dontAsk, unknown): an ambiguous publish match is a deny, because nobody can answer an ask",
+    "deny_modes": "every other mode (auto, bypassPermissions, dontAsk, unknown): an ambiguous publish match is a deny, because nobody can answer an ask; the deny carries an id and a command the person can run to approve that exact text once (approve-once, GUARDS_PUBLISH_APPROVE=0 turns it off)",
 }
 # The message prefixes, so a block from another PreToolUse hook is not mistaken for a guard
 # (coordination#100). docs/AGENTS-GUIDE.md has the same table; docs-consistency.test.sh checks it.

@@ -15,6 +15,10 @@
 # different copy of the script (negative controls).
 
 set -uo pipefail
+# Hermetic: a developer machine pointed at a shared service has GUARDS_ENDPOINT set, which makes self-heal leave
+# the local stack alone and fails every case below that expects it to manage one. The cases that need an
+# endpoint set it themselves.
+unset GUARDS_ENDPOINT
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_SRC="${SCRIPT_SRC:-$HERE/../bin/guards-selfheal.sh}"
 BASH_BIN="$(command -v bash)"
