@@ -151,6 +151,11 @@ ctx_describes_secret() {
   # switch, a "..._TOKEN_TIMEOUT" value). Docs and commit messages show these
   # all the time and their values are numbers or words, never the credential.
   [[ "$1" =~ [_.-](bytes|size|length|limit|max|min|timeout|secs|seconds|ms|port|depth|mode|ask|enabled|disabled)$ ]] && return 0
+  [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ] && [[ "$1" =~ [_.-](used|usage|total|remaining|budget|spent|consumed|estimate)$ ]] && return 0
+  # A Helm value that points at a Secret that already exists (existingSecret, auth.existingSecret,
+  # existingSecretPasswordKey): the value is the Secret's name or a key within it, never the credential
+  # (coordination#124). A key such as existing_password still redacts: it names no Secret.
+  [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ] && [[ "$1" =~ (^|[_.-])existing[A-Za-z0-9_.-]*(secret|token|credential) ]] && return 0
   # A tokenizer is not a token: a variable named tokenizer holding the result of
   # a model loader is in every ML codebase. Skip the key only if it has no other
   # credential word once the tokeniz* part is removed (tokenizer_secret still
@@ -188,6 +193,53 @@ ctx_dependency_spec() {
     elif [[ "$before" =~ $scoped ]] && [[ "$v" =~ $bare ]]; then
       rc=0
     fi
+  fi
+  [ "$nc" = 1 ] && shopt -s nocasematch
+  return $rc
+}
+
+# ctx_reference_value KEY VAL PFX BEFORE AFTER: the value is a REFERENCE to a credential, not the credential
+# (coordination#124). The key still says "secret", but what follows is where to find it. Each form below is narrow
+# on purpose; a literal that merely looks like one of them is the accepted residual, and the self-test pins the
+# near misses that must still redact.
+#   - an UPPER_SNAKE name made of words (AZURE_SP_PASSWORD): an environment variable or secret-store item name
+#   - a file:line citation: the key is a file name (cli-credentials.ts) and the value is only line numbers
+#   - a Terraform reference on the right of a spaced = (var.x, local.x, azurerm_x.name.value)
+#   - the start of an index expression whose quote follows (os.environ["X"]): code reading a name
+#   - a keyword argument forwarding its own parameter (the value is the key name again)
+#   - the target key of an External Secrets data entry, when a remoteRef or ExternalSecret sits next to it
+ctx_reference_value() {
+  local key="$1" val="$2" pfx="$3" before="$4" after="$5" nc=0 rc=1 core="$2" k c win
+  local endp='[],;)}.]$'
+  local envname='^[A-Z]{2,}(_[A-Z]{2,}[0-9]*)+$'
+  local filekey='^[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.[A-Za-z]{1,5}$' lines='^[0-9]+([-,:][0-9]+)*$'
+  local hclvar='^(var|local|data|module)\.[]A-Za-z0-9_.*[-]+$'
+  local hclres='^[a-z][a-z0-9]*(_[a-z0-9]+)+(\.[]A-Za-z0-9_.*[-]+){2,}$'
+  local subs='^[A-Za-z_][A-Za-z0-9_.]*\[$' ident='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+  while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
+  shopt -q nocasematch && nc=1
+  shopt -u nocasematch
+  if [[ "$core" =~ $envname ]]; then
+    rc=0
+  elif [[ "$key" =~ $filekey && "$core" =~ $lines ]]; then
+    rc=0
+  elif [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && { [[ "$core" =~ $hclvar ]] || [[ "$core" =~ $hclres ]]; }; then
+    rc=0
+  elif [[ "$val" =~ $subs && "$after" =~ ^[\"\'] ]]; then
+    rc=0
+  elif [[ "$pfx" =~ [^[:blank:]]=$ && "$val" =~ [,\)]$ ]]; then
+    k="${key//[_.-]/}"; c="${core//[_.-]/}"
+    shopt -s nocasematch
+    [[ "$c" == "$k" ]] && rc=0
+    shopt -u nocasematch
+  elif [[ "$pfx" =~ :[[:blank:]]*[\"\']?$ && "$core" =~ $ident ]]; then
+    shopt -s nocasematch
+    [[ "$key" == secretKey ]] && {
+      shopt -u nocasematch
+      win="${before: -700}${after:0:700}"
+      [[ "$win" == *remoteRef* || "$win" == *ExternalSecret* ]] && rc=0
+    }
+    shopt -u nocasematch
   fi
   [ "$nc" = 1 ] && shopt -s nocasematch
   return $rc
@@ -338,6 +390,7 @@ ctx_redact_one() {
       out+="$m"
     elif ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
       || { [ -n "$key" ] && ctx_dependency_spec "$key" "$val" "$out$pre"; } \
+      || { [ -n "$key" ] && [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ] && ctx_reference_value "$key" "$val" "$pfx" "$out$pre" "${tmp:$((${#pre} + 1))}"; } \
       || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
