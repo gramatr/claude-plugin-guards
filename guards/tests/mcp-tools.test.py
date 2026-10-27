@@ -466,6 +466,25 @@ class ExplainBlock(Base):
         self.assertEqual(ex["where"], [])
         self.assertIn("did not locate", " ".join(ex["next_steps"]))
 
+    def test_an_approve_once_block_tells_the_agent_to_ask_the_person(self):
+        # coordination#124: a block that carries an approval id points at the person, never at the agent
+        ex = gt.explain_block(
+            "Blocked by guards publish-guard: a commit would publish text that looks like it contains a credential (detector rule(s): secret-lead-in)"
+            " [permission mode 'auto' has no person to answer an approval prompt, so an ambiguous match is blocked instead of asked]."
+            "\nApproval: only the PERSON can approve this exact text, once. Ask them to run this: ! bash /p/bin/guards-approve.sh 0123456789abcdef"
+            "\nWhere (first 1 of 1; each line is shown as the scanner redacts it, the value itself is never printed):\n"
+            "  1. the staged diff, file a/b.yaml, line 3: x"
+        )
+        steps = " ".join(ex["next_steps"])
+        self.assertIn("ask them to run the approval command", steps)
+        self.assertIn("Never run that command", steps)
+        self.assertValueFree(ex)
+        plain = gt.explain_block(
+            "Blocked by guards publish-guard: a commit would publish text (detector rule(s): secret-lead-in)"
+            "\nWhere: the scanner could not point to a line (it matched without changing the text)."
+        )
+        self.assertNotIn("approval command", " ".join(plain["next_steps"]))
+
     def test_hard_rule_gets_the_runtime_fixture_advice(self):
         ex = gt.explain_block(
             "Blocked by guards publish-guard: this command would publish text that looks like it contains a credential (detector rule(s): private-key,github-pat)"

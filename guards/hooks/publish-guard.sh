@@ -183,6 +183,14 @@ case "$TOOL_NAME" in
     CMD="$(jfield command)"
     [ -n "$CMD" ] || exit 0
 
+    # The approve-once store is for the PERSON (coordination#124): an agent that runs the approve
+    # script, or reads or writes the store, would be answering its own block. Checked before the
+    # publish test below, on every Bash command, so it cannot be hidden in an unrelated command.
+    # This is a plain text match: it stops an agent that is not trying to get around it.
+    if [[ "$CMD" == *guards-approve* || "$CMD" == *gramatr-guards/approvals* || "$CMD" == *gramatr-guards/pending* ]]; then
+      deny "Blocked by guards publish-guard: this command names the approve-once store or its script, which only the person uses to approve a blocked publish. Fix: do not run, read or write it; tell the person what was blocked and ask them to run the approval command printed in the block message, then retry the identical command."
+    fi
+
     PUBLISH_RE='(^|[^A-Za-z0-9_-])gh[[:space:]]+(issue|pr|release|gist)[[:space:]]+(create|comment|edit|review)([^A-Za-z0-9_-]|$)'
     API_RE='(^|[^A-Za-z0-9_-])gh[[:space:]]+api[[:space:]]'
     API_BODY_RE='(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'
@@ -507,7 +515,30 @@ $(explain)"
 fi
 
 if [ -n "$RULES" ]; then
-  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.
+  # Approve-once (coordination#124): an ambiguous match with no person to ask. The person can approve
+  # this exact text once with bin/guards-approve.sh; the retry then passes. Never for a sure-thing
+  # match (HARD), and not when an operator asked for hard blocks (GUARDS_PUBLISH_ASK=0).
+  APPROVE_NOTE=""
+  if [ "$HARD" -eq 0 ] && [ "${GUARDS_PUBLISH_APPROVE:-1}" != "0" ] && [ "${GUARDS_PUBLISH_ASK:-1}" != "0" ]; then
+    # shellcheck source=guards/hooks/approve-lib.sh
+    . "$SCRIPT_DIR/approve-lib.sh"
+    AID="$(approve_id "$RULES" "$SCAN_INPUT")"
+    if [ "${GUARDS_PUBLISH_GUARD_REPORT:-0}" = "1" ]; then
+      # The MCP checker only reports; it must not use up the person's approval.
+      if approve_peek "$AID"; then
+        notice "publish-guard: ${LABEL} matched (detector rule(s): ${RULES}) but the person has approved this exact text once (id ${AID}); it will pass on the next real attempt."
+        exit 0
+      fi
+    elif approve_consume "$AID"; then
+      approve_log "$AID" "$RULES"
+      notice "publish-guard: ${LABEL} matched (detector rule(s): ${RULES}) and was allowed once by the person's approval (id ${AID})."
+      exit 0
+    fi
+    approve_pending_write "$AID" "$LABEL" "$RULES" "$WHERE"
+    APPROVE_NOTE="
+Approval: if this is a false positive, only the PERSON can approve this exact text, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ! bash $(dirname "$SCRIPT_DIR")/bin/guards-approve.sh ${AID}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the lines above and ask."
+  fi
+  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.${APPROVE_NOTE}
 $(explain)"
 fi
 

@@ -457,6 +457,23 @@ password run straight through. A publish cannot be undone, so the hook reads
 `permission_mode` from its input and denies instead. The deny message says that
 the mode has no person to answer.
 
+**Approving one block yourself (approve-once).** When an ambiguous match is
+denied for that reason, the message names an id and a command. If the text is
+fine (a manifest field that only names a Secret, a code line that forwards a
+variable), run the command in your own session with the `!` prefix, which does
+not pass through the hooks: `! bash <plugin>/bin/guards-approve.sh <id>`. It
+prints what you are approving (the located lines, values never shown), then
+records a single-use approval for that exact text, valid for ten minutes
+(`GUARDS_APPROVE_TTL`). The agent retries the identical command and it passes
+once; a changed text has a new id. A sure-thing match (a private key, a vendor
+token format, a value from the session environment) is never offered for
+approval. publish-guard refuses an agent that tries to run the command or touch
+the store, but this is a safeguard against accidents, not against an agent that
+can write files anywhere (see Limits). `GUARDS_PUBLISH_APPROVE=0` turns it off;
+`bash guards-approve.sh --list` shows what is waiting; each use is logged by rule
+in `~/.local/share/gramatr-guards/approvals.log`, so a rule that needs approving
+often can be tuned.
+
 `GUARDS_PUBLISH_ASK=force` asks regardless of mode (for an operator who knows a
 person is attached); `GUARDS_PUBLISH_ASK=0` makes every match a hard deny.
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the environment Claude Code starts from
