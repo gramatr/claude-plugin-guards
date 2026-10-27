@@ -142,6 +142,7 @@ are listed so you know what a hook is doing.
 | `SECRET_GUARD_ENV_VALUES` | off | `1` in the publish guard, MCP guard, secret-scan library and Bash fallback | Exact-match redaction of values of environment variables with secret-looking names. Skips values under 8 characters, placeholders, existing paths, and names ending in `_FILE`, `_PATH`, `_DIR`, `_URL`, `_URI`, `_NAME`, `_ID`, `_TYPE`, `_HOST`, `_PORT`, `_USER`. Not available inside the container, which cannot see your session's environment. |
 | `SECRET_GUARD_SKIP_GITLEAKS` | off | `1` after the service has already run gitleaks | Stops after the built-in passes. |
 | `SECRET_GUARD_B64` | on | not set | `0` disables the base64 pass. |
+| `SECRET_GUARD_REFERENCE_VALUES` | on | not set | `0` turns off the reference-value exemptions: a value that only points at a credential (a name written in capitals, a Terraform reference, a forwarded keyword argument, a manifest field that names a Secret) is redacted like any other value again. The server's `docs/TRADEOFFS.md` lists the cases and what they give up. |
 | `SECRET_GUARD_REDACT_KEY_IDS` | off | not set | `1` also redacts access-key and client IDs, which are not redacted by default. |
 | `SECRET_GUARD_FINDINGS_JSON` | unset | a temp file | Where rule IDs (never values) are written. |
 
