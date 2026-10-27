@@ -136,6 +136,7 @@ platform side; the hook cannot get there by chunking.
 | `INJECTION_MIN_SCORE` | Either | Lower shows more injection warnings, with more false positives |
 | `SECRET_GUARD_REDACT_KEY_IDS=1` (scanner) | Harden | Also redacts access-key and client IDs |
 | `SECRET_GUARD_B64=0` (scanner) | Loosen | Turns off the base64 pass |
+| `SECRET_GUARD_REFERENCE_VALUES=0` (scanner) | Harden | Turns off the reference-value exemptions, so a value that only points at a credential is redacted again (and the publish guard denies it again) |
 | `GUARDS_CRED_HEREDOC_STRIP=0` | Harden | A heredoc that only writes data is scanned again for reader words and sensitive paths |
 | `GUARDS_PUBLISH_COMMIT_SCOPE=0` | Harden | The whole command text of a `git commit` is scanned again, including unrelated heredocs on the same line |
 | `GUARDS_CRED_SNIFF_STRICT=1` | Harden | Any file that holds a private-key header is a key again |
