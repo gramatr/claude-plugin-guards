@@ -216,6 +216,8 @@ ctx_reference_value() {
   local hclvar='^(var|local|data|module)\.[]A-Za-z0-9_.*[-]+$'
   local hclres='^[a-z][a-z0-9]*(_[a-z0-9]+)+(\.[]A-Za-z0-9_.*[-]+){2,}$'
   local subs='^[A-Za-z_][A-Za-z0-9_.]*\[$' ident='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+  local hdrvar='^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$' word='^[A-Za-z][A-Za-z-]{2,}$' lb
+  local closer='^[[:blank:]]*([,})]|$)'
   while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
   shopt -q nocasematch && nc=1
   shopt -u nocasematch
@@ -231,6 +233,28 @@ ctx_reference_value() {
     k="${key//[_.-]/}"; c="${core//[_.-]/}"
     shopt -s nocasematch
     [[ "$c" == "$k" ]] && rc=0
+    shopt -u nocasematch
+  elif [[ "$pfx" =~ [\"\']:[[:blank:]]*$ && "$key" == *-* && "$core" =~ $hdrvar ]] \
+    && { [[ "$val" =~ $endp ]] || [[ "${after%%$'\n'*}" =~ $closer ]]; }; then
+    # An HTTP header name used as an object key (a quoted, hyphenated key such as "x-api-key") whose value is a
+    # variable or member chain that itself ends in a credential word (apiKey, this.apiKey, config.authToken):
+    # the secret lives in the variable, not in this line (coordination#125). A literal, a name with digits,
+    # and any name that does not end in a credential word still redact.
+    c="${core//[_.]/}"; c="${c//\$/}"
+    shopt -s nocasematch
+    [[ "$c" =~ (key|token|secret|password|passwd|pwd|credentials?|auth|bearer)$ ]] && rc=0
+    shopt -u nocasematch
+  elif [[ "$pfx" =~ :[[:blank:]]+$ && "$core" =~ $word && "${after%%$'\n'*}" =~ ^[[:blank:]]+[A-Za-z]{2,} ]]; then
+    # A label and a sentence, as in a doc comment: a plural heading word, a colon, then a verb and more words.
+    # The label is a plural heading (tokens, secrets, credentials, ...) or the second of a comma-separated list
+    # of labels, the word after the colon is letters only, and more words follow it (coordination#125). A value
+    # with a digit or symbol, a word alone at the end of the line, and a singular key followed by a passphrase
+    # of several words still redact.
+    lb="${before##*$'\n'}"
+    shopt -s nocasematch
+    if [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases|keys)$ ]] || [[ "$lb" =~ [A-Za-z]+,[[:blank:]]+$ ]]; then
+      rc=0
+    fi
     shopt -u nocasematch
   elif [[ "$pfx" =~ :[[:blank:]]*[\"\']?$ && "$core" =~ $ident ]]; then
     shopt -s nocasematch
@@ -301,6 +325,13 @@ ctx_code_shape_cs() {
   # a type: primitive names anywhere after a colon; others need code around
   if [ "$delim" = colon ]; then
     [[ "$core" =~ ^(string|number|boolean|unknown|any|void|object|never|bigint|symbol)(\[\])?$ ]] && return 0
+    if [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ]; then
+      # A parameter's type up to the end of its list or a return type, in TypeScript, Python and Rust, and a
+      # union of primitives (coordination#125). Cut at the first character that cannot belong to the type name.
+      local tcore="${core%%[):,;{=]*}" prim='(&str|string|number|boolean|unknown|any|void|object|never|bigint|symbol|str|int|float|bool|bytes|String)'
+      local tre="^${prim}(\[\])?([&|](${prim}|null|undefined)(\[\])?)*\$"
+      [[ "$tcore" =~ $tre ]] && return 0
+    fi
     if [ "$prop" = 1 ] && { [ "$cue" = 1 ] || [[ "$val" =~ [,\;]$ ]]; }; then
       [[ "$core" =~ ^(Promise|Record|Array|Map|Set|Partial|Readonly|ReadonlyArray|Omit|Pick)\< ]] && return 0
       [[ "$core" =~ ^([A-Z][a-z]{2,})+(\[\])?$ ]] && return 0
@@ -389,9 +420,9 @@ ctx_redact_one() {
       && { [[ "$key" == /* ]] || [ "${out: -1}" = "/" ]; }; then
       out+="$m"
     elif ctx_placeholder "$val" || { [ -n "$key" ] && ctx_describes_secret "$key"; } \
-      || { [ -n "$key" ] && ctx_dependency_spec "$key" "$val" "$out$pre"; } \
-      || { [ -n "$key" ] && [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ] && ctx_reference_value "$key" "$val" "$pfx" "$out$pre" "${tmp:$((${#pre} + 1))}"; } \
-      || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out$pre" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
+      || { [ -n "$key" ] && ctx_dependency_spec "$key" "$val" "$out"; } \
+      || { [ -n "$key" ] && [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ] && ctx_reference_value "$key" "$val" "$pfx" "$out" "${tmp:$((${#pre} + 1))}"; } \
+      || { [ -z "$qg" ] && [ -n "$key" ] && ctx_code_shape "$key" "$out" "$pfx" "$val" "${tmp:$((${#pre} + 1))}"; } \
       || { [[ "$key" =~ ^(tokens|secrets|passwords|credentials|passphrases)$ ]] && [[ "$val" == \`* ]]; }; then
       # last clause: a bare plural heading followed by a markdown code span
       # ("Query-string tokens: `access_token=`") is prose, not a value.
