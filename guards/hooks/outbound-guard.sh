@@ -314,6 +314,8 @@ literal_scan() {
     if [ "${GUARDS_OUTBOUND_APPROVE:-1}" != "0" ] && [ "${GUARDS_OUTBOUND_ASK:-1}" != "0" ]; then
       # shellcheck source=guards/hooks/approve-lib.sh
       . "$HOOK_DIR/approve-lib.sh" 2> /dev/null && aid="$(approve_id "${rules}${LIT_AMBIG:+ parser:$LIT_AMBIG}" "$in")"
+      # A vendor token or private key shape is never offered, even when only a weaker rule saw it (no gitleaks).
+      approve_sure_shape "$in" && aid=""
       LIT_AID="$aid"
     fi
   fi

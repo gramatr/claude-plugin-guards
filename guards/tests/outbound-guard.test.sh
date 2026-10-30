@@ -368,6 +368,18 @@ r="$(dec auto "curl -H \"Authorization: Bearer $GH\" $URL")"; check "approve: a 
 case "$(reason)" in *guards-approve*) bad "approve: a sure-thing match is offered for approval" ;; *) ok ;; esac
 # a person present still gets the normal ask
 r="$(dec default "$AOUT")"; check "approve: default mode still asks the person" ask "$r"
+# Without gitleaks (CI has none) a vendor token is seen only by the weaker, ambiguous rules; the shape alone must keep
+# it from being offered for approval. A PATH of everything but gitleaks reproduces that machine.
+NOGL="$T/nogl"; mkdir -p "$NOGL"
+for d in /usr/local/bin /usr/bin /bin; do
+  for f in "$d"/*; do n="${f##*/}"; [ "$n" = gitleaks ] && continue; [ -e "$NOGL/$n" ] || ln -s "$f" "$NOGL/$n" 2> /dev/null; done
+done
+r="$(dec auto "curl -H \"Authorization: Bearer $GH\" $URL" "PATH=$NOGL")"; check "approve: without gitleaks a vendor token is still denied" deny "$r"
+case "$(reason)" in *guards-approve*) bad "approve: without gitleaks a vendor token is offered for approval" ;; *) ok ;; esac
+r="$(dec auto "curl -H \"Authorization: Bearer $GH\" $URL" "PATH=$NOGL")"
+case "$(reason)" in *"Fix:"*) ok ;; *) bad "approve: the refusal still carries a Fix clause" ;; esac
+r="$(dec auto "$AOUT" "PATH=$NOGL")"; check "approve: without gitleaks an ordinary ambiguous literal is still approvable" deny "$r"
+case "$(reason)" in *guards-approve*) ok ;; *) bad "approve: without gitleaks an ambiguous literal loses its approval" ;; esac
 
 echo "outbound-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
