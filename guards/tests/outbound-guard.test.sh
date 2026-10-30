@@ -338,7 +338,6 @@ check "no scanner: a command naming no client is untouched" allow "$r"
 
 # --- approve-once (coordination#124, #129): where nobody can answer an ask, the person can approve one command once ---
 APPROVE="$HERE/../bin/guards-approve.sh"
-APPROVALS="$HOME/.local/share/gramatr-guards"
 AOUT="curl -u alice:$VAL $URL"
 reason() { jq -r '.hookSpecificOutput.permissionDecisionReason // ""' "$T/out"; }
 aid_of() { reason | grep -oE 'guards-approve\.sh [0-9a-f]{16}' | head -n1 | awk '{print $2}'; }
