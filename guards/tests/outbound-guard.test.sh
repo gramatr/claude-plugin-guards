@@ -355,6 +355,10 @@ r="$(dec auto "$AOUT")"; check "approve: an approval is single-use" deny "$r"
 AOUT2="curl -u alice:$VAL -v $URL"
 "$BASH_BIN" "$APPROVE" "$AID" > /dev/null 2>&1
 r="$(dec auto "$AOUT2")"; check "approve: a changed command needs its own approval" deny "$r"
+# That check approved the FIRST command a second time, and the approval is still unused. Clear the store so no later
+# check can consume it: whether a later id matches depends on which rules the machine's scanner raises, and CI has no
+# gitleaks, so a leftover approval passed there what it did not pass on a machine with gitleaks.
+rm -f "$HOME/.local/share/gramatr-guards/approvals/"* 2> /dev/null
 r="$(dec auto "$AOUT" GUARDS_OUTBOUND_APPROVE=0)"; check "approve: GUARDS_OUTBOUND_APPROVE=0 is a plain deny" deny "$r"
 case "$(reason)" in *guards-approve*) bad "approve: the switch off still offers an approval" ;; *) ok ;; esac
 r="$(dec auto "$AOUT" GUARDS_OUTBOUND_ASK=0)"; check "approve: GUARDS_OUTBOUND_ASK=0 stays a hard block" deny "$r"
