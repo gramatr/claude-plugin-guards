@@ -634,13 +634,21 @@ ctx_join_chunks() {
 ctx_chunk_long_lines
 
 # --- key <delim> value, in the three quoting styles, for both key families
+# The two rules marked below match rare shapes, and every rule is another regex pass over the whole text, which is
+# what a large output pays for. A cheap substring test decides whether the text can hold the shape at all. Earlier
+# rules only ever remove content, so a shape absent now is absent for the rest of the loop. (Measured: without the
+# test the combined-hook case with a 190 KB output took 13 percent longer than before these rules existed.)
+CTX_MAYBE_ESCQ=0
+[[ "$CTX_TEXT" == *'\"'* ]] && CTX_MAYBE_ESCQ=1
+CTX_MAYBE_SUBST=0
+[[ "$CTX_TEXT" == *echo* || "$CTX_TEXT" == *printf* ]] && CTX_MAYBE_SUBST=1
 for KEYRE in "$KEY_A" "$KEY_B"; do
   # A literal inside an echo or printf substitution, such as a password set from an echo. The bare value is the
   # substitution's opening word, which counts as a reference, so the literal after it was never redacted. This
   # rule reads the word after echo or printf instead (coordination#129). $VAR and ${VAR} after it are references.
   # It runs BEFORE the bare rule: that one redacts the opening word of a backtick substitution and would leave
   # the literal behind.
-  ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'(\\*\$\(|\\*`)(echo|printf)[[:blank:]]+("|'"'"')?' '[^[:space:]"'"'"')`\\]{4,}'
+  [ "$CTX_MAYBE_SUBST" = 1 ] && ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'(\\*\$\(|\\*`)(echo|printf)[[:blank:]]+("|'"'"')?' '[^[:space:]"'"'"')`\\]{4,}'
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'" "'"
   ctx_rule secret-lead-in "$KEYRE" "$DELIM" "$V_BARE"
@@ -648,7 +656,7 @@ for KEYRE in "$KEY_A" "$KEY_B"; do
   # a password set with backslash-quoted value. No rule read it: the bare value stops at the quote and the quoted rules need the
   # quote right after the delimiter, so the literal was never redacted (coordination#129). The value cannot start
   # with a backslash, so \"\$(cat file)\" stays a reference.
-  ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'\\"' '[^"\\]{4,}' '\\"'
+  [ "$CTX_MAYBE_ESCQ" = 1 ] && ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'\\"' '[^"\\]{4,}' '\\"'
 done
 
 # --- the one next-line form that is a value, not a heading ------------------
