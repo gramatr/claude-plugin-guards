@@ -103,6 +103,15 @@ CTX_TEXT="$(printf '%s' "$CTX_TEXT" | LC_ALL=C sed -E \
 # Values that are references or placeholders, not secrets.
 ctx_placeholder() {
   [[ "$1" =~ ^(\$|\<|\{|%\(|\*\*\*|\.\.\.) ]] && return 0
+  if [ "${SECRET_GUARD_REFERENCE_VALUES:-1}" != 0 ]; then
+    # An expansion written for a remote shell (coordination#129): inside a double-quoted ssh command the dollar
+    # sign is escaped so the REMOTE shell expands it (\$(cat file), \${VAR}, \$VAR), and a command substitution
+    # may use backticks. Still a reference, not a value. A backtick form counts only when the command is a reader
+    # of a file or a secret store, so a password written in a markdown code span still redacts.
+    local escdollar='^\\+\$' btick='^\\*`(cat|pass|op|bws|vault|aws|gcloud|az|kubectl|security|gpg|sops|head|tail|printenv|jq|yq|base64)([[:space:]]|$)'
+    [[ "$1" =~ $escdollar ]] && return 0
+    [[ "$1" =~ $btick ]] && return 0
+  fi
   [[ "$1" =~ ^(x+|\*+|\.+|-+|_+|true|false|null|none|nil|yes|no|undefined|empty|redacted|changeme|change-me|example|todo|tbd|string|password|secret|token)$ ]] && return 0
   # An absolute path that exists is a path, not a password. This is what
   # `env`, `printenv PWD`, `export -p` and a "pwd: /path/to/dir" line print: the
@@ -626,9 +635,20 @@ ctx_chunk_long_lines
 
 # --- key <delim> value, in the three quoting styles, for both key families
 for KEYRE in "$KEY_A" "$KEY_B"; do
+  # A literal inside an echo or printf substitution, such as a password set from an echo. The bare value is the
+  # substitution's opening word, which counts as a reference, so the literal after it was never redacted. This
+  # rule reads the word after echo or printf instead (coordination#129). $VAR and ${VAR} after it are references.
+  # It runs BEFORE the bare rule: that one redacts the opening word of a backtick substitution and would leave
+  # the literal behind.
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'(\\*\$\(|\\*`)(echo|printf)[[:blank:]]+("|'"'"')?' '[^[:space:]"'"'"')`\\]{4,}'
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}\"" "$V_DQ" '"' '"'
   ctx_rule secret-lead-in "$KEYRE" "${DELIM}'" "$V_SQ" "'" "'"
   ctx_rule secret-lead-in "$KEYRE" "$DELIM" "$V_BARE"
+  # A value in ESCAPED quotes, as in a command written inside a double-quoted ssh string:
+  # a password set with backslash-quoted value. No rule read it: the bare value stops at the quote and the quoted rules need the
+  # quote right after the delimiter, so the literal was never redacted (coordination#129). The value cannot start
+  # with a backslash, so \"\$(cat file)\" stays a reference.
+  ctx_rule secret-lead-in "$KEYRE" "${DELIM}"'\\"' '[^"\\]{4,}' '\\"'
 done
 
 # --- the one next-line form that is a value, not a heading ------------------
