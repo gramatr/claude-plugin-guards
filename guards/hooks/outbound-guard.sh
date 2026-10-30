@@ -133,6 +133,8 @@ SENTINEL_RE="${GUARDS_OUTBOUND_SENTINEL_RE:-SANDBOX_MASKED_[A-Za-z0-9]+}"
 SECRET_SCAN="${GUARDS_SECRET_SCAN:-$(dirname "$HOOK_DIR")/vendor/secret-guard-core/scan.sh}"
 LIT_SURE=""     # parser: vendor-shaped values, by flag
 LIT_AMBIG=""    # parser: ambiguous literals, by flag
+LIT_AID=""      # approve-once id of this exact command, when it is approvable (coordination#129)
+LIT_APPROVE_NOTE=""
 LIT_KIND=""     # scanner result: deny | ask | ""
 LIT_FROM_RULES=0  # 1 when the message came from a matched scanner rule
 LIT_MSG=""
@@ -302,6 +304,19 @@ literal_scan() {
     total="$(printf '%s\n' "$loc_out" | sed -n 's/^#TOTAL //p')"; total="${total:-0}"
     where="$(printf '%s\n' "$loc_out" | grep -v '^#TOTAL ')"
   fi
+  # Approve-once (coordination#124, #129): the id of this exact text under these rules, taken now because the work
+  # directory goes next. Only for an ambiguous match, and not when the operator asked for hard blocks.
+  # One id covers both findings the guard can raise for a command: the scanner's rules and the parser's own
+  # "may carry a literal" flag (LIT_AMBIG), so a single approval clears the command, not half of it.
+  local aid=""
+  LIT_AID=""
+  if { [ -n "$rules" ] && [ "$hard" -eq 0 ]; } || { [ -z "$rules" ] && [ -n "$LIT_AMBIG" ]; }; then
+    if [ "${GUARDS_OUTBOUND_APPROVE:-1}" != "0" ] && [ "${GUARDS_OUTBOUND_ASK:-1}" != "0" ]; then
+      # shellcheck source=guards/hooks/approve-lib.sh
+      . "$HOOK_DIR/approve-lib.sh" 2> /dev/null && aid="$(approve_id "${rules}${LIT_AMBIG:+ parser:$LIT_AMBIG}" "$in")"
+      LIT_AID="$aid"
+    fi
+  fi
   rm -rf "$w"
   [ -n "$rules" ] || return 0
   LIT_FROM_RULES=1
@@ -327,7 +342,21 @@ $LIT_WHAT"
   else
     [ "${GUARDS_OUTBOUND_ASK:-1}" != "0" ] && mode_note=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so an ambiguous match is blocked instead of asked]"
     LIT_KIND=deny
-    LIT_MSG="Blocked by guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname${mode_note}. Fix: do not put the value in the command, not even a prefix; describe its shape only.${explain}"
+    local approve_note=""
+    if [ -n "$aid" ]; then
+      if approve_consume "$aid"; then
+        # The person approved this exact command text once: let it through, say so, and use the approval up.
+        approve_log "$aid" "$rules_csv"
+        NOTES="${NOTES:+$NOTES }guards outbound-guard: this command matched (detector rule(s): $rules_csv) and was allowed once by the person's approval (id $aid)."
+        LIT_KIND=""
+        LIT_AMBIG=""   # the same approval covers the parser's flag on this exact command
+        return 0
+      fi
+      approve_pending_write "$aid" "a command that sends text to a remote host via $cname" "$rules_csv" "$where"
+      approve_note="
+Approval: if this is a false positive, only the PERSON can approve this exact command, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ! bash $(dirname "$HOOK_DIR")/bin/guards-approve.sh ${aid}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the lines below and ask."
+    fi
+    LIT_MSG="Blocked by guards outbound-guard: this command may send a credential (detector rule(s): $rules_csv) to a remote host via $cname${mode_note}. Fix: do not put the value in the command, not even a prefix; describe its shape only.${approve_note}${explain}"
   fi
   return 0
 }
@@ -355,8 +384,18 @@ $LIT_WHAT"
           if [ "$CAN_ASK" -eq 1 ]; then
             [ -n "$ASK_MSG" ] || ASK_MSG="guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text. Approve only if it is not a real value. Fix: if it is real, do not put the value in the command, not even a prefix.
 $LIT_WHAT"
+          elif [ -n "$LIT_AID" ] && approve_consume "$LIT_AID"; then
+            # The person approved this exact command once (coordination#129): the parser's flag alone raised it.
+            approve_log "$LIT_AID" "parser:$LIT_AMBIG"
+            NOTES="${NOTES:+$NOTES }guards outbound-guard: $LIT_AMBIG may carry a literal credential in this command and it was allowed once by the person's approval (id $LIT_AID)."
           else
-            DENY_MSG="Blocked by guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Fix: do not put the value in the command, not even a prefix.
+            LIT_APPROVE_NOTE=""
+            if [ -n "$LIT_AID" ]; then
+              approve_pending_write "$LIT_AID" "a command that sends text to a remote host (the parser flagged $LIT_AMBIG)" "parser:$LIT_AMBIG" "(the parser flagged the operand $LIT_AMBIG; the scanner located no line)"
+              LIT_APPROVE_NOTE="
+Approval: if this is a false positive, only the PERSON can approve this exact command, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ! bash $(dirname "$HOOK_DIR")/bin/guards-approve.sh ${LIT_AID}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the command and ask."
+            fi
+            DENY_MSG="Blocked by guards outbound-guard: $LIT_AMBIG may carry a literal credential in the command text, and permission mode '${PERM_MODE:-unknown}' has no person to approve it. Fix: do not put the value in the command, not even a prefix.${LIT_APPROVE_NOTE}
 $LIT_WHAT"
           fi
         fi ;;
