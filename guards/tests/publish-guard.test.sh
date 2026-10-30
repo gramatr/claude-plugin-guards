@@ -397,6 +397,20 @@ bash "$APPROVE" 0123456789abcdef >/dev/null 2>&1; [ $? -eq 1 ] && ok || bad "app
 grep -q "secret-lead-in" "$APPROVALS/approvals.log" 2>/dev/null && ! grep -q "$PW" "$APPROVALS/approvals.log" && ok || bad "approve: each use is logged by rule, without text"
 [ "$(stat -c %a "$APPROVALS/approvals" 2>/dev/null || stat -f %Lp "$APPROVALS/approvals")" = 700 ] && ok || bad "approve: the store is private to the user"
 
+# Without gitleaks (CI has none) a vendor token is seen only by the weaker, ambiguous rules; the shape alone must keep
+# it from being offered for approval. A PATH of everything but gitleaks reproduces that machine.
+NOGL="$T/nogl"; mkdir -p "$NOGL"
+for d in /usr/local/bin /usr/bin /bin; do
+  for f in "$d"/*; do n="${f##*/}"; [ "$n" = gitleaks ] && continue; [ -e "$NOGL/$n" ] || ln -s "$f" "$NOGL/$n" 2> /dev/null; done
+done
+GHAP="gh$(printf 'p')_$(rnd 36)"
+VT="$(bash_in "gh issue create -R o/r --title t --body 'Authorization: Bearer $GHAP'")"
+o="$(hook_out Bash "$VT" "PATH=$NOGL")"
+[ "$(printf '%s' "$o" | decision)" = deny ] && ok || bad "approve: without gitleaks a vendor token in a body is denied"
+[[ "$(printf '%s' "$o" | jq -r '.hookSpecificOutput.permissionDecisionReason')" != *guards-approve* ]] && ok || bad "approve: without gitleaks a vendor token is offered for approval"
+o="$(hook_out Bash "$AMB" "PATH=$NOGL")"
+[[ "$(printf '%s' "$o" | jq -r '.hookSpecificOutput.permissionDecisionReason')" == *guards-approve* ]] && ok || bad "approve: without gitleaks an ordinary ambiguous match is still approvable"
+
 # a person present (default mode) still gets the normal ask
 PM_MODE=default
 [ "$(hook_out Bash "$AMB" | decision)" = ask ] && ok || bad "approve: default mode still asks the person"

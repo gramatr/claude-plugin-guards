@@ -523,6 +523,9 @@ if [ -n "$RULES" ]; then
     # shellcheck source=guards/hooks/approve-lib.sh
     . "$SCRIPT_DIR/approve-lib.sh"
     AID="$(approve_id "$RULES" "$SCAN_INPUT")"
+    # A vendor token or private key shape is never offered, even when only a weaker rule saw it (no gitleaks).
+    approve_sure_shape "$SCAN_INPUT" && AID=""
+    if [ -n "$AID" ]; then
     if [ "${GUARDS_PUBLISH_GUARD_REPORT:-0}" = "1" ]; then
       # The MCP checker only reports; it must not use up the person's approval.
       if approve_peek "$AID"; then
@@ -537,6 +540,7 @@ if [ -n "$RULES" ]; then
     approve_pending_write "$AID" "$LABEL" "$RULES" "$WHERE"
     APPROVE_NOTE="
 Approval: if this is a false positive, only the PERSON can approve this exact text, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ! bash $(dirname "$SCRIPT_DIR")/bin/guards-approve.sh ${AID}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the lines above and ask."
+    fi
   fi
   deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.${APPROVE_NOTE}
 $(explain)"

@@ -469,7 +469,10 @@ once; a changed text has a new id. A sure-thing match (a private key, a vendor
 token format, a value from the session environment) is never offered for
 approval. publish-guard refuses an agent that tries to run the command or touch
 the store, but this is a safeguard against accidents, not against an agent that
-can write files anywhere (see Limits). `GUARDS_PUBLISH_APPROVE=0` turns it off;
+can write files anywhere (see Limits). The outbound guard (a command that sends
+text to a remote host: curl, wget, ssh and the like) has the same path for an
+ambiguous literal, and one approval covers both of its findings for that exact
+command. `GUARDS_PUBLISH_APPROVE=0` and `GUARDS_OUTBOUND_APPROVE=0` turn it off;
 `bash guards-approve.sh --list` shows what is waiting; each use is logged by rule
 in `~/.local/share/gramatr-guards/approvals.log`, so a rule that needs approving
 often can be tuned.

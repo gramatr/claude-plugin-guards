@@ -43,6 +43,32 @@ approve_id() {
 
 approve_valid_id() { [[ "$1" =~ ^[0-9a-f]{16}$ ]]; }
 
+# Shapes that are never offered for approval, whatever rule the scanner gave them. Without gitleaks a vendor
+# token is only seen by the weaker, ambiguous context rules (an authorization header, a lead-in), so the rule
+# label cannot decide this: the shape does. Same families as publish-guard's check on marked fixture lines.
+APPROVE_SURE_FAMILIES=(
+  "private-key header|-----BEGIN [A-Z0-9 ]*PRIVATE KEY"
+  "AWS access key id|(AKIA|ASIA)[A-Z0-9]{16}"
+  "GitHub token|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
+  "Slack token|xox[abprs]-[A-Za-z0-9-]{10,}"
+  "Stripe or OpenAI live key|(sk|rk)_live_[A-Za-z0-9]{16,}|sk-proj-[A-Za-z0-9_-]{20,}"
+)
+
+# approve_sure_shape FILE: succeeds when the text holds one of those shapes. A token that says example or fake
+# (the documented AWS example ids) does not count, as for marked fixture lines; a private key header always counts.
+approve_sure_shape() {
+  local f="$1" fam name re
+  for fam in "${APPROVE_SURE_FAMILIES[@]}"; do
+    name="${fam%%|*}"; re="${fam#*|}"
+    if [ "$name" = "private-key header" ]; then
+      LC_ALL=C grep -qE -- "$re" "$f" 2>/dev/null && return 0
+    else
+      LC_ALL=C grep -oE -- "$re" "$f" 2>/dev/null | grep -qviE 'example|fake' && return 0
+    fi
+  done
+  return 1
+}
+
 approve_mkdirs() {
   mkdir -p "$GUARDS_APPROVE_DIR/approvals" "$GUARDS_APPROVE_DIR/pending" 2>/dev/null || return 1
   chmod 700 "$GUARDS_APPROVE_DIR/approvals" "$GUARDS_APPROVE_DIR/pending" 2>/dev/null
