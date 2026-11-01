@@ -36,7 +36,7 @@ step() { # step LABEL CMD...
 SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-guard scan-redaction scan-sh-drift dockerfile-go-drift deny-messages
         sendmessage-guard userpromptsubmit-guard guards-selfheal gitleaks-install
         cred-use-registry credfile-battery
-        credclass-lib credfile-diff deadline-fallback realpath-lib outbound-guard scan-bash-compat docs-consistency glob-order build-pins guards-switch workflow-timeouts hook-deadlines-bounded)
+        credclass-lib credfile-diff deadline-fallback realpath-lib outbound-guard scan-bash-compat docs-consistency glob-order build-pins guards-switch workflow-timeouts hook-deadlines-bounded approvals-report)
 
 # The MCP server test is Python and needs `mcp>=2` and `httpx`. Point
 # GUARDS_TEST_PYTHON at an interpreter that has them (CI installs them with
