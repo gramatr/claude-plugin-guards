@@ -609,7 +609,7 @@ class GuardsStatus(Base):
     def test_the_off_switch_is_reported(self):
         # coordination#133: when the person has switched the guards off, say so, and call it a degradation
         req = httpx.Request("GET", "http://stub.invalid/about")
-        up = lambda url, timeout=None: httpx.Response(  # noqa: E731
+        up = lambda url, timeout=None: httpx.Response(
             200, json={"version": "9.9.9"}, request=req
         )
         with tempfile.TemporaryDirectory() as d:

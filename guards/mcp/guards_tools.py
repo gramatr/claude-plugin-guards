@@ -545,7 +545,7 @@ def _switch_state() -> dict:
         return {"off": False}
     return {
         "off": True,
-        "until": datetime.fromtimestamp(until, timezone.utc).isoformat(),
+        "until": datetime.fromtimestamp(until, timezone.utc).isoformat(),  # noqa: UP017
         "minutes_left": (left + 59) // 60,
     }
 

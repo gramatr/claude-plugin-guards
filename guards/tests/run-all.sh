@@ -43,10 +43,20 @@ SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-g
 # pip); without them it prints a skip locally and fails under CI=true.
 PY="${GUARDS_TEST_PYTHON:-python3}"
 
-if command -v ruff >/dev/null 2>&1; then
+# The ruff CI installs is pinned in ci.yml, and a different version flags different things (0.6.9 here passed what 0.17.1
+# rejected). Use the pinned one through uvx when it is available; fall back to a local ruff and say which version ran.
+RUFF_PIN="$(grep -oE 'ruff==[0-9][0-9.]*' .github/workflows/ci.yml | head -1)"
+RUFF=()
+if [ -n "$RUFF_PIN" ] && command -v uvx >/dev/null 2>&1; then
+  RUFF=(uvx --from "$RUFF_PIN" ruff)
+elif command -v ruff >/dev/null 2>&1; then
+  RUFF=(ruff)
+  echo "note: local ruff $(ruff --version | awk '{print $2}') is not CI's ${RUFF_PIN:-pin}; install uv to run the pinned one"
+fi
+if [ "${#RUFF[@]}" -gt 0 ]; then
   echo "ruff"
-  step "ruff check" ruff check .
-  step "ruff format" ruff format --check .
+  step "ruff check" "${RUFF[@]}" check .
+  step "ruff format" "${RUFF[@]}" format --check .
 fi
 
 if command -v shellcheck >/dev/null 2>&1; then
