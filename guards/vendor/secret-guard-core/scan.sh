@@ -229,8 +229,35 @@ ctx_reference_value() {
   local closer='^[[:blank:]]*([,})]|$)'
   while [[ "$core" =~ $endp ]]; do core="${core%?}"; done
   shopt -q nocasematch && nc=1
+  # Three facts about the key, worked out case-insensitively before the chain below (coordination#130):
+  #  - plural_tokens: the key ends in "tokens" (prompt_tokens, max_tokens, total_tokens): a count of tokens
+  #  - topic_key: a compound key whose credential word is NOT its last segment, so it names a topic ABOUT credentials
+  #    (credential_audit, secret_rotation, token_policy), not a credential. A last segment that is itself a
+  #    credential word, a value word or an environment name (password, key, value, prod, old, 2) keeps it strict.
+  local plural_tokens=0 topic_key=0 lastseg
+  shopt -s nocasematch
+  [[ "$key" =~ tokens$ ]] && plural_tokens=1
+  if [[ "$key" == *[_.-]* ]]; then
+    lastseg="${key##*[_.-]}"
+    [[ "$lastseg" =~ ^(secret|secrets|token|tokens|password|passwords|passwd|pwd|passphrase|passphrases|apikey|key|keys|credential|credentials|cred|creds|auth|bearer|pat|pass|value|values|data|string|text|hash|bytes|content|material|blob|b64|base64|pem|id|dev|prod|test|staging|stage|local|old|new|backup|primary|secondary|[0-9]+)$ ]] || topic_key=1
+  fi
   shopt -u nocasematch
+  lb="${before##*$'\n'}"
+  local unpack_targets='^[[:blank:]]*(\*?[A-Za-z_][A-Za-z0-9_.]*,[[:blank:]]+)+$'
+  local member_chain='^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$' snake_name='^[a-z][a-z0-9]*(_[a-z0-9]+)+$'
   if [[ "$core" =~ $envname ]]; then
+    rc=0
+  elif [ "$plural_tokens" = 1 ] && [[ "$core" =~ ^[0-9]+$ ]]; then
+    # a count: "total_tokens": 1831. A singular token key with a number is not exempt.
+    rc=0
+  elif [ "$topic_key" = 1 ] && [[ "$pfx" =~ :[[:blank:]]+$ ]] && [[ "$core" =~ ^[a-z]{3,}$ ]] \
+    && [[ "${after%%$'\n'*}" =~ ^[[:blank:]]+[a-z]{2,} ]]; then
+    # a topic and a sentence, as in an issue title or a commit message: "credential_audit: write an audit row ..."
+    rc=0
+  elif [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && [[ "$lb" =~ $unpack_targets ]] \
+    && { [[ "$core" =~ $member_chain ]] || [[ "$core" =~ $snake_name ]]; }; then
+    # tuple unpacking: name, url, api_key = row.name, row.url, row.key. The key is paired with the FIRST right-hand
+    # value, which is a member chain or a snake_case name, not a literal.
     rc=0
   elif [[ "$key" =~ $filekey && "$core" =~ $lines ]]; then
     rc=0
