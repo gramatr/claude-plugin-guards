@@ -30,10 +30,19 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ] || ! command -v timeout >/dev/null 2>&1; then
   echo "hook-deadlines: 0 passed, 0 failed (skipped)"
   exit 0
 fi
+# A hung CI step ran 35+ minutes twice on 2026-11-01 (the default job limit is 6 h). Nothing in this suite may
+# wait unbounded: the one external call (the git fetch of the control commit) has its own limit below, and the
+# whole suite runs under an overall limit, so a hang is a FAIL with a message, not a stuck job.
+if [ -z "${DEADLINE_TEST_BOUNDED:-}" ]; then
+  DEADLINE_TEST_BOUNDED=1 timeout -k 5 "${DEADLINE_TEST_LIMIT:-300}" bash "${BASH_SOURCE[0]}" "$@"
+  rc=$?
+  [ "$rc" -eq 124 ] && echo "FAIL: hook-deadlines exceeded its overall limit of ${DEADLINE_TEST_LIMIT:-300} s"
+  exit "$rc"
+fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 HOOKS_JSON="$REPO/guards/hooks/hooks.json"
-BASE="70ad26775a11c1bc3c608ef91a67291bd4eeda35"   # origin/main before the deadlines change
+BASE="${DEADLINE_BASE:-70ad26775a11c1bc3c608ef91a67291bd4eeda35}"   # origin/main before the deadlines change (override: tests of this suite)
 
 T="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
@@ -54,7 +63,8 @@ done
 cp "$REPO"/guards/hooks/*.sh "$T/new/hooks/"
 have_old=1
 if ! git -C "$REPO" cat-file -e "$BASE:guards/hooks/publish-guard.sh" 2>/dev/null; then
-  git -C "$REPO" fetch -q --depth=1 origin "$BASE" 2>/dev/null
+  # Bounded: a stalled network fetch must not hold the job. GIT_TERMINAL_PROMPT=0 so it never waits for a credential.
+  GIT_TERMINAL_PROMPT=0 timeout -k 2 "${DEADLINE_FETCH_TIMEOUT:-60}" git -C "$REPO" fetch -q --depth=1 origin "$BASE" 2>/dev/null
 fi
 for f in combined-hook credfile-guard mcp-output-guard publish-guard secret-scan-lib sendmessage-guard userpromptsubmit-guard; do
   git -C "$REPO" show "$BASE:guards/hooks/$f.sh" > "$T/old/hooks/$f.sh" 2>/dev/null || have_old=0

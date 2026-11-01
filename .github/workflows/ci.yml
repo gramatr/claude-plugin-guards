@@ -100,6 +100,11 @@ jobs:
         env:
           DEADLINE_REQUIRE_CONTROL: "1"
         run: bash guards/tests/hook-deadlines.test.sh
+      - name: hook deadline tests cannot hang
+        # A stalled fetch of the control commit must end the suite, not the job (hung 35+ min, 2026-11-01).
+        env:
+          DEADLINE_REQUIRE_CONTROL: "1"
+        run: bash guards/tests/hook-deadlines-bounded.test.sh
       - name: outbound safe-forms tests
         # Real curl, wget and HTTPie against a localhost listener; fabricated values only.
         # HTTPie is optional: the test reports a SKIP if the install fails.
