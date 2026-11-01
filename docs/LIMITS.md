@@ -57,7 +57,7 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   `config`, `.pem`, `.key`, `secret`; the stems live next to `sensitive_reason` in `credclass-lib.sh` and a
   drift test fails when a name that function classifies is not passed). Past 300 checked words, a command that
   also runs a file reader asks (default, acceptEdits, plan) or is denied (auto, bypassPermissions, dontAsk, and
-  `GUARDS_CRED_ASK=0`) with a reason that says to split it. Limits that remain: a credential kept under a name
+  `GUARDS_CRED_ASK=0`) with a reason that says to split it. On a slow or heavily loaded machine (a macOS CI runner was seen) a command near the cap can use up the hook's own 6 s deadline; the deadline outcome for this hook is a deny, so the person sees a deny with the deadline reason instead of the ask. Limits that remain: a credential kept under a name
   that is not a path, has no stem and is not in a credential directory (a renamed key `notes.txt` in a project
   directory) is not seen after word 60 unless it is a path-shaped word; the content sniff only runs on checked
   words (this was already so). Bare words in a credential directory (`cd ~/.ssh && cat x`) are all checked.
