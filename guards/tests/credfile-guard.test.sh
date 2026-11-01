@@ -146,6 +146,13 @@ expect deny  "python3 - heredoc that opens the key denies"     Bash "$(bash_in "
 expect deny  "bash heredoc that cats the key denies"           Bash "$(bash_in "bash <<EOF${NL}cat $HK${NL}EOF")"
 expect deny  "heredoc piped to a reader denies"                Bash "$(bash_in "cat <<EOF | sh${NL}cat $HK${NL}EOF")"
 expect deny  "heredoc to cat > on a pipe line denies"          Bash "$(bash_in "cat <<EOF | tee out.txt | head${NL}$HK${NL}EOF")"
+# An unquoted delimiter lets the shell expand the body, so a substitution inside it can read the key into the file.
+expect deny  "unquoted heredoc with a command substitution reading the key denies" Bash "$(bash_in "cat > note.txt <<EOF${NL}\$(cat $HK)${NL}EOF")"
+expect deny  "unquoted heredoc with a backtick reading the key denies"             Bash "$(bash_in "tee note.txt <<EOF${NL}\`base64 $HK\`${NL}EOF")"
+expect deny  "unquoted heredoc with a braced default substitution denies"          Bash "$(bash_in "cat > note.txt <<EOF${NL}\${X:-\$(cat $HK)}${NL}EOF")"
+expect allow "quoted heredoc: the substitution is literal text"                    Bash "$(bash_in "cat > note.txt <<'EOF'${NL}\$(cat $HK)${NL}EOF")"
+expect allow "backslash-quoted delimiter: the substitution is literal text"        Bash "$(bash_in "cat > note.txt <<\\EOF${NL}\$(cat $HK)${NL}EOF")"
+expect allow "unquoted heredoc that only names a variable still allows"            Bash "$(bash_in "cat > note.txt <<EOF${NL}home is \$HOME and the key is $HK${NL}EOF")"
 expect deny  "unterminated writing heredoc falls back"         Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK")"
 expect deny  "off switch: writing heredoc is scanned again"    Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK${NL}EOF")" GUARDS_CRED_HEREDOC_STRIP=0
 # A key named as the identity or key-file of a tool that only USES it is not a read, even
