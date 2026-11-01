@@ -28,7 +28,7 @@ NOBASE=0000000000000000000000000000000000000001   # a commit that does not exist
 
 # Fixed suite: the fetch limit (3 s here) ends the hang; the suite finishes on its own.
 s0=$(date +%s)
-out="$(env PATH="$T/bin:$PATH" DEADLINE_BASE="$NOBASE" DEADLINE_FETCH_TIMEOUT=3 \
+out="$(env PATH="$T/bin:$PATH" DEADLINE_BASE="$NOBASE" DEADLINE_FETCH_TIMEOUT=3 DEADLINE_REQUIRE_CONTROL=0 \
   timeout -k 2 150 bash "$REPO/guards/tests/hook-deadlines.test.sh" 2>&1)"; rc=$?
 secs=$(( $(date +%s) - s0 ))
 [ "$rc" -ne 124 ] && ok || bad "fixed suite hung on a stalled fetch (outer limit reached after ${secs}s)"
