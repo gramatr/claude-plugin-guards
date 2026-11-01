@@ -188,6 +188,12 @@ scan_and_redact() {
     echo "combined-hook: guards-unified returned a malformed/unexpected response shape, treating as unreachable (fail-open to local secret-scan fallback)" >&2
     response=""
   fi
+  # Same for a well-formed answer whose secret axis is "error" or missing: the
+  # text was not scanned for secrets, so treat it as down and use the local scan.
+  if [ -n "$response" ] && ! echo "$response" | jq -e '[.findings[] | select(.type=="secret") | .verdict] | (length > 0) and all(. == "found" or . == "clean")' >/dev/null 2>&1; then
+    echo "combined-hook: guards-unified's secret axis did not answer (error or missing), treating as unreachable (local secret-scan fallback)" >&2
+    response=""
+  fi
 
   if [ -n "$response" ]; then
     # Secret finding: always hard-redact.

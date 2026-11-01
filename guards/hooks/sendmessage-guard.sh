@@ -217,6 +217,13 @@ scan_remote() {
   if [ -z "$resp" ] || ! echo "$resp" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
     return 1
   fi
+  # A well-formed answer whose secret axis says "error" (or has no secret
+  # finding) did not scan for secrets: that counts as the service being down,
+  # so the caller falls back to the local secret scan instead of sending the
+  # message as if it were clean.
+  if ! echo "$resp" | jq -e '[.findings[] | select(.type=="secret") | .verdict] | (length > 0) and all(. == "found" or . == "clean")' >/dev/null 2>&1; then
+    return 1
+  fi
   if [ "$(echo "$resp" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)" = "found" ]; then
     SCAN_SECRET_FOUND=1
     SCAN_OUT="$(echo "$resp" | jq -r '.findings[] | select(.type=="secret") | .detail.redacted_text // empty' 2>/dev/null)"
