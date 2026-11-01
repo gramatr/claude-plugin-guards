@@ -193,5 +193,35 @@ out="$(hook "http://127.0.0.1:$(cat "$T/bad.port")" '{"to":"a","message":"m LOCA
 kill "$BADPID" 2>/dev/null
 [ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" = "m $R" ] && ok || bad "a 200 without findings falls back to the local scan"
 
+# 11. a well-formed 200 whose secret axis says "error" counts as down, not as clean (the service could not scan)
+cat > "$T/err.py" <<'PY'
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Quiet(HTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup that takes ~35 s on the
+    # GitHub macOS runner; a test stub on 127.0.0.1 needs no name.
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("content-length", 0)))
+        b = b'{"findings":[{"type":"secret","verdict":"error","reason_code":"SCAN_FAILED","detail":{}},{"type":"pii","verdict":"clean","detail":{}},{"type":"injection","verdict":"clean","detail":{}}]}'
+        self.send_response(200); self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
+s = Quiet(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+PY
+python3 -I "$T/err.py" "$T/err.port" >/dev/null 2>&1 &
+ERRPID=$!
+for _ in $(seq 1 50); do [ -s "$T/err.port" ] && break; sleep 0.1; done
+out="$(hook "http://127.0.0.1:$(cat "$T/err.port")" '{"to":"a","message":"m LOCALSECRET456"}')"
+kill "$ERRPID" 2>/dev/null
+[ "$(jqo "$out" '.hookSpecificOutput.updatedInput.message')" = "m $R" ] && ok || bad "a secret axis error falls back to the local scan"
+
 echo "sendmessage-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
