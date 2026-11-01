@@ -62,7 +62,7 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__.*github.*",
+        "matcher": "Bash|^mcp__([A-Za-z0-9-]|_[A-Za-z0-9-])*_?[Gg][Ii][Tt][Hh][Uu][Bb]([A-Za-z0-9-]|_[A-Za-z0-9-])*__.*",
         "hooks": [
           {
             "type": "command",

@@ -415,5 +415,32 @@ o="$(hook_out Bash "$AMB" "PATH=$NOGL")"
 PM_MODE=default
 [ "$(hook_out Bash "$AMB" | decision)" = ask ] && ok || bad "approve: default mode still asks the person"
 
+# --- the hooks.json matcher is anchored to the GitHub MCP server segment (coordination#132) ---
+# mcp__<server>__<tool>: the server is the text up to the first double underscore. The matcher must route every
+# write tool of a GitHub MCP server to this hook, whatever the install form of the server, and must not route a
+# tool of another server just because "github" appears in the tool name.
+HOOKS_JSON="${GUARDS_HOOKS_JSON:-$HERE/../hooks/hooks.json}"
+PG_MATCHER="$(jq -r '.hooks.PreToolUse[] | select(any(.hooks[]; (.args // []) | any(test("publish-guard\\.sh")))) | .matcher' "$HOOKS_JSON")"
+matcher_hits() { # matcher_hits NAME -> success if Claude Code would run the hook for a tool of that name (search or full match)
+  printf '%s' "$1" | grep -Eq -- "$PG_MATCHER" && printf '%s' "$1" | grep -Eq -- "^($PG_MATCHER)\$"
+}
+# The write tools of the official GitHub MCP server, as of this writing, plus the older reference server's.
+GH_WRITE_TOOLS="create_or_update_file push_files delete_file create_repository fork_repository create_branch create_issue update_issue add_issue_comment add_sub_issue remove_sub_issue reprioritize_sub_issue create_pull_request update_pull_request merge_pull_request update_pull_request_branch create_pending_pull_request_review add_pull_request_review_comment_to_pending_review submit_pending_pull_request_review delete_pending_pull_request_review create_pull_request_review add_pull_request_review_comment add_comment_to_pending_review request_copilot_review create_gist update_gist create_release create_pull_request_with_copilot assign_copilot_to_issue"
+# Install forms: a plain server, the plugin form, the claude.ai connector, hyphenated and underscored names.
+GH_SERVERS="github plugin_github_github claude_ai_GitHub github-mcp-server my_github my-github-enterprise GitHub"
+missed=""
+for sv in $GH_SERVERS; do
+  for t in $GH_WRITE_TOOLS; do matcher_hits "mcp__${sv}__${t}" || missed="$missed mcp__${sv}__${t}"; done
+done
+[ -z "$missed" ] && ok || bad "matcher: a GitHub MCP write tool is not routed to the hook:$missed"
+matcher_hits Bash && ok || bad "matcher: Bash is no longer routed to the hook"
+for n in mcp__gitlab__sync_github_mirror mcp__jira__link_github_issue mcp__plugin_gitlab_gitlab__create_github_issue mcp__slack__post_message \
+         mcp__gitlab__mcp__github__create_issue mcp__openmetadata__create_entity; do
+  matcher_hits "$n" && bad "matcher: $n is routed to the GitHub publish hook" || ok
+done
+# A server name with a single underscore is still one server segment; a double underscore ends it.
+matcher_hits mcp__git_hub__create_issue && bad "matcher: git_hub is not a GitHub server" || ok
+matcher_hits mcp__a__github__create_issue && bad "matcher: a tool name with github after the server segment matched" || ok
+
 echo "publish-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
