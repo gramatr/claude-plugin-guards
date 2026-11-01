@@ -45,7 +45,7 @@ the text. Read [`docs/LIMITS.md`](../docs/LIMITS.md) before relying on this.
 | 3 | `PostToolUse` on `mcp__.*` | `hooks/mcp-output-guard.sh` | Redacts secrets in MCP tool results |
 | 4 | `PreToolUse` on `SendMessage` | `hooks/sendmessage-guard.sh` | Redacts secrets in outgoing agent-to-agent messages; notes PII |
 | 5 | `PreToolUse` on `Read\|Grep\|Bash` | `hooks/credfile-guard.sh` | Denies (or asks about) reads of credential files before any content exists |
-| 6 | `PreToolUse` on `Bash\|mcp__.*github.*` | `hooks/publish-guard.sh` | Denies (or asks about) publishes that carry credentials |
+| 6 | `PreToolUse` on `Bash` and on MCP tools whose server segment contains `github` | `hooks/publish-guard.sh` | Denies (or asks about) publishes that carry credentials |
 | 7 | `PreToolUse` on `Bash` | `hooks/outbound-guard.sh` | Denies (or asks about) a command that would send a credential file, the whole environment or a literal credential to a remote host |
 | 8 | `UserPromptSubmit` | `hooks/userpromptsubmit-guard.sh` | Adds a note when your own prompt contains a secret. Advisory only |
 
@@ -416,8 +416,9 @@ only vendor token formats and does not scan issue bodies.
   anything else falls back to the tracked changes against `HEAD`). Each file or
   diff is capped at `PUBLISH_GUARD_MAX_BYTES` (512 KB); the hook says when a
   diff was cut.
-- GitHub MCP write tools: tools whose name matches `mcp__.*github.*` **and**
-  contains one of `create`, `update`, `add_`, `comment`, `push`, `merge`,
+- GitHub MCP write tools: tools of an MCP server whose name (the segment between `mcp__` and the next `__`, for
+  example `mcp__github__create_issue`, `mcp__plugin_github_github__...`, `mcp__claude_ai_GitHub__...`) contains
+  `github` in any case, **and** whose tool name contains one of `create`, `update`, `add_`, `comment`, `push`, `merge`,
   `review`, `edit`, `post`, `send`, `write`. The whole `tool_input` is scanned.
 
 The scanned text is the full command (heredoc bodies included) plus the
