@@ -123,6 +123,9 @@ jobs:
       - name: userpromptsubmit-guard tests
         # Stub service; advisory hook must never block.
         run: bash guards/tests/userpromptsubmit-guard.test.sh
+      - name: degrade-lib tests (shared degraded-service state)
+        # Real curl against loopback stubs and a closed port; state in a temp dir; fabricated values only.
+        run: bash guards/tests/degrade-lib.test.sh
       - name: guards-selfheal tests
         # Stub docker/curl/git/timeout/sleep on PATH; no container or network.
         run: bash guards/tests/guards-selfheal.test.sh
@@ -185,7 +188,7 @@ jobs:
         run: |
           /bin/bash --version | head -1
           failed=""
-          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard deny-messages guards-switch; do
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard deny-messages guards-switch degrade-lib; do
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || failed="$failed $t"
           done

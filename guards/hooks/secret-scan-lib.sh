@@ -21,7 +21,8 @@
 # Each hook sets SS_LOCAL_TIMEOUT (default 30 s) and SS_ENV_TIMEOUT (default
 # 10 s) below its own deadline (deadline-lib.sh); SS_TIMED_OUT=1 means the local
 # scan ran out of time, as opposed to being unable to run.
-# Sets:  SS_OUT (file with the redacted text), SS_RULES (space-separated
+# Sets:  SS_OUTCOME (ok|down|slow|http|malformed, from degrade-lib.sh when the hook sources it, else empty),
+#        SS_OUT (file with the redacted text), SS_RULES (space-separated
 #        detector rule IDs, never values), SS_CHANGED (1 if SS_OUT differs
 #        from INFILE), SS_SOURCE (service|local).
 # Returns 0 on success, 1 if no scanner could run at all.
@@ -35,14 +36,24 @@ ss_timeout() {
 
 secret_scan() {
   local in="$1" w="${SS_WORK:?SS_WORK not set}"
-  local svc="$w/ss.svc.json" svc_out="$w/ss.svc.out" loc="$w/ss.loc.json" verdict r
-  SS_OUT="$w/ss.final.out"; SS_RULES=""; SS_CHANGED=0; SS_SOURCE=local; SS_TIMED_OUT=0
+  local svc="$w/ss.svc.json" svc_out="$w/ss.svc.out" loc="$w/ss.loc.json" verdict r meta crc body_ok=0
+  SS_OUT="$w/ss.final.out"; SS_RULES=""; SS_CHANGED=0; SS_SOURCE=local; SS_TIMED_OUT=0; SS_OUTCOME=""
   : > "$loc"
 
-  if jq -n --rawfile text "$in" '{text: $text}' 2>/dev/null \
+  # curl's -w answer (status and time to connect) lets degrade-lib.sh tell "could not connect" from "too
+  # slow" from "answered with an error"; the request itself is unchanged.
+  meta="$(jq -n --rawfile text "$in" '{text: $text}' 2>/dev/null \
       | curl -sS --connect-timeout 1 -m "${SS_SERVICE_TIMEOUT:-2}" -X POST "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}/v1/scan/secret" \
-          -H 'Content-Type: application/json' -d @- -o "$svc" 2>/dev/null \
+          -H 'Content-Type: application/json' -d @- -o "$svc" -w '%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
+  if [ "$crc" -eq 0 ] \
      && jq -e '(.findings | type == "array") and (.findings[0].type == "secret") and (.findings[0].verdict != "error")' "$svc" >/dev/null 2>&1; then
+    body_ok=1
+  fi
+  if [ -n "${DG_STATE+x}" ]; then
+    dg_observe "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}" "$crc" "$meta" "$body_ok"; SS_OUTCOME="$DG_OUTCOME"
+  fi
+
+  if [ "$body_ok" -eq 1 ]; then
     SS_SOURCE=service
     verdict="$(jq -r '.findings[0].verdict' "$svc")"
     if [ "$verdict" = "found" ]; then

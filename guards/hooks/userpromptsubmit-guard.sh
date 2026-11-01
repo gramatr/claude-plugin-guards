@@ -46,6 +46,9 @@ set -uo pipefail
 GUARDS_ENDPOINT="${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
 
 RAW="$(cat)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=guards/hooks/degrade-lib.sh
+[ -f "$SCRIPT_DIR/degrade-lib.sh" ] && . "$SCRIPT_DIR/degrade-lib.sh"
 
 # Advisory only: without jq the prompt cannot be read or the note built, so the
 # hook stays silent (a line on stderr, shown in debug output) and never blocks.
@@ -62,9 +65,14 @@ fi
 # stdin, never as an argument, because one argument cannot exceed about 128 KB.
 # The route's own cap is 1 MiB, so the prompt is cut at 900000 bytes (the head
 # is what a person types or pastes first).
+# The last line of curl's answer is its -w text (status and time to connect), for degrade-lib.sh.
 RESPONSE="$(printf '%s' "$PROMPT" | head -c 900000 | jq -Rs '{text: .}' 2>/dev/null \
   | curl -sS --connect-timeout 3 -m 8 -X POST "${GUARDS_ENDPOINT}/v1/scan/secret" \
-      -H "Content-Type: application/json" -d @- 2>/dev/null)"
+      -H "Content-Type: application/json" -d @- -w '\n%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; CRC=$?
+META="${RESPONSE##*$'\n'}"; RESPONSE="${RESPONSE%$'\n'*}"
+BODY_OK=0
+[ -n "$RESPONSE" ] && echo "$RESPONSE" | jq -e '.findings | type == "array"' >/dev/null 2>&1 && BODY_OK=1
+[ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$CRC" "$META" "$BODY_OK"
 
 # A non-empty RESPONSE isn't enough on its own -- a truncated body or
 # a well-formed error JSON missing "findings" would otherwise make the
@@ -72,7 +80,7 @@ RESPONSE="$(printf '%s' "$PROMPT" | head -c 900000 | jq -Rs '{text: .}' 2>/dev/n
 # "scanned, nothing found." This hook already fails open on empty
 # response (advisory-only, no local fallback exists); malformed gets
 # the same treatment, not a silent false-clean.
-if [ -z "$RESPONSE" ] || ! echo "$RESPONSE" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
+if [ "$BODY_OK" -ne 1 ]; then
   exit 0
 fi
 

@@ -95,6 +95,8 @@ trap 'rm -f "${TMP_FILES[@]}"' EXIT
 RAW="$(cat)"
 # shellcheck source=guards/hooks/json-lib.sh
 . "$SCRIPT_DIR/json-lib.sh"
+# shellcheck source=guards/hooks/degrade-lib.sh
+[ -f "$SCRIPT_DIR/degrade-lib.sh" ] && . "$SCRIPT_DIR/degrade-lib.sh"
 TOOL_NAME="$(jfield tool_name)"
 if [ "$TOOL_NAME" != "SendMessage" ]; then
   exit 0
@@ -165,7 +167,7 @@ add_rawfile_arg() {
 # Returns 1 if guards-unified itself didn't answer at all.
 scan_remote() {
   local text="$1" resp
-  local full_len scan_text remainder="" req_file
+  local full_len scan_text remainder="" req_file meta crc body_ok=0
   SCAN_OUT="$text"
   SCAN_SECRET_FOUND=0
   SCAN_PII_TYPES=""
@@ -204,17 +206,21 @@ scan_remote() {
   printf '%s' "$scan_text" > "$req_file"
   local left=$((SM_T0 + SERVICE_BUDGET - $(date +%s)))
   if [ "$left" -lt 1 ]; then rm -f "$req_file"; return 1; fi
+  # The last line of curl's answer is its -w text (status and time to connect), which degrade-lib.sh
+  # uses to tell "could not connect" from "too slow" from "answered with an error".
   resp="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
     | curl -sS --connect-timeout 2 -m "$left" -X POST "${GUARDS_ENDPOINT}/v1/scan" \
-        -H "Content-Type: application/json" -d @- 2>/dev/null)"
+        -H "Content-Type: application/json" -d @- -w '\n%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
+  meta="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
   rm -f "$req_file"
-
   # A non-empty resp isn't enough on its own -- a truncated body or a
   # well-formed error JSON missing "findings" would otherwise make the
   # jq extraction below silently return "", indistinguishable from
   # "scanned, nothing found." Require the actual shape a real scan
   # result has.
-  if [ -z "$resp" ] || ! echo "$resp" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
+  if [ -n "$resp" ] && echo "$resp" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then body_ok=1; fi
+  [ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$crc" "$meta" "$body_ok"
+  if [ "$body_ok" -ne 1 ]; then
     return 1
   fi
   # A well-formed answer whose secret axis says "error" (or has no secret

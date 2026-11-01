@@ -73,6 +73,8 @@ trap 'rm -rf "$WORK"' EXIT
 # plus the local-environment passes, falling back to the full local scan.sh
 # (see secret-scan-lib.sh). Any failure means "leave this block alone".
 SS_WORK="$WORK"
+# shellcheck source=guards/hooks/degrade-lib.sh
+[ -f "$SCRIPT_DIR/degrade-lib.sh" ] && . "$SCRIPT_DIR/degrade-lib.sh"
 # shellcheck source=guards/hooks/secret-scan-lib.sh
 . "$SCRIPT_DIR/secret-scan-lib.sh"
 scan_file() {

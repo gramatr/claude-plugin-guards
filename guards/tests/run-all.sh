@@ -37,6 +37,8 @@ SUITES=(credfile-guard publish-guard fast-secret-scan combined-hook mcp-output-g
         sendmessage-guard userpromptsubmit-guard guards-selfheal gitleaks-install
         cred-use-registry credfile-battery
         credclass-lib credfile-diff deadline-fallback realpath-lib outbound-guard scan-bash-compat docs-consistency glob-order build-pins guards-switch workflow-timeouts hook-deadlines-bounded approvals-report tag-version-check)
+# The degraded-service suites (own line: this list is appended to by every change).
+SUITES+=(degrade-lib)
 
 # The MCP server test is Python and needs `mcp>=2` and `httpx`. Point
 # GUARDS_TEST_PYTHON at an interpreter that has them (CI installs them with
