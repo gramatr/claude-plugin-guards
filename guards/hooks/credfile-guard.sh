@@ -237,13 +237,34 @@ case "$TOOL_NAME" in
         stripped="$(printf '%s' "$CMD" | awk -v reg="$HOOKDIR/cred-use-registry.tsv" -f "$HOOKDIR/cred-use-strip.awk" 2>/dev/null)" && [ -n "$stripped" ] && SCAN="$stripped"
       fi
     fi
-    # Tokenise on whitespace and shell metacharacters, then check each
-    # path-looking token (globs expanded, capped to keep this fast).
-    n=0
+    # Tokenise on whitespace and shell metacharacters, then check each path-looking token (globs expanded).
+    # Each full check costs a subshell and a realpath (about 2.6 ms), which is why the loop used to stop at
+    # 60 words and miss a credential after them (gramatr/guards-coordination#91). The first 60 words are
+    # still all checked in full, exactly as before, so no short command can get more permissive (a bare
+    # renamed key name is still content-sniffed there). Words after the 60th go through a pure-bash
+    # prefilter (cred_word_may_be_path in credclass-lib.sh) and only those that could name a credential
+    # reach the full check, so a long command is looked at to the end. The cap moves to 300 checked words;
+    # past it a command with a reader word asks (a person can answer) or denies (none can): a stated
+    # limit, never a silent miss. In a credential directory (cd ~/.ssh && cat id_ed25519) every bare word
+    # could be the credential, so the prefilter is skipped there. GUARDS_CRED_PREFILTER=0 restores the old
+    # loop and the old cap of 60 on every non-dash word exactly; a library without the prefilter does too.
+    PRE=1 CAP=300 OVER=0
+    if [ "${GUARDS_CRED_PREFILTER:-1}" = 0 ] || ! declare -F cred_word_may_be_path > /dev/null 2>&1 || ! declare -F cwd_in_cred_dir > /dev/null 2>&1; then
+      PRE=0 CAP=60
+    elif cwd_in_cred_dir "$(gd_realpath "$CWD")"; then
+      PRE=0
+    fi
+    n=0 w=0
     while IFS= read -r tok || [ -n "$tok" ]; do
       [ -n "$tok" ] || continue
       case "$tok" in -*) continue ;; esac
-      n=$((n + 1)); [ "$n" -le 60 ] || break
+      w=$((w + 1))
+      if [ "$PRE" -eq 1 ] && [ "$w" -gt 60 ]; then cred_word_may_be_path "$tok" || continue; fi
+      n=$((n + 1))
+      if [ "$n" -gt "$CAP" ]; then
+        [ "$CAP" -eq 60 ] || OVER=1
+        break
+      fi
       case "$tok" in
         *'*'*|*'?'*|*'['*)
           expanded="$(cd "$CWD" 2>/dev/null && compgen -G "$tok" | LC_ALL=C sort | head -n 20)"
@@ -256,6 +277,14 @@ case "$TOOL_NAME" in
     done < <(printf '%s' "$SCAN" | tr ';|&<>()"`'"'"'\t\n=' '          ' | tr ' ' '\n')
     ;;
 esac
+
+if [ "${OVER:-0}" -eq 1 ]; then
+  OVER_MSG="guards credfile-guard: this command has more than 300 words that could be file paths and also runs a file reader, so the guard cannot check all of it for credential files. Fix: split it into smaller commands (about 100 paths each) or name the files one at a time. This is a stated limit, not a finding that a credential is named."
+  if [ "$HUMAN" -eq 1 ] && [ "${GUARDS_CRED_ASK:-1}" != "0" ]; then
+    ask "$OVER_MSG"
+  fi
+  deny "Blocked by ${OVER_MSG#guards }${PERM_MODE:+ [permission mode '$PERM_MODE' has no person to answer an approval prompt, so this is blocked instead of asked]}"
+fi
 
 [ -n "$ASK_MSG" ] && ask "$ASK_MSG"
 

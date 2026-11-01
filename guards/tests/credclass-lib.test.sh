@@ -161,5 +161,55 @@ SNIFF_MAX_BYTES=10485760
 sensitive_reason "$HOME/proj/late-key.txt" >/dev/null && v=hit || v=miss
 check "sniff past offset within cap" hit "$v"
 
+# --- drift: the prefilter's name stems vs sensitive_reason (gramatr/guards-coordination#91) ---
+# credfile-guard sends words after the 60th to the full check only when cred_word_may_be_path passes them.
+# Every file name sensitive_reason classifies by name must pass it, in any letter case, or a credential
+# would be skipped. The names are read out of sensitive_reason's own `case "$lower"` table in the lib source.
+names="$(awk '
+  /^sensitive_reason\(\)/ { infn = 1 }
+  infn && /^  case "\$lower" in/ { intab = 1; next }
+  intab && /^  esac/ { exit }
+  intab { line = line $0
+    if (line ~ /\)/) { sub(/\).*/, "", line); gsub(/^[ \t]+/, "", line); print line; line = "" } }
+' "$LIB" | tr '|' '\n')"
+count=0
+while IFS= read -r pat; do
+  [ -n "$pat" ] || continue
+  name="${pat//\*/x}"
+  if sensitive_reason "$HOME/proj/$name" > /dev/null; then
+    count=$((count + 1))
+    cred_word_may_be_path "$name" && v=pass || v=skip
+    check "prefilter passes the credential name '$name' (from pattern $pat)" pass "$v"
+    up="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+    cred_word_may_be_path "$up" && v=pass || v=skip
+    check "prefilter passes '$up' in upper case" pass "$v"
+  fi
+done <<< "$names"
+[ "$count" -ge 15 ] && v=ok || v="only $count names read from the table"
+check "drift test read the name table" ok "$v"
+for w in foo 7 echo README.md notes.txt cat; do
+  cred_word_may_be_path "$w" && v=pass || v=skip
+  check "prefilter drops the ordinary word '$w'" skip "$v"
+done
+for w in ./a ../a a/b '~' '$HOME' '*.pem' 'a?' 'f[0-9]' '{a,b}' 'a\ b' .hidden; do
+  cred_word_may_be_path "$w" && v=pass || v=skip
+  check "prefilter passes the path-like word '$w'" pass "$v"
+done
+# the credential directories: every one sensitive_dir_reason lists is one cwd_in_cred_dir recognises
+for d in .ssh .aws .kube .gnupg .config/gcloud .docker; do
+  sensitive_dir_reason "$HOME/$d" > /dev/null && v=listed || v=unlisted
+  check "sensitive_dir_reason lists $d" listed "$v"
+  cwd_in_cred_dir "$HOME/$d" && v=yes || v=no
+  check "cwd_in_cred_dir recognises $d" yes "$v"
+  cwd_in_cred_dir "$HOME/$d/sub" && v=yes || v=no
+  check "cwd_in_cred_dir recognises a subdirectory of $d" yes "$v"
+done
+cwd_in_cred_dir "$HOME/proj" && v=yes || v=no
+check "cwd_in_cred_dir ignores an ordinary directory" no "$v"
+cwd_in_cred_dir "$HOME/.ssh-notes" && v=yes || v=no
+check "cwd_in_cred_dir ignores a lookalike name" no "$v"
+shopt -q nocasematch && v=on || v=off
+check "the prefilter leaves nocasematch as it found it" off "$v"
+
 echo "credclass-lib: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

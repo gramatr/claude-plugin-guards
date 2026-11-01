@@ -155,6 +155,64 @@ expect allow "backslash-quoted delimiter: the substitution is literal text"     
 expect allow "unquoted heredoc that only names a variable still allows"            Bash "$(bash_in "cat > note.txt <<EOF${NL}home is \$HOME and the key is $HK${NL}EOF")"
 expect deny  "unterminated writing heredoc falls back"         Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK")"
 expect deny  "off switch: writing heredoc is scanned again"    Bash "$(bash_in "cat > note.txt <<EOF${NL}cat $HK${NL}EOF")" GUARDS_CRED_HEREDOC_STRIP=0
+# --- long commands (gramatr/guards-coordination#91) ---
+# Words after the 60th go through a prefilter instead of being skipped. Fillers are plain numbers (a bare word
+# the prefilter drops); path-like fillers are d/fN. Nothing here names a real file.
+fill() { seq -s ' ' 1 "$1"; }
+pfill() { local i out=""; for i in $(seq 1 "$1"); do out="$out d/f$i"; done; printf '%s' "$out"; }
+for n in 10 60 61 200 500; do
+  expect deny "key after $n filler words denies in default" Bash "$(bash_in "cat $(fill "$n") $HK")"
+done
+MODE=auto expect deny "key after 500 filler words denies in auto" Bash "$(bash_in "cat $(fill 500) $HK")"
+expect deny  "key as the last of 400 mixed words denies"      Bash "$(bash_in "cat $(fill 200) $(pfill 100) $HK")"
+expect deny  "tilde key after 200 words denies"               Bash "$(bash_in "cat $(fill 200) ~/.ssh/id_ed25519")"
+expect deny  "env-var key after 200 words denies"             Bash "$(bash_in "cat $(fill 200) \$HOME/.ssh/id_rsa")"
+expect ask   "bare .env after 200 words asks (name stem)"      Bash "$(bash_in "cat $(fill 200) .env")"
+expect deny  "bare renamed .pem after 200 words denies (stem, content sniff)" Bash "$(bash_in "cat $(fill 200) deploy.pem")"
+expect deny  "bare renamed key in the first 60 words still denies (unchanged)" Bash "$(bash_in "cat innocuous-name.txt $(fill 20)")"
+expect deny  "glob that matches a key after 200 words denies" Bash "$(bash_in "cat $(fill 200) deploy.p*")"
+expect allow "long command with only ordinary words allows"   Bash "$(bash_in "cat $(fill 500) README.md")"
+# over the cap: 300 checked words pass, 301 do not
+expect allow "299 path-like words and a reader: under the cap"  Bash "$(bash_in "cat $(pfill 299)")"
+expect ask   "over 300 path-like words and a reader asks in default"  Bash "$(bash_in "cat $(pfill 320)")"
+MODE=plan expect ask  "over the cap asks in plan"            Bash "$(bash_in "cat $(pfill 320)")"
+MODE=acceptEdits expect ask "over the cap asks in acceptEdits" Bash "$(bash_in "cat $(pfill 320)")"
+for m in auto bypassPermissions dontAsk none; do
+  MODE=$m expect deny "over the cap denies in $m"            Bash "$(bash_in "cat $(pfill 320)")"
+done
+expect deny  "over the cap denies when GUARDS_CRED_ASK=0"    Bash "$(bash_in "cat $(pfill 320)")" GUARDS_CRED_ASK=0
+expect allow "over the cap with no reader word allows"       Bash "$(bash_in "echo $(pfill 320)")"
+out="$(MODE=auto run Bash "$(bash_in "cat $(pfill 320)")")"
+# message says it is too long and what to do
+msg="$(jq -n --arg c "cat $(pfill 320)" --arg cwd "$HOME/proj" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd,permission_mode:"auto"}' | bash "$HOOK" | jq -r '.hookSpecificOutput.permissionDecisionReason')"
+case "$msg" in *"more than 300"*"split it"*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)); echo "FAIL: over-cap reason names the limit and says to split ($msg)" ;; esac
+# a deny from a real credential still wins over the over-cap ask
+expect deny  "a key among 320 path-like words denies, not asks" Bash "$(bash_in "cat $(pfill 100) $HK $(pfill 220)")"
+# off switch: the old loop and the old cap of 60, exactly
+expect allow "PREFILTER=0: key after 70 words is not seen (old cap)" Bash "$(bash_in "cat $(fill 70) $HK")" GUARDS_CRED_PREFILTER=0
+expect allow "PREFILTER=0: 320 path-like words and a reader allow (old cap)" Bash "$(bash_in "cat $(pfill 320)")" GUARDS_CRED_PREFILTER=0
+expect deny  "PREFILTER=0: key within 60 words still denies"  Bash "$(bash_in "cat $(fill 20) $HK")" GUARDS_CRED_PREFILTER=0
+# a bare word in a credential directory: the old full check, however long the command
+sens_run() { # sens_run CWD COMMAND [ENV...] -> deny | ask | allow
+  local out d
+  out="$(jq -n --arg c "$2" --arg cwd "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd,permission_mode:"default"}' | env "${@:3}" bash "$HOOK")"
+  d="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
+  case "$d" in deny|ask) echo "$d" ;; *) echo allow ;; esac
+}
+# In a credential directory every bare word, the reader word `cat` included, resolves into it, so these deny
+# in the first 60 words even without the credential-directory rule (which only makes that explicit past word 60).
+# That is why this block has no negative control for the rule itself.
+pubs="$(for i in $(seq 1 200); do printf 'x%s.pub ' "$i"; done)"
+for c in "cat id_ed25519" "cat ${pubs}foo" "cat ${pubs}id_ed25519"; do
+  got="$(sens_run "$HOME/.ssh" "$c")"
+  if [ "$got" = deny ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: bare word in ~/.ssh cwd denies: ${c:0:30}... (got $got)"; fi
+done
+got="$(sens_run "$HOME/.ssh" "cat ${pubs}foo" GUARDS_CRED_PREFILTER=0)"
+if [ "$got" = deny ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: PREFILTER=0 in ~/.ssh cwd denies too: the reader word itself is a bare name there (got $got)"; fi
+got="$(sens_run "$HOME/proj" "cat ${pubs}foo")"
+if [ "$got" = allow ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: bare word past 60 in a project dir allows (got $got)"; fi
+
+
 # A key named as the identity or key-file of a tool that only USES it is not a read, even
 # when a reader word (cat, sed, python ...) appears elsewhere in the same line.
 KEY="$HOME/.ssh/id_ed25519"

@@ -48,13 +48,21 @@ change the text. See [`TRADEOFFS.md`](TRADEOFFS.md) for the history.
   paths a command or tool names. A script that reads a key, a path held in a
   variable, or `eval` is not caught. A `Grep` over a whole directory is checked
   by directory and glob name only.
-- **Only the first 60 path-like words of a Bash command are checked.** The credential-file guard looks at
-  the words of a command that could be paths, up to a cap of 60, to keep the hook fast (about 2.4 ms per
-  word). A credential path after the 60th word is not seen: a reader word, 60 other arguments and then a key
-  path is allowed. Words the use-only registry removes (a credential handed to `ssh -i` and so on) do not
-  count towards the cap, so a long command is looked at slightly deeper than before. Pinned as an expected
-  miss in `credfile-battery.test.sh`; tracked, with a design to cover long commands at the same cost, as
-  gramatr/guards-coordination#91.
+- **Long Bash commands: the first 60 words are checked in full, later words through a name prefilter, and
+  past 300 checked words the command asks or denies.** The credential-file guard resolves and classifies each
+  word of a command that could be a path, which costs about 2.6 ms per word. It used to stop at 60 words, so a
+  credential path after the 60th word was not seen. Now the first 60 words are checked as before, and each
+  later word is checked only if it could name a credential (it holds a `/` or `\`, starts with `~`, `.` or
+  `$`, holds a glob or brace character, or contains a credential-name stem such as `id_`, `.env`, `cred`,
+  `config`, `.pem`, `.key`, `secret`; the stems live next to `sensitive_reason` in `credclass-lib.sh` and a
+  drift test fails when a name that function classifies is not passed). Past 300 checked words, a command that
+  also runs a file reader asks (default, acceptEdits, plan) or is denied (auto, bypassPermissions, dontAsk, and
+  `GUARDS_CRED_ASK=0`) with a reason that says to split it. Limits that remain: a credential kept under a name
+  that is not a path, has no stem and is not in a credential directory (a renamed key `notes.txt` in a project
+  directory) is not seen after word 60 unless it is a path-shaped word; the content sniff only runs on checked
+  words (this was already so). Bare words in a credential directory (`cd ~/.ssh && cat x`) are all checked.
+  `GUARDS_CRED_PREFILTER=0` restores the old loop and cap of 60 exactly. Pinned in `credfile-battery.test.sh`
+  (rows 21 to 25); tracked as gramatr/guards-coordination#91.
 - **The use-only registry exempts the credential, not the tool's output or its side effects.** `age -d -i KEY file`
   keeps the key out of the transcript but prints the decrypted secret (covered only by output redaction, which has
   the gaps listed below), and `ssh-keygen -p -f KEY` or `ssh-keygen -t ... -f KEY` can rewrite or overwrite the key:
