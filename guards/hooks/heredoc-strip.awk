@@ -8,6 +8,10 @@
 #
 #   printf '%s' "$command" | awk -f heredoc-strip.awk
 #
+# An UNQUOTED delimiter (<<EOF, not <<'EOF' or <<"EOF") lets the shell expand the body, so a body
+# holding $( ... ), a backtick or ${ ... } can run a reader (`cat > f <<EOF` with `$(cat KEY)` inside
+# copies the key into f). Such a body is kept even for a data sink. A quoted delimiter is literal.
+#
 # Prints the command with the stripped bodies (and their terminator lines) removed. The line that
 # starts the heredoc is always kept. Unsure means keep: an unterminated heredoc, a delimiter that
 # cannot be read, a line with a pipe into another command, or an interpreter word anywhere on the
@@ -44,13 +48,16 @@ function delim_of(s,    off, i, r, q, d) {
   if (substr(r, 1, 1) == "-") { r = substr(r, 2); dash = 1 }
   sub(/^[ \t]+/, "", r)
   q = substr(r, 1, 1)
+  quoted = 0
   if (q == "'" || q == "\"") {
+    quoted = 1
     r = substr(r, 2)
     if (index(r, q) == 0) return ""
     d = substr(r, 1, index(r, q) - 1)
   } else {
     d = r
     sub(/[ \t;&|()<>].*$/, "", d)
+    if (index(d, "\\") > 0) { quoted = 1; gsub(/\\/, "", d) }   # <<\EOF is quoted too
   }
   return d
 }
@@ -62,14 +69,24 @@ BEGIN { inh = 0; dash = 0; ORS = "\n" }
     line = $0
     cmp = line
     if (dash) sub(/^\t+/, "", cmp)
-    if (cmp == term) { inh = 0; if (!strip) print line; next }
+    if (cmp == term) {
+      inh = 0
+      if (!strip) print line
+      else if (!quoted && execbody) { printf "%s", held; print line }
+      held = ""; execbody = 0
+      next
+    }
     if (!strip) print line
+    else if (!quoted) {
+      held = held line "\n"
+      if (index(line, "$(") > 0 || index(line, "`") > 0 || index(line, "${") > 0) execbody = 1
+    }
     next
   }
   print $0
   if (index($0, "<<") > 0) {
     d = delim_of($0)
-    if (d != "") { inh = 1; term = d; strip = is_sink($0); pend = $0 }
+    if (d != "") { inh = 1; term = d; strip = is_sink($0); pend = $0; held = ""; execbody = 0 }
   }
 }
 
