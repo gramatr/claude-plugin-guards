@@ -80,24 +80,35 @@ BODY_OK=0
 # "scanned, nothing found." This hook already fails open on empty
 # response (advisory-only, no local fallback exists); malformed gets
 # the same treatment, not a silent false-clean.
-if [ "$BODY_OK" -ne 1 ]; then
+# Once per session, and once more when it is over, say that the service is not checking (degrade-lib.sh;
+# GUARDS_DEGRADED_NOTE=0 turns it off). A prompt has no local fallback, so this one names that.
+DG_NOTE=""
+if [ -n "${DG_STATE+x}" ]; then
+  dg_call_add "$DG_OUTCOME"
+  dg_call_finish prompt "$GUARDS_ENDPOINT"
+fi
+note_only() {
+  [ -z "$DG_NOTE" ] || jq -n --arg n "$DG_NOTE" '{systemMessage: $n, hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $n}}'
   exit 0
+}
+if [ "$BODY_OK" -ne 1 ]; then
+  note_only
 fi
 
 SECRET_FOUND="$(echo "$RESPONSE" | jq -r '.findings[] | select(.type=="secret") | .verdict' 2>/dev/null)"
 
 if [ "$SECRET_FOUND" != "found" ]; then
-  exit 0
+  note_only
 fi
 
 # Factual statement, not an imperative instruction — additionalContext
 # feeds back into the model's own context, and imperative phrasing
 # there is exactly the shape a prompt-injection defense watches for.
 # This hook has no business tripping that itself.
-jq -n '{
+jq -n --arg n "$DG_NOTE" '{
   hookSpecificOutput: {
     hookEventName: "UserPromptSubmit",
-    additionalContext: "userpromptsubmit-guard detected a secret-shaped value in this prompt. The prompt was submitted unchanged -- this note does not prevent or undo that. If the value is a real, live credential, it should be treated as exposed and rotated."
+    additionalContext: ("userpromptsubmit-guard detected a secret-shaped value in this prompt. The prompt was submitted unchanged -- this note does not prevent or undo that. If the value is a real, live credential, it should be treated as exposed and rotated." + (if $n == "" then "" else " " + $n end))
   }
-}'
+} + (if $n == "" then {} else {systemMessage: $n} end)'
 exit 0

@@ -203,6 +203,11 @@ scan_and_redact() {
   fi
 
   if [ -n "$response" ]; then
+    # Per-axis state for the degraded-service note (degrade-lib.sh): a model axis that answered "error".
+    if [ -n "${DG_STATE+x}" ]; then
+      dg_axes "$response"
+      dg_call_add "$DG_OUTCOME" "$DG_AX_PII" "$DG_AX_INJ"
+    fi
     # Secret finding: always hard-redact.
     secret_verdict="$(echo "$response" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)"
     if [ "$secret_verdict" = "found" ]; then
@@ -372,6 +377,7 @@ scan_and_redact_fast() {
   # shellcheck disable=SC2034  # read by secret_scan in secret-scan-lib.sh
   SS_WORK="$w"
   if secret_scan "$w/in.txt"; then
+    [ -n "${SS_OUTCOME:-}" ] && dg_call_add "$SS_OUTCOME"
     current="$(cat "$SS_OUT"; printf x)"; current="${current%x}"
     [ "$SS_CHANGED" -eq 1 ] && changed=1
   else
@@ -395,6 +401,9 @@ scan_and_redact_fast() {
     read -r frc < "$w/flags.rc" 2>/dev/null
     read -r fmeta < "$w/flags.meta" 2>/dev/null
     dg_observe "$GUARDS_ENDPOINT" "$frc" "$fmeta" "$flags_ok"
+    dg_call_add "$DG_OUTCOME"
+    # shellcheck disable=SC2034  # read by dg_note_text
+    DG_DETAIL="the PII and injection flags get $fbudget s, the secret route ${SS_SERVICE_TIMEOUT:-2} s"
   fi
 
   if [ "$flags_ok" -eq 1 ]; then
@@ -411,6 +420,10 @@ scan_and_redact_fast() {
       fi
     fi
     ig_verdict="$(jq -r '.findings[]? | select(.type=="injection") | .verdict // ""' "$w/flags.json" 2>/dev/null)"
+    if [ -n "${DG_STATE+x}" ]; then
+      dg_axes "@$w/flags.json"
+      dg_call_add "" "$DG_AX_PII" "$DG_AX_INJ"
+    fi
     if [ "$ig_verdict" = "malicious" ]; then
       ig_score="$(jq -r '.findings[] | select(.type=="injection") | .detail.score // "0"' "$w/flags.json" 2>/dev/null)"
       if awk -v s="$ig_score" -v t="$INJECTION_MIN_SCORE" 'BEGIN { exit !(s >= t) }'; then
@@ -467,7 +480,18 @@ if [ -n "$STDERR" ]; then
   [ "$SCAN_RESULT_CHANGED" -eq 1 ] && CHANGED=1
 fi
 
+# Once per session, and once more when it is over: say what the service is not checking (degrade-lib.sh,
+# GUARDS_DEGRADED_NOTE=0 turns it off). The note rides on whatever this hook emits, or alone.
+DG_PENDING=""
+if [ -n "${DG_STATE+x}" ]; then
+  dg_call_finish bash "$GUARDS_ENDPOINT"
+  DG_PENDING="$DG_NOTE"
+fi
+
 if [ "$CHANGED" -eq 0 ]; then
+  if [ -n "$DG_PENDING" ]; then
+    jq -n --arg note "$DG_PENDING" '{systemMessage: $note, hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $note}}'
+  fi
   exit 0
 fi
 
@@ -489,4 +513,5 @@ jq -n \
   --rawfile stderr "$STDERR_OUT_FILE" \
   --argjson interrupted "$INTERRUPTED" \
   --argjson isImage "$IS_IMAGE" \
-  '{hookSpecificOutput: {hookEventName: "PostToolUse", updatedToolOutput: {stdout: $stdout, stderr: $stderr, interrupted: $interrupted, isImage: $isImage}}}'
+  --arg note "$DG_PENDING" \
+  '{hookSpecificOutput: ({hookEventName: "PostToolUse", updatedToolOutput: {stdout: $stdout, stderr: $stderr, interrupted: $interrupted, isImage: $isImage}} + (if $note == "" then {} else {additionalContext: $note} end))} + (if $note == "" then {} else {systemMessage: $note} end)'

@@ -6,8 +6,8 @@
 # never leave half a line; that an unreadable or unwritable state directory means "behave as before" and
 # never hides a notice; the two-day cleanup; session ids with odd characters; the mode transitions that
 # decide when the person is told something; and the off switch. Then, hook by hook, that a hook run
-# against a refused port records the failure and against a live stub clears it, with identical output
-# either way. A stub service stands in for guards-unified; all values are fabricated.
+# against a refused port records the failure and against a live stub clears it, and that
+# GUARDS_DEGRADED_NOTE=0 writes nothing. A stub service stands in for guards-unified; all values are fabricated.
 # Needs: bash, jq, python3, curl.
 #
 # HOOKS_DIR=/path/to/other/hooks runs the same cases against a different copy of the hooks (the negative
@@ -131,7 +131,7 @@ k1="$(in_lib 'dg_sidkey "a/b c"; printf %s "$DG_KEY"')"
 k2="$(in_lib 'dg_sidkey "../x"; printf %s "$DG_KEY"')"
 case "$k1" in h[0-9]*) ok ;; *) bad "an id with odd characters becomes h<number> (got: $k1)" ;; esac
 [ "$k1" != "$k2" ] && ok || bad "different odd ids get different keys"
-eq "an empty id has no key" "$(in_lib 'dg_sidkey ""; printf %s "$DG_KEY"')" ""
+eq "an empty id shares one key" "$(in_lib 'dg_sidkey ""; printf %s "$DG_KEY"')" nosid
 long="$(printf 'a%.0s' $(seq 1 300))"
 case "$(in_lib "dg_sidkey $long; printf %s \"\$DG_KEY\"")" in h[0-9]*) ok ;; *) bad "an id over 128 characters is turned into a number" ;; esac
 r="$(in_lib 'dg_sidkey "a/b c"; dg_mode_update "$DG_KEY" down http://svc.invalid:8700; printf %s "$DG_NOTICE "; dg_mode_update "$DG_KEY" down http://svc.invalid:8700; printf %s "$DG_NOTICE"')"
@@ -153,7 +153,7 @@ eq "slow to down is an outage; down to slow is not a recovery" "$(seq_notice t5 
 eq "an unavailable axis is noted once; clearing it is a recovery" "$(seq_notice t6 axis:injection axis:injection full)" "enter none recover"
 eq "a second axis joining is a new note" "$(seq_notice t7 axis:injection axis:pii+injection full)" "enter enter recover"
 eq "two sessions do not share a mode" "$(seq_notice ta down)/$(seq_notice tb down)" "enter/enter"
-eq "no session id: every non-full call is noted, nothing remembered" "$(seq_notice '' down down full)" "enter enter none"
+eq "no session id: told once per machine, through the shared key" "$(seq_notice nosid down down full)" "enter none recover"
 ST="$T/s8up"
 in_lib 'dg_observe http://svc.invalid:8700 0 "200 0.001" 1; dg_mode_update sid full http://svc.invalid:8700'
 [ ! -e "$ST" ] && ok || bad "the service-up path creates no state directory"
@@ -190,8 +190,15 @@ for h in bash message prompt mcp; do
   ST="$T/s10-off-$h"
   run_hook "$h" "$DOWN" GUARDS_DEGRADED_NOTE=0 > "$T/out-off-$h"
   [ ! -e "$ST" ] && ok || bad "$h hook: GUARDS_DEGRADED_NOTE=0 writes no state"
-  cmp -s "$T/out-down-$h" "$T/out-off-$h" && ok || bad "$h hook: output with the state on is identical to output with it off"
 done
+
+# --- the session id out of a hook payload (dg_rawsid): no fork for the usual compact payload, jq otherwise ---
+sid_of() { RAW_IN="$1" in_lib 'RAW="$RAW_IN"; dg_rawsid; printf %s "$DG_SID"' 2>/dev/null; }
+eq "dg_rawsid: a compact payload with session_id first" "$(sid_of '{"session_id":"abc-1","tool_name":"Bash"}')" abc-1
+eq "dg_rawsid: session_id not first (read with jq)" "$(sid_of '{"tool_name":"Bash","session_id":"abc-2"}')" abc-2
+eq "dg_rawsid: spaced JSON (read with jq)" "$(sid_of '{ "session_id": "abc-3", "x": 1 }')" abc-3
+eq "dg_rawsid: no session id at all" "$(sid_of '{"tool_name":"Bash"}')" ""
+eq "dg_rawsid: the words session_id inside tool output do not count" "$(sid_of '{"tool_name":"Bash","tool_response":{"stdout":"x session_id y"},"session_id":"abc-4"}')" abc-4
 
 echo "degrade-lib: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -82,7 +82,8 @@ scan_file() {
   [ "$(wc -c < "$in")" -le "$MAX_BYTES" ] || return 1
   # Out of time (not merely unable to run): exit 124, which deadline-lib.sh
   # turns into withholding the result rather than passing it unscanned.
-  secret_scan "$in" || { [ "$SS_TIMED_OUT" = 1 ] && exit 124; return 1; }
+  secret_scan "$in" || { [ "$SS_TIMED_OUT" = 1 ] && exit 124; [ -n "${SS_OUTCOME:-}" ] && dg_call_add "$SS_OUTCOME"; return 1; }
+  [ -n "${SS_OUTCOME:-}" ] && dg_call_add "$SS_OUTCOME"
   [ -n "$SS_RULES" ] && [ "$SS_CHANGED" -eq 1 ] || return 1
   cp "$SS_OUT" "$in.out"
   RULES="$RULES $SS_RULES"
@@ -123,8 +124,15 @@ case "$KIND" in
   *) exit 0 ;;
 esac
 
-[ "$CHANGED" -eq 1 ] || exit 0
+# Once per session, and once more when it is over, say what the service route is not doing
+# (degrade-lib.sh; GUARDS_DEGRADED_NOTE=0 turns it off).
+DG_NOTE=""
+[ -n "${DG_STATE+x}" ] && dg_call_finish mcp "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"
+if [ "$CHANGED" -ne 1 ]; then
+  [ -z "$DG_NOTE" ] || jq -n --arg n "$DG_NOTE" '{systemMessage: $n, hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $n}}'
+  exit 0
+fi
 
 RULE_LIST="$(printf '%s' "$RULES" | tr ' ' '\n' | sort -u | grep -v '^$' | paste -sd, -)"
-jq -n --slurpfile out "$NEW" --arg note "guards mcp-output-guard: redacted credential material in the result of ${TOOL_NAME} (detector rule(s): ${RULE_LIST:-unknown}). Treat the redaction markers as intentional." \
-  '{hookSpecificOutput: {hookEventName: "PostToolUse", updatedToolOutput: $out[0], additionalContext: $note}}'
+jq -n --slurpfile out "$NEW" --arg note "guards mcp-output-guard: redacted credential material in the result of ${TOOL_NAME} (detector rule(s): ${RULE_LIST:-unknown}). Treat the redaction markers as intentional." --arg dg "$DG_NOTE" \
+  '{hookSpecificOutput: {hookEventName: "PostToolUse", updatedToolOutput: $out[0], additionalContext: ($note + (if $dg == "" then "" else " " + $dg end))}} + (if $dg == "" then {} else {systemMessage: $dg} end)'

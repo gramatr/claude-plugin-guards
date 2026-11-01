@@ -39,7 +39,7 @@ the design is in coordination issues #93, #126, #127 and #128).
 
 | Setting | Default | What it does |
 |---|---|---|
-| `GUARDS_DEGRADED_NOTE` | `1` | `0` turns the state off: nothing is read or written and every hook behaves as it did before the library existed. |
+| `GUARDS_DEGRADED_NOTE` | `1` | The once-per-session note about a degraded service (see [HOOKS.md](HOOKS.md#telling-the-person-the-degraded-service-note)). `0` turns it and its state off: nothing is read or written, and every hook's output is byte for byte what it was before the note existed. |
 | `GUARDS_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/gramatr-guards` | Where it is kept (the same directory the per-session PII note uses). |
 
 Two kinds of file, never holding scanned text or a host name:
