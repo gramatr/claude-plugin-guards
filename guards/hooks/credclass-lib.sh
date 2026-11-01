@@ -15,7 +15,8 @@
 #   HOME             for ~ and $HOME expansion
 # Needs on PATH: head, grep, tr, readlink (realpath -m is used when it works;
 # realpath-lib.sh resolves symlinks without it, as on stock macOS).
-# Defines: resolve_path, sensitive_reason, key_header_is_a_key, sensitive_dir_reason, is_ask_class.
+# Defines: resolve_path, sensitive_reason, key_header_is_a_key, sensitive_dir_reason, is_ask_class,
+# cred_word_may_be_path, cwd_in_cred_dir.
 
 # shellcheck source=guards/hooks/realpath-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/realpath-lib.sh" || return 1
@@ -123,6 +124,41 @@ sensitive_dir_reason() {
   case "$1/" in
     */.ssh/|*/.aws/|*/.kube/|*/.gnupg/|*/.config/gcloud/|*/.docker/)
       printf 'credential directory'; return 0 ;;
+  esac
+  return 1
+}
+
+# cred_word_may_be_path WORD -> 0 when WORD could name a credential file and so must go through the full
+# check (resolve_path + sensitive_reason, a subshell and a realpath, about 2.6 ms), 1 when it cannot.
+# This is the prefilter of credfile-guard's Bash tokeniser (gramatr/guards-coordination#91): a pure-bash
+# `case`, no subshell, so the words of a long command after the 60th (all of which the guard used to skip) can be looked at.
+# The first 60 words never go through it: they get the full check as always. A word
+# passes when it holds a / or a \, starts with ~ . or $, holds a glob or brace character, or contains a
+# credential-name stem (case-insensitive). The stems are kept HERE, next to sensitive_reason, and the test
+# credfile-prefilter.test.sh fails when a name sensitive_reason matches is not passed by this list, so the
+# two cannot drift unnoticed. A bare word with none of these (a number, `echo`, `foo`) past word 60 is not checked: it
+# can only be a credential through the current directory (credfile-guard handles that with
+# cwd_in_cred_dir) or a key stored under an unremarkable name, which the content sniff finds only in a
+# checked word. That second case was already missed past word 60 before the prefilter.
+cred_word_may_be_path() {
+  local prev=0
+  shopt -q nocasematch || prev=1
+  shopt -s nocasematch
+  local rc=1
+  case "$1" in
+    */*|*\\*|\~*|.*|\$*|*[\*\?\[\{]*) rc=0 ;;
+    *id_*|*.pem*|*.key*|*.env*|*cred*|*config*|*netrc*|*pgpass*|*npmrc*|*pypirc*|*tfstate*|*.kdbx*|*.p12*|*.pfx*|*.jks*|*keystore*|*service-account*|*serviceaccount*|*secret*|*token*) rc=0 ;;
+  esac
+  [ "$prev" -eq 0 ] || shopt -u nocasematch
+  return "$rc"
+}
+
+# cwd_in_cred_dir DIR (resolved) -> 0 when DIR is, or is under, a credential directory: there every bare
+# word is a file in it (`cd ~/.ssh && cat id_ed25519`), so the caller skips the prefilter. Same
+# directories as sensitive_dir_reason and the */.ssh/* style rows of sensitive_reason.
+cwd_in_cred_dir() {
+  case "$1/" in
+    */.ssh/*|*/.aws/*|*/.kube/*|*/.gnupg/*|*/.config/gcloud/*|*/.docker/*) return 0 ;;
   esac
   return 1
 }

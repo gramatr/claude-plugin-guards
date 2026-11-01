@@ -70,13 +70,19 @@ row 13 deny deny "KNOWN: ls of a credential directory piped to a reader (needs t
 # --- EXPECTED MISS: allowed although it reads the key (documented indirect read, LIMITS) ----
 row 20 allow allow "EXPECTED MISS: a path assembled from pieces" "python3 -c \"import os;p=os.path.expanduser('~')+'/.ss'+'h/id_'+'ed25519';print(len(open(p).read()))\""
 
-# --- EXPECTED MISS: the hook checks at most the first 60 path-like words (gramatr/guards-coordination#91) ----
-# Control first: the same command with few words before the key denies, so the miss below is the cap and not
-# something else about the shape.
+# --- long commands: a key far past word 60 is seen (gramatr/guards-coordination#91) ----------------------
+# Before the prefilter a key after the 60th word was not seen (this row was an EXPECTED MISS). Control first:
+# the same command with few words before the key denies, so any change below is the word count, not the shape.
 few="$(seq -s ' ' 1 10)"
 many="$(seq -s ' ' 1 70)"
 row 21 deny  deny  "a key after 10 words is seen"                                   "cat $few $KEY"
-row 22 allow allow "EXPECTED MISS: a key after more than 60 words is not seen (#91)" "cat $many $KEY"
+row 22 deny  deny  "a key after 70 words is seen (was an expected miss, #91)"       "cat $many $KEY"
+row 23 deny  deny  "a key after 500 words is seen"                                  "cat $(seq -s ' ' 1 500) $KEY"
+# More than 300 words that could be paths, with a reader word, cannot be fully checked: ask where a person can
+# answer, deny where none can. A command with no reader word is not looked at at all, as before.
+paths="$(for i in $(seq 1 320); do printf 'd/f%s ' "$i"; done)"
+row 24 ask   deny  "TOO LONG: over 300 path-like words with a reader word"          "cat $paths"
+row 25 allow allow "no reader word: not in scope however long"                      "echo $paths"
 
 echo "credfile-battery: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
