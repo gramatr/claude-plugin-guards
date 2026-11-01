@@ -84,7 +84,11 @@ same state (`degradation`). It is kept per session in the state directory (see
 | Could not connect (refused, name not found, or a timeout before the connection) | The service could not be reached; what is still checked (secrets, locally) and what is not (PII and injection notes; for a prompt, the secret check, which has no local fallback) | Once per outage; once more when it answers again |
 | Connected but ran out of time | The service did not answer within the time limit, for this call; slowness, not an outage | The first time in a session only, never as a recovery |
 | An error answer (an HTTP error status, or a body that is not a scan result) | The service answered with an error | The first time in a session only |
-| A model axis answered `error` with the reason code `PII_UNAVAILABLE` or `INJECTION_UNAVAILABLE`, or with `error` on three calls in a row | That check is not working; secrets and the other check still run | Once per episode; once more when it clears |
+| A model axis answered `error` with the reason code `PII_UNAVAILABLE` or `INJECTION_UNAVAILABLE` (a service that started without that model, guards-unified after 0.2.18), or with `error` on three calls in a row | That check is not working; secrets and the other check still run | Once per episode; once more when it clears |
+
+`guards_status` also reads the `axes` field of the service's `GET /about` (guards-unified after 0.2.18) and lists an axis the
+service started without, with its reason code; a service that does not send `axes` is an older one and nothing changes. The
+hooks do not call `/about`: they read the axis verdicts of the scans they already make.
 
 **The breaker.** A refused connection or an unresolvable name costs a hook a millisecond, but an address that
 silently drops packets costs the whole connect timeout on every call: 1 s on the secret route of the Bash and

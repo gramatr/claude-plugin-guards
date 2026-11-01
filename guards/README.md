@@ -81,8 +81,10 @@ Prerequisites:
   release checksum file, and installs it to `~/.local/bin`. Other platforms get
   a warning and the built-in passes only.
 - A Hugging Face token whose account has accepted the Llama Prompt Guard 2
-  license (below). Only the injection model needs it, but without it the
-  service does not start, so PII detection is lost too.
+  license (below). Only the injection model needs it. Without it, a service
+  up to v0.2.18 does not start, so PII detection is lost too; from the release
+  after v0.2.18 the service starts without the injection axis and PII keeps
+  working (below).
 
 In Claude Code 2.1.275 or later, one step:
 
@@ -106,14 +108,26 @@ The injection finding needs a Hugging Face token that has accepted Llama
 Prompt Guard 2's gated license. Accepting someone else's license is a manual,
 per-user step, so it cannot be automated. Put `HF_TOKEN=<your token>` in
 `~/.config/gramatr-guards/injection-guard.env`. The self-heal script creates
-that file empty (mode 0600) if it is missing and warns. **Without a token the
-guards-unified service does not start**: it loads both models at startup and
-exits if the injection model cannot be downloaded ("gated repo ... 401"). The
-compose file restarts it, so it loops. While it is down, PII and injection
-detection are unavailable, and secret detection continues through the plugin's
-local fallback (`scan.sh`) with the notices described in
+that file empty (mode 0600) if it is missing and warns. **Without a token a
+guards-unified service up to v0.2.18 does not start**: it loads both models at
+startup and exits if the injection model cannot be downloaded ("gated repo ...
+401"). The compose file restarts it, so it loops. While it is down, PII and
+injection detection are unavailable, and secret detection continues through
+the plugin's local fallback (`scan.sh`) with the notices described in
 [`docs/HOOKS.md`](../docs/HOOKS.md). Observed on 2026-10-21; tracked as
 gramatr/guards-coordination#93.
+
+**From the release after v0.2.18 the service starts without the injection
+axis by default** (a server setting, `GUARDS_REQUIRE_AXES`, whose default is
+`pii`; see guards-unified's `docs/CONFIGURATION.md`). Secrets and PII work;
+every scan reports injection as verdict `error` with the reason code
+`INJECTION_UNAVAILABLE`; `GET /about` lists the axis as `unavailable`. The
+plugin says so: `guards_status` lists the axis, and the two hooks that read the
+full scan (Bash output and SendMessage) name it once per session (see
+[`docs/HOOKS.md`](../docs/HOOKS.md#telling-the-person-the-degraded-service-note)).
+A shared deployment that must not roll out without the injection axis sets
+`GUARDS_REQUIRE_AXES=pii,injection` on the service, which is the earlier
+behaviour exactly.
 
 ### Stopping and uninstalling
 
