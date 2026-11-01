@@ -172,6 +172,10 @@ expect deny  "bare renamed .pem after 200 words denies (stem, content sniff)" Ba
 expect deny  "bare renamed key in the first 60 words still denies (unchanged)" Bash "$(bash_in "cat innocuous-name.txt $(fill 20)")"
 expect deny  "glob that matches a key after 200 words denies" Bash "$(bash_in "cat $(fill 200) deploy.p*")"
 expect allow "long command with only ordinary words allows"   Bash "$(bash_in "cat $(fill 500) README.md")"
+# These cases check 300+ path-like words, which costs about 1 s on Linux and several seconds on a loaded macOS runner.
+# Run the inner hook directly so the 6 s deadline wrapper (covered by deadline-fallback and hook-deadlines) cannot turn the
+# expected ask or allow into a deadline deny: it did once on the hooks-macos job (2026-11-01), then passed on re-run.
+export GUARDS_DEADLINE_INNER=1
 # over the cap: 300 checked words pass, 301 do not
 expect allow "299 path-like words and a reader: under the cap"  Bash "$(bash_in "cat $(pfill 299)")"
 expect ask   "over 300 path-like words and a reader asks in default"  Bash "$(bash_in "cat $(pfill 320)")"
@@ -191,6 +195,7 @@ expect deny  "a key among 320 path-like words denies, not asks" Bash "$(bash_in 
 # off switch: the old loop and the old cap of 60, exactly
 expect allow "PREFILTER=0: key after 70 words is not seen (old cap)" Bash "$(bash_in "cat $(fill 70) $HK")" GUARDS_CRED_PREFILTER=0
 expect allow "PREFILTER=0: 320 path-like words and a reader allow (old cap)" Bash "$(bash_in "cat $(pfill 320)")" GUARDS_CRED_PREFILTER=0
+unset GUARDS_DEADLINE_INNER
 expect deny  "PREFILTER=0: key within 60 words still denies"  Bash "$(bash_in "cat $(fill 20) $HK")" GUARDS_CRED_PREFILTER=0
 # a bare word in a credential directory: the old full check, however long the command
 sens_run() { # sens_run CWD COMMAND [ENV...] -> deny | ask | allow
