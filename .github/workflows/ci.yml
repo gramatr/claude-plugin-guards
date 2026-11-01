@@ -38,7 +38,7 @@ jobs:
       - name: Lint hook + vendor scripts
         run: |
           shopt -s nullglob
-          files=(guards/hooks/*.sh guards/bin/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh)
+          files=(guards/hooks/*.sh guards/bin/*.sh guards/ci/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh)
           echo "Linting: ${files[*]}"
           # -S warning: info-level SC2016 fires on intentional single
           # quotes around jq's own $vars (e.g. '{message: $msg}'), not
@@ -91,6 +91,9 @@ jobs:
         run: bash guards/tests/scan-bash-compat.test.sh
       - name: approvals report (counts only, read-only)
         run: bash guards/tests/approvals-report.test.sh
+      - name: tag check compares VERSION with guards-unified's
+        # Stub curl; fabricated versions. Includes the negative control.
+        run: bash guards/tests/tag-version-check.test.sh
       - name: every job has a timeout
         # The default is 360 minutes; a hung step held a release for 35+ minutes (2026-11-01).
         run: bash guards/tests/workflow-timeouts.test.sh
