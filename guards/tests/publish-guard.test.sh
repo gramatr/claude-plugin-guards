@@ -448,6 +448,7 @@ PM_MODE=auto
 PROSE="secret_rotation: Schedule the job every week"   # ordinary words after a credential-ish label: denied on purpose, indistinguishable from a passphrase
 reason() { jq -r '.hookSpecificOutput.permissionDecisionReason // ""'; }
 HITLOG="$APPROVALS/denies.log"
+TAB="$(printf '\t')"   # BSD grep has no -P
 rm -f "$HITLOG"
 T1="$(bash_in "gh issue create -R o/r --title '$PROSE' --body 'all fine'")"
 o="$(hook_out Bash "$T1")"; r="$(printf '%s' "$o" | reason)"
@@ -482,10 +483,10 @@ o="$(hook_out Bash "$T1")"; r="$(printf '%s' "$o" | reason)"
 PM_MODE=auto
 # Counts: one line per block, rule and argument class only, never text.
 [ -f "$HITLOG" ] && ok || bad "arg: a deny log is written"
-grep -qP '^\d{4}-\d\d-\d\dT[\d:]+Z\tdeny\tsecret-lead-in\ttitle$' "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a title deny by rule and class"
-grep -qP '\tdeny\tsecret-lead-in\tmessage$' "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a message deny"
-grep -qP '\task\tsecret-lead-in\ttitle$' "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts an ask"
-grep -qP '\tdeny\tsecret-lead-in\tnone$' "$HITLOG" 2>/dev/null && ok || bad "arg: a body-only deny is class none"
+grep -qE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z${TAB}deny${TAB}secret-lead-in${TAB}title\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a title deny by rule and class"
+grep -qE "${TAB}deny${TAB}secret-lead-in${TAB}message\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a message deny"
+grep -qE "${TAB}ask${TAB}secret-lead-in${TAB}title\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts an ask"
+grep -qE "${TAB}deny${TAB}secret-lead-in${TAB}none\$" "$HITLOG" 2>/dev/null && ok || bad "arg: a body-only deny is class none"
 ! grep -qE "$PW|Schedule|rotation|every week" "$HITLOG" 2>/dev/null && ok || bad "arg: the log holds no text"
 n0="$(wc -l < "$HITLOG")"
 hook_out Bash "$T1" GUARDS_PUBLISH_DENY_LOG=0 > /dev/null
@@ -493,7 +494,7 @@ hook_out Bash "$T1" GUARDS_PUBLISH_GUARD_REPORT=1 > /dev/null
 [ "$(wc -l < "$HITLOG")" = "$n0" ] && ok || bad "arg: GUARDS_PUBLISH_DENY_LOG=0 and the MCP report mode write no line"
 HT="gh$(printf 'p')_$(rnd 36)"
 hook_out Bash "$(bash_in "gh issue create -R o/r --title t --body 'Authorization: Bearer $HT'")" > /dev/null
-grep -qP '\t(deny|hard)\t' "$HITLOG" && ! grep -q "$HT" "$HITLOG" && ok || bad "arg: a sure-thing deny is counted without its value"
+grep -qE "${TAB}(deny|hard)${TAB}" "$HITLOG" && ! grep -q "$HT" "$HITLOG" && ok || bad "arg: a sure-thing deny is counted without its value"
 
 echo "publish-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
