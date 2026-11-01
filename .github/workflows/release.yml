@@ -17,6 +17,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # contents: write is held by this job only.
     permissions:
       contents: write

@@ -23,6 +23,7 @@ permissions:
 jobs:
   shellcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -88,6 +89,9 @@ jobs:
         run: bash guards/tests/guards-switch.test.sh
       - name: scan.sh bash compatibility (no bash 4 syntax)
         run: bash guards/tests/scan-bash-compat.test.sh
+      - name: every job has a timeout
+        # The default is 360 minutes; a hung step held a release for 35+ minutes (2026-11-01).
+        run: bash guards/tests/workflow-timeouts.test.sh
       - name: docs say what the hooks do
         run: bash guards/tests/docs-consistency.test.sh
       - name: hook deadline tests
@@ -131,6 +135,7 @@ jobs:
     # The outbound command parser is POSIX awk; awks differ silently (mawk has no
     # regex intervals, one-true-awk and busybox read `word (expr)` as a call).
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -148,6 +153,7 @@ jobs:
   outbound-parse-macos:
     # macOS ships one-true-awk. Minimal on purpose: same test, the system awk.
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Outbound parser tests (macOS awk)
@@ -160,6 +166,7 @@ jobs:
     # bugs only a Mac showed (symlinks not resolved, a lost deny, a bash 4
     # expansion in scan.sh, a slow PATH copy) never ran in CI, which is Linux.
     runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Hook suites under the system bash (3.2)
@@ -176,6 +183,7 @@ jobs:
 
   scan-sh-drift:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Check the drift check itself (local files, no network)
@@ -201,6 +209,7 @@ jobs:
 
   hadolint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Lint vendored Dockerfile
@@ -213,6 +222,7 @@ jobs:
 
   cve-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Trivy filesystem scan
@@ -242,6 +252,7 @@ jobs:
     needs: [shellcheck, scan-sh-drift, hadolint, cve-scan]
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Open an issue — don't rely on anyone noticing the red check
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
