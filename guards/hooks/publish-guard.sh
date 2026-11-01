@@ -471,6 +471,49 @@ if [ -n "$RULES" ]; then
   WHERE="$(printf '%s\n' "$loc" | grep -v '^#TOTAL ')"
 fi
 
+# Which title or message argument holds the match? (coordination#124, #131; deny TEXT only: what the scanner
+# matches is unchanged.) A secret-lead-in match inside a --title, -t (gh) or -m/--message (git commit) argument is
+# usually prose the agent wrote ("password rotation: weekly"), and the generic message gave no hint which argument
+# to reword. Each such argument is scanned on its own, only after the decision to block, so the allow path pays
+# nothing. Only the flag name and its number are reported, never the text. A title built from a variable or a
+# heredoc is not recognised and keeps the generic message. GUARDS_PUBLISH_ARG_HINT=0 turns it off.
+ARG_HITS=""; ARG_CLASS="none"
+arg_hint() {
+  [ "${GUARDS_PUBLISH_ARG_HINT:-1}" != 0 ] || return 0
+  [ "$TOOL_NAME" = Bash ] || return 0
+  case ",$RULES," in *,secret-lead-in,*) ;; *) return 0 ;; esac
+  local flags re rest m flag val n=0 cls=""
+  if [ "${IS_COMMIT:-0}" -eq 1 ]; then flags='--message|-[A-Za-z]*m'; else flags='--title|-t'; fi
+  re='(^|[[:space:]])('"$flags"')(=|[[:space:]]+)("(\\.|[^"\\])*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"']+)'
+  rest="$CMD"
+  while [ "$n" -lt 6 ] && [[ "$rest" =~ $re ]]; do
+    m="${BASH_REMATCH[0]}"; flag="${BASH_REMATCH[2]}"; val="${BASH_REMATCH[4]}"
+    rest="${rest#*"$m"}"; n=$((n + 1))
+    case "$val" in
+      \"*\") val="${val:1:${#val}-2}" ;;
+      \'*\') val="${val:1:${#val}-2}" ;;
+    esac
+    printf '%s\n' "$val" > "$WORK/arg-$n.txt"
+    # A subshell, so the scan's results (SS_*) stay those of the whole command.
+    if [[ "$( SS_WORK="$WORK/argscan-$n"; mkdir -p "$SS_WORK"; secret_scan "$WORK/arg-$n.txt" > /dev/null 2>&1; printf '%s' "$SS_RULES" )" == *secret-lead-in* ]]; then
+      case "$flag" in -[A-Za-z]*m) flag="-m" ;; esac
+      ARG_HITS="${ARG_HITS:+$ARG_HITS, }the $flag argument (number $n of the title/message arguments)"
+      case "$flag" in *title|-t) case "$cls" in *title*) ;; *) cls="${cls:+$cls+}title" ;; esac ;; *) case "$cls" in *message*) ;; *) cls="${cls:+$cls+}message" ;; esac ;; esac
+    fi
+  done
+  [ -z "$cls" ] || ARG_CLASS="$cls"
+}
+arg_hint
+# arg_block: the paragraph naming the argument, the reword, and (when one is on offer) the approve-once command.
+arg_block() { # arg_block [APPROVE_COMMAND]
+  [ -n "$ARG_HITS" ] || return 0
+  printf '\nWhich argument: the match is in %s of this command (the flag name and number only; the text is not shown). Fix: reword that argument. A credential word followed by a colon and a plain word reads like "password: value". Put a different word before the colon, drop the colon (use "is" or a dash), or describe the shape instead of the value; then retry.' "$ARG_HITS"
+  if [ -n "${1:-}" ]; then
+    printf ' If it is plainly ordinary text that cannot be reworded, the person can approve this exact text once with: %s' "$1"
+  fi
+  printf '\n'
+}
+
 # explain: the located lines plus what to do about them. Never contains a value.
 # The MCP tools (guards/mcp/server.py: check_before_publish, explain_block, ...)
 # pass this text through verbatim and parse its section headings ("Where",
@@ -515,10 +558,19 @@ done
 HUMAN=0
 case "$PERM_MODE" in default|acceptEdits|plan) HUMAN=1 ;; esac
 [ "${GUARDS_PUBLISH_ASK:-1}" = "force" ] && HUMAN=1
+# Deny counts (coordination#124 B): one metadata line per ask or deny, by rule and argument class, never any text
+# (approve-lib.sh, denies.log). The MCP checker only reports and does not count.
+# shellcheck source=guards/hooks/approve-lib.sh
+[ -n "$RULES" ] && . "$SCRIPT_DIR/approve-lib.sh"
+log_block() { # log_block ask|deny|hard
+  [ -n "$RULES" ] && [ "${GUARDS_PUBLISH_GUARD_REPORT:-0}" != "1" ] && [ "${GUARDS_PUBLISH_DENY_LOG:-1}" != "0" ] && approve_deny_log "$1" "$RULES" "$ARG_CLASS"
+  return 0
+}
 MODE_NOTE=""
 if [ -n "$RULES" ] && [ "$HARD" -eq 0 ] && { [ "${GUARDS_PUBLISH_ASK:-1}" = "1" ] || [ "${GUARDS_PUBLISH_ASK:-1}" = "force" ]; }; then
   if [ "$HUMAN" -eq 1 ]; then
-    ask "guards publish-guard: ${LABEL} may contain a credential (detector rule(s): ${RULES}). Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and rewrite the text to describe the shape only (length, character classes, which tool produced it); nothing real belongs in a public repo, issue, PR, comment or commit, not even a rotated one.
+    log_block ask
+    ask "guards publish-guard: ${LABEL} may contain a credential (detector rule(s): ${RULES}). Approve only if it shows a SHAPE or a documented example. If it contains a real value, deny it and rewrite the text to describe the shape only (length, character classes, which tool produced it); nothing real belongs in a public repo, issue, PR, comment or commit, not even a rotated one.$(arg_block)
 $(explain)"
   fi
   MODE_NOTE=" [permission mode '${PERM_MODE:-unknown}' has no person to answer an approval prompt, so an ambiguous match is blocked instead of asked]"
@@ -528,10 +580,8 @@ if [ -n "$RULES" ]; then
   # Approve-once (coordination#124): an ambiguous match with no person to ask. The person can approve
   # this exact text once with bin/guards-approve.sh; the retry then passes. Never for a sure-thing
   # match (HARD), and not when an operator asked for hard blocks (GUARDS_PUBLISH_ASK=0).
-  APPROVE_NOTE=""
+  APPROVE_NOTE=""; APPROVE_CMD=""
   if [ "$HARD" -eq 0 ] && [ "${GUARDS_PUBLISH_APPROVE:-1}" != "0" ] && [ "${GUARDS_PUBLISH_ASK:-1}" != "0" ]; then
-    # shellcheck source=guards/hooks/approve-lib.sh
-    . "$SCRIPT_DIR/approve-lib.sh"
     AID="$(approve_id "$RULES" "$SCAN_INPUT")"
     # A vendor token or private key shape is never offered, even when only a weaker rule saw it (no gitleaks).
     approve_sure_shape "$SCAN_INPUT" && AID=""
@@ -548,11 +598,13 @@ if [ -n "$RULES" ]; then
       exit 0
     fi
     approve_pending_write "$AID" "$LABEL" "$RULES" "$WHERE"
+    APPROVE_CMD="! bash $(dirname "$SCRIPT_DIR")/bin/guards-approve.sh ${AID}"
     APPROVE_NOTE="
-Approval: if this is a false positive, only the PERSON can approve this exact text, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ! bash $(dirname "$SCRIPT_DIR")/bin/guards-approve.sh ${AID}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the lines above and ask."
+Approval: if this is a false positive, only the PERSON can approve this exact text, once, for $((GUARDS_APPROVE_TTL / 60)) minutes. Ask them to run this in their own session (the ! prefix runs it without the hooks): ${APPROVE_CMD}  Then retry the identical command. Do not run it yourself: it is refused, and an approval you made would not be the person's. Fix: show the person the lines above and ask."
     fi
   fi
-  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.${APPROVE_NOTE}
+  if [ "$HARD" -eq 1 ]; then log_block hard; else log_block deny; fi
+  deny "Blocked by guards publish-guard: ${LABEL} would publish text that looks like it contains a credential (detector rule(s): ${RULES})${MODE_NOTE}. Do not include the value, not even a prefix, a partial, or a rotated/dead one. Fix: describe the SHAPE only (length, character classes, which tool produced it). Put real material nowhere in a public repo, issue, PR, comment or commit.${APPROVE_NOTE}$(arg_block "$APPROVE_CMD")
 $(explain)"
 fi
 

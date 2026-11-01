@@ -105,6 +105,18 @@ approve_consume() {
   return $rc
 }
 
+# approve_deny_log DECISION RULES ARGCLASS: one metadata line per ask or deny (ask|deny|hard), by detector rule and
+# by the kind of argument the match was in (title, message, title+message or none), so a month of lines shows which
+# shapes still need approving. Fields are fixed words and scanner rule ids: no text, no value, no key name. The file
+# is renamed to denies.log.1 past 1 MB, so it stays small.
+approve_deny_log() {
+  approve_mkdirs || return 0
+  local f="$GUARDS_APPROVE_DIR/denies.log"
+  [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 1048576 ] && mv -f "$f" "$f.1" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >> "$f" 2>/dev/null
+  return 0
+}
+
 # approve_log ID RULES: one metadata line per approval used (no text), so a rule that needs approving
 # often shows up and can be tuned.
 approve_log() {

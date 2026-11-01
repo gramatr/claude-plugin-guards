@@ -476,7 +476,15 @@ ambiguous literal, and one approval covers both of its findings for that exact
 command. `GUARDS_PUBLISH_APPROVE=0` and `GUARDS_OUTBOUND_APPROVE=0` turn it off;
 `bash guards-approve.sh --list` shows what is waiting; each use is logged by rule
 in `~/.local/share/gramatr-guards/approvals.log`, so a rule that needs approving
-often can be tuned.
+often can be tuned. Every ask or deny of the publish guard is also counted, one line
+each, in `denies.log` in the same directory (time, `ask`, `deny` or `hard`, the
+detector rule, and `title`, `message`, `title+message` or `none` for the kind of
+argument the match was in): no text, no key name and no value, so a month of it
+shows which shapes still need approving (`GUARDS_PUBLISH_DENY_LOG=0` turns it off).
+When a `secret-lead-in` match sits inside a `--title`/`-t` (gh) or `-m`/`--message`
+(git commit) argument, the block names that argument (flag and number, never its
+text), suggests the reword and repeats the approve-once command; what is matched is
+unchanged (`GUARDS_PUBLISH_ARG_HINT=0` restores the previous message).
 
 **Turning every hook off for a while.** If a block is in your way and you would
 rather not uninstall anything, run in the session with the `!` prefix:
