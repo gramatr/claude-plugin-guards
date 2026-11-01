@@ -59,9 +59,18 @@ if [ "${#RUFF[@]}" -gt 0 ]; then
   step "ruff format" "${RUFF[@]}" format --check .
 fi
 
-if command -v shellcheck >/dev/null 2>&1; then
+# CI installs shellcheck from apt on the runner image, whose version moves (0.11 flagged two old lines an older
+# one let through). A pip build of 0.11 through uvx is used when available, so the local answer matches CI's.
+SHELLCHECK=()
+if command -v uvx >/dev/null 2>&1; then
+  SHELLCHECK=(uvx --from shellcheck-py==0.11.0.1 shellcheck)
+elif command -v shellcheck >/dev/null 2>&1; then
+  SHELLCHECK=(shellcheck)
+  echo "note: local shellcheck $(shellcheck --version | sed -n 2p | awk '{print $2}') may be older than CI's; install uv to run 0.11"
+fi
+if [ "${#SHELLCHECK[@]}" -gt 0 ]; then
   echo "lint"
-  step "shellcheck" shellcheck -S warning -x guards/hooks/*.sh guards/bin/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh
+  step "shellcheck" "${SHELLCHECK[@]}" -S warning -x guards/hooks/*.sh guards/bin/*.sh guards/tests/*.sh guards/vendor/secret-guard-core/scan.sh
 fi
 
 echo "without gitleaks (as CI sees it)"
