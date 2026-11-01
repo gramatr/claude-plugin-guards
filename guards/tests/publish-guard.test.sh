@@ -442,6 +442,59 @@ done
 # A server name with a single underscore is still one server segment; a double underscore ends it.
 matcher_hits mcp__git_hub__create_issue && bad "matcher: git_hub is not a GitHub server" || ok
 matcher_hits mcp__a__github__create_issue && bad "matcher: a tool name with github after the server segment matched" || ok
+# --- the block names the title or message argument that matched, and counts it (coordination#124, #131) ---
+# Deny text only: the same texts are denied or asked as before (checked by the decision lines below).
+PM_MODE=auto
+PROSE="secret_rotation: Schedule the job every week"   # ordinary words after a credential-ish label: denied on purpose, indistinguishable from a passphrase
+reason() { jq -r '.hookSpecificOutput.permissionDecisionReason // ""'; }
+HITLOG="$APPROVALS/denies.log"
+TAB="$(printf '\t')"   # BSD grep has no -P
+rm -f "$HITLOG"
+T1="$(bash_in "gh issue create -R o/r --title '$PROSE' --body 'all fine'")"
+o="$(hook_out Bash "$T1")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && ok || bad "arg: a prose title is still denied in auto mode"
+[[ "$r" == *"the --title argument (number 1"* ]] && ok || bad "arg: the deny names the --title argument"
+[[ "$r" == *"reword that argument"* && "$r" == *"Put a different word before the colon"* ]] && ok || bad "arg: the deny suggests the reword"
+[[ "$r" == *"approve this exact text once with: ! bash "*"guards-approve.sh "* ]] && ok || bad "arg: the deny repeats the approve-once command"
+[[ "$r" != *"every week' --body"*"Which argument"* ]] && ok || bad "arg: the argument text is never repeated in the hint"
+o="$(hook_out Bash "$(bash_in "gh pr create -t '$PROSE' --body ok")")"; r="$(printf '%s' "$o" | reason)"
+[[ "$r" == *"the -t argument"* ]] && ok || bad "arg: gh -t is named"
+o="$(hook_out Bash "$(bash_in "git commit --allow-empty -q -m 'fix a thing' -m '$PROSE'")")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && [[ "$r" == *"the -m argument (number 2"* ]] && ok || bad "arg: git commit names the second -m argument"
+o="$(hook_out Bash "$(bash_in "git commit --allow-empty -q --message='$PROSE'")")"; r="$(printf '%s' "$o" | reason)"
+[[ "$r" == *"the --message argument"* ]] && ok || bad "arg: git commit --message= is named"
+# A value-shaped string in the same argument is still denied, and the hint names the argument too.
+o="$(hook_out Bash "$(bash_in "gh issue create -R o/r --title 'DB_PASSWORD=$PW' --body ok")")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && [[ "$r" != *"$PW"* ]] && ok || bad "arg: a value in a title is still denied and never echoed"
+# A match in the body only: no argument is named. gh -m is a milestone, not a message: not named either.
+o="$(hook_out Bash "$(bash_in "gh issue create -R o/r --title 'a title' --body '$PROSE'")")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && [[ "$r" != *"Which argument"* ]] && ok || bad "arg: a body-only match names no argument"
+o="$(hook_out Bash "$(bash_in "gh issue create -R o/r -m '$PROSE' --title t --body ok")")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && [[ "$r" != *"Which argument"* ]] && ok || bad "arg: gh -m (milestone) is not treated as a message"
+# A clean title is allowed and gets no hint.
+[ "$(hook_out Bash "$(bash_in "gh issue create -R o/r --title 'rotate the credentials weekly' --body ok")" | decision)" = allow ] && ok || bad "arg: a clean title is allowed"
+# Off switch: the previous message, same decision.
+o="$(hook_out Bash "$T1" GUARDS_PUBLISH_ARG_HINT=0)"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = deny ] && [[ "$r" != *"Which argument"* && "$r" == *"detector rule(s): secret-lead-in"* ]] && ok || bad "arg: GUARDS_PUBLISH_ARG_HINT=0 restores the previous message"
+# A person present: the ask names the argument too, with no approve command (the person is already being asked).
+PM_MODE=default
+o="$(hook_out Bash "$T1")"; r="$(printf '%s' "$o" | reason)"
+[ "$(printf '%s' "$o" | decision)" = ask ] && [[ "$r" == *"the --title argument"* && "$r" != *"approve this exact text once"* ]] && ok || bad "arg: the ask names the argument"
+PM_MODE=auto
+# Counts: one line per block, rule and argument class only, never text.
+[ -f "$HITLOG" ] && ok || bad "arg: a deny log is written"
+grep -qE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z${TAB}deny${TAB}secret-lead-in${TAB}title\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a title deny by rule and class"
+grep -qE "${TAB}deny${TAB}secret-lead-in${TAB}message\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts a message deny"
+grep -qE "${TAB}ask${TAB}secret-lead-in${TAB}title\$" "$HITLOG" 2>/dev/null && ok || bad "arg: the log counts an ask"
+grep -qE "${TAB}deny${TAB}secret-lead-in${TAB}none\$" "$HITLOG" 2>/dev/null && ok || bad "arg: a body-only deny is class none"
+! grep -qE "$PW|Schedule|rotation|every week" "$HITLOG" 2>/dev/null && ok || bad "arg: the log holds no text"
+n0="$(wc -l < "$HITLOG")"
+hook_out Bash "$T1" GUARDS_PUBLISH_DENY_LOG=0 > /dev/null
+hook_out Bash "$T1" GUARDS_PUBLISH_GUARD_REPORT=1 > /dev/null
+[ "$(wc -l < "$HITLOG")" = "$n0" ] && ok || bad "arg: GUARDS_PUBLISH_DENY_LOG=0 and the MCP report mode write no line"
+HT="gh$(printf 'p')_$(rnd 36)"
+hook_out Bash "$(bash_in "gh issue create -R o/r --title t --body 'Authorization: Bearer $HT'")" > /dev/null
+grep -qE "${TAB}(deny|hard)${TAB}" "$HITLOG" && ! grep -q "$HT" "$HITLOG" && ok || bad "arg: a sure-thing deny is counted without its value"
 
 echo "publish-guard: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
