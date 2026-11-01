@@ -477,6 +477,23 @@ command. `GUARDS_PUBLISH_APPROVE=0` and `GUARDS_OUTBOUND_APPROVE=0` turn it off;
 in `~/.local/share/gramatr-guards/approvals.log`, so a rule that needs approving
 often can be tuned.
 
+**Turning every hook off for a while.** If a block is in your way and you would
+rather not uninstall anything, run in the session with the `!` prefix:
+`! guards-switch off 30m` (the time is optional: `30m`, `2h` or a number of
+minutes, default an hour, at most 24 hours). It takes effect at once with no
+restart, and the guards turn themselves back on when the time is up, so
+protection cannot stay off by accident. `guards-switch on` turns them back on
+sooner, and `guards-switch status` says which it is. While they are off,
+**nothing is scanned or redacted**: a secret in tool output stays in the
+transcript and a commit, issue or PR body is not checked. The SessionStart
+notice and the `guards_status` tool both say when they are off. The short
+`guards-switch` command is a small launcher the self-heal places in
+`~/.local/bin` (only if the name is free or already ours); the full path is
+`<plugin>/bin/guards-switch.sh`. publish-guard refuses an agent that tries to run
+it or touch its flag file, with the same limit as the approve-once store.
+`GUARDS_DISABLE=1` in the environment Claude Code starts from turns them off for
+the whole session.
+
 `GUARDS_PUBLISH_ASK=force` asks regardless of mode (for an operator who knows a
 person is attached); `GUARDS_PUBLISH_ASK=0` makes every match a hard deny.
 `GUARDS_ALLOW_PUBLISH_SECRETS=1` in the environment Claude Code starts from

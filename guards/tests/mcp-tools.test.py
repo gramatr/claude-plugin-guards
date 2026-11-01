@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -604,6 +605,32 @@ class GuardsStatus(Base):
             gt.httpx.get = real
             for k, v in old.items():
                 os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+    def test_the_off_switch_is_reported(self):
+        # coordination#133: when the person has switched the guards off, say so, and call it a degradation
+        req = httpx.Request("GET", "http://stub.invalid/about")
+        up = lambda url, timeout=None: httpx.Response(
+            200, json={"version": "9.9.9"}, request=req
+        )
+        with tempfile.TemporaryDirectory() as d:
+            env = {"GUARDS_STATE_DIR": d}
+            on = self.status(up, env=env)
+            self.assertEqual(on["switch"], {"off": False})
+            with open(os.path.join(d, "disabled"), "w") as fh:
+                fh.write(str(int(time.time()) + 1200) + "\n")
+            off = self.status(up, env=env)
+            self.assertTrue(off["switch"]["off"])
+            self.assertTrue(10 <= off["switch"]["minutes_left"] <= 20)
+            self.assertTrue(any("switched OFF" in x for x in off["degraded"]))
+            self.assertFalse(off["ok"])
+            with open(os.path.join(d, "disabled"), "w") as fh:
+                fh.write(str(int(time.time()) - 5) + "\n")
+            self.assertEqual(self.status(up, env=env)["switch"], {"off": False})
+            with open(os.path.join(d, "disabled"), "w") as fh:
+                fh.write("forever\n")
+            self.assertEqual(self.status(up, env=env)["switch"], {"off": False})
+        whole = self.status(up, env={"GUARDS_DISABLE": "1"})
+        self.assertTrue(whole["switch"]["off"])
 
     def test_service_up_reports_both_versions_and_the_hooks(self):
         req = httpx.Request("GET", "http://stub.invalid/about")

@@ -52,6 +52,11 @@
 
 set -uo pipefail
 
+# The temporary off switch (coordination#133): the person turns every hook off for a while with bin/guards-switch.sh.
+# Exiting 0 with no output allows the call and leaves tool output as it is. Before the deadline wrapper on purpose.
+# shellcheck source=guards/hooks/disable-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/disable-lib.sh" 2> /dev/null && guards_disabled && exit 0
+
 [ "${GUARDS_ALLOW_OUTBOUND_SECRETS:-0}" = "1" ] && exit 0
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

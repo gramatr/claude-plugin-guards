@@ -212,7 +212,7 @@ git -C "$LR" reset -q; rm -f "$LR/clean.txt" "$LR/msg.txt"
 git -C "$LR" add many.ts
 want deny "seven unmarked lines" "$LR" 'git commit -m many'
 has "first 5 of 7"; check "message caps the list at 5 and says how many there are" $?
-[ "$(grep -c '^  [0-9]\. ' "$T/last.msg")" -eq 5 ]; check "exactly 5 locations are listed" $?
+if [ "$(grep -c '^  [0-9]\. ' "$T/last.msg")" -eq 5 ]; then check "exactly 5 locations are listed" 0; else check "exactly 5 locations are listed" 1; fi
 git -C "$LR" reset -q; rm -f "$LR/many.ts"
 
 # No value leak for the other rule kinds: a private key, a value from the environment.
@@ -277,7 +277,7 @@ fixture '' > "$SR/src/new.ts"
 want deny  "git add -A && git commit scans a new unmarked file" "$SR" 'git add -A && git commit -m x'
 fixture ' // guards:synthetic' > "$SR/src/new.ts"
 want allow "git add -A && git commit with the new file marked" "$SR" 'git add -A && git commit -m x'
-[ -z "$(git -C "$SR" diff --cached --name-only)" ]; check "the replayed add did not touch the real index" $?
+if [ -z "$(git -C "$SR" diff --cached --name-only)" ]; then check "the replayed add did not touch the real index" 0; else check "the replayed add did not touch the real index" 1; fi
 
 # A very large diff: only the first MAX bytes are scanned, and the hook says so.
 BR="$T/big"; mkrepo "$BR"
