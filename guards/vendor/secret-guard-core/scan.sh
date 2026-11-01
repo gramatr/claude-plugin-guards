@@ -250,9 +250,10 @@ ctx_reference_value() {
   elif [ "$plural_tokens" = 1 ] && [[ "$core" =~ ^[0-9]+$ ]]; then
     # a count: "total_tokens": 1831. A singular token key with a number is not exempt.
     rc=0
-  elif [ "$topic_key" = 1 ] && [[ "$pfx" =~ :[[:blank:]]+$ ]] && [[ "$core" =~ ^[a-z]{3,}$ ]] \
+  elif [ "$topic_key" = 1 ] && [[ "$pfx" =~ :[[:blank:]]+$ ]] && [[ "$core" =~ ^[a-z][a-z-]{2,}$ ]] \
     && [[ "${after%%$'\n'*}" =~ ^[[:blank:]]+[a-z]{2,} ]]; then
     # a topic and a sentence, as in an issue title or a commit message: "credential_audit: write an audit row ..."
+    # (a hyphenated first word is fine: "credential_audit: write-once rows on every login")
     rc=0
   elif [[ "$pfx" =~ [[:blank:]]=[[:blank:]]+$ ]] && [[ "$lb" =~ $unpack_targets ]] \
     && { [[ "$core" =~ $member_chain ]] || [[ "$core" =~ $snake_name ]]; }; then
