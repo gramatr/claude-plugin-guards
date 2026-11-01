@@ -31,6 +31,29 @@ guards-unified's README. They have no effect on the hooks.
 server**. Setting them in the container's environment does nothing. The server
 scans whatever text it is sent; the hook decides how much to send.
 
+## Degraded-service state
+
+When the service cannot be reached, answers too slowly or has an axis unavailable, the hooks keep a very small
+amount of state so the same fact is not rediscovered, or announced, on every call (`hooks/degrade-lib.sh`;
+the design is in coordination issues #93, #126, #127 and #128).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `GUARDS_DEGRADED_NOTE` | `1` | `0` turns the state off: nothing is read or written and every hook behaves as it did before the library existed. |
+| `GUARDS_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/gramatr-guards` | Where it is kept (the same directory the per-session PII note uses). |
+
+Two kinds of file, never holding scanned text or a host name:
+
+- `service/<n>`: one line, `EPOCH COUNT REASON`, for the service at the address that hashes to `<n>`. Written when a
+  connection could not be made (refused, name not found, or a timeout before the connection), removed as soon as
+  that service answers at all. Shared by every session on the machine.
+- `mode/<session>`: one line recording what this session was last told. One per session, so a second session is
+  told for itself.
+
+Both are written through a temporary file and a rename, files older than two days are removed when a new one is
+started, and a directory that cannot be read or written means the hooks behave as if the state were off. The
+credential decision never depends on either file.
+
 ## Server settings that change what you are told about PII
 
 These are **container** variables: they are read by the guards-unified service, not by the hooks. Put

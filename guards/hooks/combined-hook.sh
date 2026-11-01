@@ -88,6 +88,8 @@ PII_GUARD_MODE="${PII_GUARD_MODE:-flag}"
 RAW="$(cat)"
 # shellcheck source=guards/hooks/json-lib.sh
 . "$SCRIPT_DIR/json-lib.sh"
+# shellcheck source=guards/hooks/degrade-lib.sh
+[ -f "$SCRIPT_DIR/degrade-lib.sh" ] && . "$SCRIPT_DIR/degrade-lib.sh"
 if [ "$HAVE_JQ" -eq 0 ]; then
   # Redaction rewrites JSON, which needs jq: withhold a result with credential
   # material, pass a clean one with a note (json-lib.sh).
@@ -128,7 +130,7 @@ scan_and_redact() {
   local current="$1" changed=0 response
   local secret_verdict secret_redacted pii_verdict pii_types combined_redacted note
   local ig_verdict ig_score warning
-  local full_len scan_text remainder truncated=0 req_file
+  local full_len scan_text remainder truncated=0 req_file meta crc body_ok
 
   # SCAN_MAX_BYTES caps what gets SENT TO THE SCANNER, not what comes
   # back out -- a different limit for a different reason than the
@@ -166,10 +168,15 @@ scan_and_redact() {
   # crash this fix exists to close.
   req_file="$(mktemp)"
   printf '%s' "$scan_text" > "$req_file"
+  # The last line of curl's answer is its -w text (status and time to connect), for degrade-lib.sh.
   response="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
     | curl -sS --connect-timeout 2 -m 6 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
-        -H "Content-Type: application/json" -d @- 2>/dev/null)"
+        -H "Content-Type: application/json" -d @- -w '\n%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
+  meta="${response##*$'\n'}"; response="${response%$'\n'*}"
   rm -f "$req_file"
+  body_ok=0
+  [ -n "$response" ] && echo "$response" | jq -e '.findings | type == "array"' >/dev/null 2>&1 && body_ok=1
+  [ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$crc" "$meta" "$body_ok"
 
   # Everything below operates on $current as before -- reassigning it
   # to the (possibly truncated) scan_text keeps every existing
@@ -184,7 +191,7 @@ scan_and_redact() {
   # Require the actual shape a real scan result has before trusting
   # it; anything else falls through to the same disclosed fallback
   # path as a fully unreachable backend.
-  if [ -n "$response" ] && ! echo "$response" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then
+  if [ -n "$response" ] && [ "$body_ok" -ne 1 ]; then
     echo "combined-hook: guards-unified returned a malformed/unexpected response shape, treating as unreachable (fail-open to local secret-scan fallback)" >&2
     response=""
   fi
@@ -337,7 +344,7 @@ FAST_WORK=""
 
 scan_and_redact_fast() {
   local text="$1" w="$FAST_WORK" full_len remainder="" truncated=0 changed=0 current
-  local fpid="" fbudget pii_verdict pii_types ig_verdict ig_score note warning
+  local fpid="" fbudget pii_verdict pii_types ig_verdict ig_score note warning flags_ok frc fmeta
 
   full_len="$(printf '%s' "$text" | wc -c)"
   if [ "$full_len" -gt "$SECRET_MAX_BYTES" ]; then
@@ -354,9 +361,11 @@ scan_and_redact_fast() {
   if [ "$FLAG_MAX_BYTES" -gt 0 ]; then
     head -c "$FLAG_MAX_BYTES" "$w/in.txt" > "$w/flag_in.txt"
     fbudget="$(awk -v n="$(wc -c < "$w/flag_in.txt")" -v b="$FLAG_BUDGET" 'BEGIN { if (b != "") print b; else printf "%.2f", 0.25 + 0.3 * n / 1024 }')"
+    rm -f "$w/flags.meta" "$w/flags.rc"
     ( jq -n --rawfile text "$w/flag_in.txt" '{text: $text}' 2>/dev/null \
         | curl -sS -m "$fbudget" -X POST "${GUARDS_ENDPOINT}/v1/scan" \
-            -H "Content-Type: application/json" -d @- -o "$w/flags.json" ) >/dev/null 2>&1 &
+            -H "Content-Type: application/json" -d @- -o "$w/flags.json" -w '%{http_code} %{time_connect} %{time_total}' > "$w/flags.meta" 2>/dev/null
+      echo "$?" > "$w/flags.rc" ) >/dev/null 2>&1 &
     fpid=$!
   fi
 
@@ -378,7 +387,17 @@ scan_and_redact_fast() {
 
   [ -n "$fpid" ] && wait "$fpid" 2>/dev/null
 
-  if [ -s "$w/flags.json" ] && jq -e '.findings | type == "array"' "$w/flags.json" >/dev/null 2>&1; then
+  flags_ok=0
+  [ -s "$w/flags.json" ] && jq -e '.findings | type == "array"' "$w/flags.json" >/dev/null 2>&1 && flags_ok=1
+
+  if [ -n "$fpid" ] && [ -n "${DG_STATE+x}" ]; then
+    frc=1; fmeta=""
+    read -r frc < "$w/flags.rc" 2>/dev/null
+    read -r fmeta < "$w/flags.meta" 2>/dev/null
+    dg_observe "$GUARDS_ENDPOINT" "$frc" "$fmeta" "$flags_ok"
+  fi
+
+  if [ "$flags_ok" -eq 1 ]; then
     pii_verdict="$(jq -r '.findings[]? | select(.type=="pii") | .verdict // ""' "$w/flags.json" 2>/dev/null)"
     if [ "$pii_verdict" = "found" ]; then
       pii_types="$(jq -r '[.findings[] | select(.type=="pii") | .detail.entities[]?.entity_type] | unique | join(", ")' "$w/flags.json" 2>/dev/null)"

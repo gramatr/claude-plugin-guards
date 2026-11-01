@@ -101,8 +101,9 @@ def model_finding(kind, text):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
+    # Keep the base signature; the stub logs nothing.
+    def log_message(self, format, *args):
+        return None
 
     def reply(self, status, body):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
