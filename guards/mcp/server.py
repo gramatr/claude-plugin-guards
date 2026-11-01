@@ -66,7 +66,7 @@ Rules:
 2. guards:synthetic on the SAME line marks a deliberately fake fixture line. It only works for added lines of a git commit's staged diff.
 3. Never disable or bypass the guards, and never ask the user to. Report a false positive (for example a key named secret_vault_id) instead.
 
-Network commands that send credentials are blocked too (guards://guide/hooks). Before publishing text, run the check_before_publish tool on it. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
+Commands that send credentials over the network are blocked too. Before publishing, run check_before_publish on the FULL command (kind=command), title included. Read guards://guide/publishing, guards://guide/false-positives, guards://guide/hooks and guards://guide/diagnosing-a-block (longer: docs/AGENTS-GUIDE.md).
 """
 
 mcp = MCPServer("guards", instructions=INSTRUCTIONS)
@@ -178,7 +178,7 @@ What is scanned: the whole command text (heredoc bodies and a git commit -m mess
 
 Rules for writing text that gets published:
 1. Never include a real credential: not a prefix, not a partial, not a rotated or dead one. Describe the shape: length, character classes, which tool or command produced it.
-2. Put long bodies and messages in a file, run check_before_publish on the text, then publish with --body-file or git commit -F.
+2. Put long bodies and messages in a file, then run check_before_publish on the FULL command you will run (kind=command: gh ... --title ... --body-file FILE, or git commit -m/-F), then publish. A check of the body text alone does not look at the title, labels or other arguments, and the real hook scans all of them.
 3. For fixtures in a commit, see guards://guide/false-positives for the marker. It never covers a message or a body.
 
 Longer guide for agents: docs/AGENTS-GUIDE.md in the plugin repository.
@@ -281,6 +281,13 @@ _COMMAND_RE = re.compile(
 )
 
 
+_TEXT_ONLY_NOTE = (
+    "Only the text you passed was checked. The title, labels and other arguments of the real command were NOT checked, "
+    "and the real hook scans the whole command line. Before publishing, call check_before_publish again with the full "
+    "command (kind=command), for example gh issue create --title ... --body-file FILE."
+)
+
+
 def _hook_path() -> Path:
     override = os.environ.get("GUARDS_PUBLISH_GUARD_HOOK")
     if override:
@@ -361,13 +368,17 @@ def check_before_publish(
 ) -> dict:
     """Check text or a command with the publish guard BEFORE you run it. Offline; nothing is published.
 
-    Pass either the exact shell command you are about to run (a gh issue/pr/
-    release/gist publish, gh api with a body, git commit) or the text of a PR
-    or issue body, comment or commit message. `kind` is "command", "text" or
-    "auto" (a string that starts with gh/git/cd and a publish verb is a
-    command; anything else is text). `cwd` is the directory the command would
-    run in; for git commit it selects the repository whose staged diff is
-    checked. Text is checked as a body file would be.
+    Prefer the exact shell command you are about to run (a gh issue/pr/
+    release/gist publish, gh api with a body, git commit) with kind="command":
+    the real hook scans the WHOLE command line, so the title, labels and any
+    body file are checked, not only the body. Passing only the text of a PR or
+    issue body, comment or commit message checks that text alone: the title,
+    labels and other arguments of the real command are NOT checked, and the
+    result carries a "note" saying so. `kind` is "command", "text" or "auto" (a
+    string that starts with gh/git/cd and a publish verb is a command; anything
+    else is text). `cwd` is the directory the command would run in; for git
+    commit it selects the repository whose staged diff is checked. Text is
+    checked as a body file would be.
 
     Runs the same publish-guard.sh the session's hook runs, in the strict
     (auto) permission mode, so an ambiguous match is a deny here as it would be
@@ -406,6 +417,8 @@ def check_before_publish(
             result["explanation"] = _TEXT_LABEL_RE.sub(
                 "your text", result["explanation"]
             ).replace("from this command", "from your text")
+        # coordination#131: a clean body-only check says nothing about the title.
+        result["note"] = _TEXT_ONLY_NOTE
     if "error" in result:
         result["decision"] = "unknown"  # could not inspect: never an allow
     if (

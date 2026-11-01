@@ -491,7 +491,7 @@ explain() {
 What to do:
  1. If the match is only a key NAME (the id or reference of a secret, a token_type) and the value is not a credential, that is a false positive. Rename or reword the key if you can, and report it to the user. Do not retry unchanged.
  2. A deliberately fake fixture line in a git commit: put the marker guards:synthetic on the SAME line, in that file's comment syntax. It covers only the added lines of the staged diff of a git commit, and not a real vendor credential or key (a private-key header, an AWS access key id, a GitHub, Slack, Stripe or OpenAI-style live key stays denied on a marked line; the documented EXAMPLE ids and values containing EXAMPLE or FAKE are fine). It does NOT cover the command text (so not a -m message), gh issue/pr bodies, or files named by --body-file/-F/cat.
- 3. A message or body: describe the SHAPE only (length, character classes, which tool produced it), never the value or a prefix of it. Put the text in a file and check it first with the guards MCP tool check_before_publish.
+ 3. A message or body: describe the SHAPE only (length, character classes, which tool produced it), never the value or a prefix of it. Before you run the real command, check the FULL command with the guards MCP tool check_before_publish (kind=command): the hook scans the whole command line, so the title, labels and any body file count, not only the body text.
  GUARDS_ALLOW_PUBLISH_SECRETS=1 only works when set in the environment Claude Code was STARTED from; putting it in front of a command does nothing. Never disable the guards; ask the user to review a false positive.
 EOT
 }

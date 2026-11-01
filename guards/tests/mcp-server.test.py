@@ -356,6 +356,37 @@ class CheckBeforePublish(unittest.TestCase):
         self.assertTrue(result["inspected"])
         self.assertIn("from your text", result["explanation"])
 
+    def test_a_body_only_check_says_the_title_and_labels_were_not_checked(self):
+        # coordination#131: the body is clean, the real command's title is not. A body-only check passes, so it must
+        # say what it did not look at; the same title passed as a command is denied.
+        title = f"DB_PASSWORD={FAKE}"
+        body = "The login flow fails after the token expires."
+        for kind in ("auto", "text"):
+            result = server.check_before_publish(body, kind=kind)
+            self.assertEqual(result["decision"], "allow")
+            self.assertIn("note", result)
+            self.assertIn("title", result["note"])
+            self.assertIn("labels", result["note"])
+            self.assertIn("kind=command", result["note"])
+        full = server.check_before_publish(
+            f"gh issue create -R o/r --title '{title}' --body 'x'", kind="command"
+        )
+        self.assertEqual(full["decision"], "deny")
+        self.assertNotIn("note", full)
+        self.assertNoValue(full)
+
+    def test_a_text_that_is_denied_also_carries_the_note(self):
+        result = server.check_before_publish(f"DB_PASSWORD={FAKE}", kind="text")
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("title", result["note"])
+
+    def test_the_guidance_points_at_the_full_command(self):
+        doc = server.check_before_publish.__doc__
+        self.assertIn('kind="command"', doc)
+        self.assertIn("NOT checked", doc)
+        self.assertIn("FULL command", server.INSTRUCTIONS)
+        self.assertIn("kind=command", server.GUIDE_PUBLISHING)
+
     def test_the_marker_does_not_excuse_text(self):
         result = server.check_before_publish(
             f"DB_PASSWORD={FAKE} # guards:synthetic", kind="text"

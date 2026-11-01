@@ -917,7 +917,7 @@ def fix_a_block() -> str:
     return (
         "A guard blocked your call. Do this, in order:\n"
         "1. Call explain_block with the deny message (or its JSON). Read the source and rules it names.\n"
-        "2. Call check_before_publish with the exact command, or the text you meant to publish, to get the hook's own located answer.\n"
+        "2. Call check_before_publish with the exact full command (kind=command: the title and labels are scanned too, not only the body), or the text you meant to publish, to get the hook's own located answer.\n"
         "3. Fix the TEXT, never the guard: describe the shape of a credential (length, character classes, the tool that made it), never the value, a prefix, or a rotated one.\n"
         "4. Long commit/PR/issue text goes in a file: prepare_publication, then use the command it returns.\n"
         "5. A deliberately fake fixture line in source you are COMMITTING takes the guards:synthetic marker (mark_synthetic). The marker does not apply to command text, bodies, or files named by a command.\n"
