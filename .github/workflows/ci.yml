@@ -89,6 +89,8 @@ jobs:
         run: bash guards/tests/guards-switch.test.sh
       - name: scan.sh bash compatibility (no bash 4 syntax)
         run: bash guards/tests/scan-bash-compat.test.sh
+      - name: approvals report (counts only, read-only)
+        run: bash guards/tests/approvals-report.test.sh
       - name: every job has a timeout
         # The default is 360 minutes; a hung step held a release for 35+ minutes (2026-11-01).
         run: bash guards/tests/workflow-timeouts.test.sh

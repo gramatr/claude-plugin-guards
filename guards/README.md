@@ -481,6 +481,11 @@ each, in `denies.log` in the same directory (time, `ask`, `deny` or `hard`, the
 detector rule, and `title`, `message`, `title+message` or `none` for the kind of
 argument the match was in): no text, no key name and no value, so a month of it
 shows which shapes still need approving (`GUARDS_PUBLISH_DENY_LOG=0` turns it off).
+`bash bin/approvals-report.sh [DIR]` turns `approvals.log`, the pending notes and `denies.log`
+into counts (approvals used and blocks per day and rule, approve rate, approvals never used,
+publish-guard asks and denies per day, decision, rule and argument class). It is read-only,
+prints no text and no id, and only sees this one store: no other guard, allowed call or
+session is recorded.
 When a `secret-lead-in` match sits inside a `--title`/`-t` (gh) or `-m`/`--message`
 (git commit) argument, the block names that argument (flag and number, never its
 text), suggests the reword and repeats the approve-once command; what is matched is
