@@ -62,6 +62,11 @@
 
 set -uo pipefail
 
+# The temporary off switch (coordination#133): the person turns every hook off for a while with bin/guards-switch.sh.
+# Exiting 0 with no output allows the call and leaves tool output as it is. Before the deadline wrapper on purpose.
+# shellcheck source=guards/hooks/disable-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/disable-lib.sh" 2> /dev/null && guards_disabled && exit 0
+
 # Own deadline below the hook timeout in hooks.json: Claude Code fails open when
 # a hook outlives it. Re-runs this script bounded; see deadline-lib.sh.
 # shellcheck source=guards/hooks/deadline-lib.sh
@@ -187,8 +192,13 @@ case "$TOOL_NAME" in
     # script, or reads or writes the store, would be answering its own block. Checked before the
     # publish test below, on every Bash command, so it cannot be hidden in an unrelated command.
     # This is a plain text match: it stops an agent that is not trying to get around it.
+    # The off switch is the person's too (coordination#133): an agent that could turn the guards off would be
+    # answering its own block. Same text match, same limit.
     if [[ "$CMD" == *guards-approve* || "$CMD" == *gramatr-guards/approvals* || "$CMD" == *gramatr-guards/pending* ]]; then
       deny "Blocked by guards publish-guard: this command names the approve-once store or its script, which only the person uses to approve a blocked publish. Fix: do not run, read or write it; tell the person what was blocked and ask them to run the approval command printed in the block message, then retry the identical command."
+    fi
+    if [[ "$CMD" == *guards-switch* || "$CMD" == *gramatr-guards/disabled* ]]; then
+      deny "Blocked by guards publish-guard: this command names the guards off switch or its flag file, which only the person uses to turn the guards off for a while. Fix: do not run, read or write it; if a block is in your way, tell the person what was blocked and why it looks like a false positive, and they can run the switch themselves."
     fi
 
     PUBLISH_RE='(^|[^A-Za-z0-9_-])gh[[:space:]]+(issue|pr|release|gist)[[:space:]]+(create|comment|edit|review)([^A-Za-z0-9_-]|$)'

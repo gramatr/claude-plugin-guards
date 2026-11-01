@@ -83,6 +83,9 @@ jobs:
       - name: outbound-guard tests
         # A throwaway HOME with fabricated credential files, a stub service.
         run: bash guards/tests/outbound-guard.test.sh
+      - name: temporary off switch tests
+        # The flag, its expiry, every registered hook honouring it, the launcher, and the agent refusal.
+        run: bash guards/tests/guards-switch.test.sh
       - name: scan.sh bash compatibility (no bash 4 syntax)
         run: bash guards/tests/scan-bash-compat.test.sh
       - name: docs say what the hooks do
@@ -165,7 +168,7 @@ jobs:
         run: |
           /bin/bash --version | head -1
           failed=""
-          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard deny-messages; do
+          for t in scan-bash-compat realpath-lib credclass-lib credfile-guard deadline-fallback credfile-battery cred-use-registry scan-redaction no-jq guards-selfheal publish-guard combined-hook fast-secret-scan mcp-output-guard sendmessage-guard userpromptsubmit-guard hook-deadlines glob-order credfile-diff outbound-guard deny-messages guards-switch; do
             echo "== $t"
             /bin/bash "guards/tests/$t.test.sh" || failed="$failed $t"
           done

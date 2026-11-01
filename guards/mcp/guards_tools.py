@@ -524,7 +524,30 @@ _ENV_FLAGS = (
     "GUARDS_MCP_SCAN",
     "GUARDS_PUBLISH_ASK",
     "GUARDS_CRED_ASK",
+    "GUARDS_DISABLE",
 )
+
+
+def _switch_state() -> dict:
+    """The temporary off switch (bin/guards-switch.sh): on, or off until a time. Read-only."""
+    state_dir = os.environ.get("GUARDS_STATE_DIR") or os.path.expanduser(
+        "~/.local/share/gramatr-guards"
+    )
+    if os.environ.get("GUARDS_DISABLE") == "1":
+        return {"off": True, "reason": "GUARDS_DISABLE=1 for the whole session"}
+    try:
+        with open(os.path.join(state_dir, "disabled"), encoding="utf-8") as f:
+            until = int(f.readline().strip())
+    except (OSError, ValueError):
+        return {"off": False}
+    left = until - int(time.time())
+    if left <= 0:
+        return {"off": False}
+    return {
+        "off": True,
+        "until": datetime.fromtimestamp(until, timezone.utc).isoformat(),
+        "minutes_left": (left + 59) // 60,
+    }
 
 
 def _plugin_version() -> str:
@@ -618,9 +641,15 @@ def guards_status() -> dict:
         degraded.append(
             "a guard is switched off by an environment override set by whoever started this session (see env_overrides)"
         )
+    switch = _switch_state()
+    if switch["off"]:
+        degraded.append(
+            "the guards are switched OFF by the person (guards-switch): no hook scans, redacts or blocks anything until it turns itself back on; tell the person if a block is not what they expect"
+        )
     return {
         "plugin_version": _plugin_version(),
         "service": service,
+        "switch": switch,
         "hooks": hooks,
         "permission_mode_rules": _PERMISSION_RULES,
         "env_overrides": env,

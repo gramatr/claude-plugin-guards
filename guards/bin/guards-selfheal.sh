@@ -15,6 +15,19 @@
 
 set -uo pipefail
 
+# The temporary off switch (coordination#133): while the guards are off there is nothing to heal. Say so once per
+# session start, so it is not forgotten, and stop.
+# shellcheck source=guards/hooks/disable-lib.sh
+if . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../hooks/disable-lib.sh" 2> /dev/null && guards_disabled; then
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"guards: the guards are switched OFF (guards-switch), so nothing in this session is scanned, redacted or blocked. Turn them back on with: guards-switch on"}}\n'
+  exit 0
+fi
+
+# A short, stable command for the off switch (coordination#133): a small launcher on PATH that always runs the newest
+# installed copy, because the plugin's own path holds a version hash that changes with every update. Created only when
+# ~/.local/bin exists and the name is free or already ours. Failure is not an error.
+bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guards-switch.sh" install-launcher > /dev/null 2>&1 || true
+
 log() { echo "guards-selfheal: $*" >&2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

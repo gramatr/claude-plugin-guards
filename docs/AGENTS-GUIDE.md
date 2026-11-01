@@ -95,6 +95,15 @@ them apart, and `guards_status` returns the same table in its `message_prefixes`
 `<hook>` is one of `credfile-guard`, `publish-guard`, `outbound-guard`, `sendmessage-guard`,
 `userpromptsubmit-guard`, `combined-hook` (Bash output) or `mcp-output-guard` (MCP output).
 
+## When the guards are switched off
+
+The person can turn every hook off for a while (`guards-switch off`, run by them with the `!` prefix). While it is
+off nothing is scanned, redacted or blocked, so a secret you print or paste stays in the transcript and a commit or body
+is not checked: write as carefully as you would with the guards on. `guards_status` reports it (`switch`), and so does
+the SessionStart notice. It turns itself back on. Never run the switch, or read or write its flag file, yourself:
+publish-guard refuses it, and a switch an agent flipped would not be the person's decision. If a block is in your way,
+say what it blocked and why you think it is a false positive; the person can approve it or switch the guards off.
+
 ## Diagnosing a block
 
 1. Call `explain_block` with the message. A publish-guard message has the detector
