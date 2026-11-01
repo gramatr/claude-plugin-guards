@@ -96,6 +96,7 @@ expect deny  "GUARDS_PUBLISH_ASK=0 restores the hard block" Bash "$(bash_in "gh 
 out="$(jq -n --arg c "gh issue create -R o/r --title t --body 'DB_PASSWORD=$PW'" --arg cwd "$T/repo" '{tool_name:"Bash",tool_input:{command:$c},cwd:$cwd}' | bash "$HOOK")"
 msg="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""')"
 if [[ "$msg" == *"SHAPE"* && "$msg" == *secret-lead-in* && "$msg" != *"$PW"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: ask message names the rule, explains the choice and never echoes the value"; fi
+if [[ "$msg" == *"FULL command"* && "$msg" == *"kind=command"* && "$msg" == *"title"* ]]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: the message tells the agent to check the full command, title included (coordination#131)"; fi
 
 # --- an ask needs a person: in modes with nobody to answer, ambiguous matches deny ---
 # (live finding: in auto mode a command with a fake password ran straight through an ask)

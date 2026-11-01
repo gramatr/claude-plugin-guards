@@ -30,7 +30,7 @@ them disables, bypasses or weakens a guard.
 
 | Tool | Example | Use it to |
 |---|---|---|
-| `check_before_publish(text_or_command, cwd, kind)` | `check_before_publish("git commit -m wip", "/repo")` | Run the real publish guard offline (strict "auto" mode) and get allow or deny with where each match is. Nothing is published. |
+| `check_before_publish(text_or_command, cwd, kind)` | `check_before_publish("git commit -m wip", "/repo")` | Run the real publish guard offline (strict "auto" mode) and get allow or deny with where each match is. Nothing is published. Pass the FULL command with `kind="command"` (title, labels and body file included): a body-only check leaves the title and other arguments unchecked and the result says so in `note`. |
 | `explain_block(message)` | `explain_block(<deny message>)` | Turn a deny or ask message into a diagnosis: guard, rules, each located source (command text, named file, staged diff with file and line) and the remedy that fits it. |
 | `prepare_publication(kind, title, body)` | `prepare_publication("pr-body", "Fix login", body)` | Write commit, PR or issue text to a file, scan it, and get the exact command (`git commit -F`, `gh pr create --body-file`, `gh issue create --body-file`). Lines the scanner would redact are listed redacted; a file with findings holds the redacted text only. |
 | `guards_status()` | `guards_status()` | See the registered hooks, plugin and service versions, whether the service answers, the permission-mode rules, any environment override that switches a guard off, and degraded modes (no `jq`, no `gitleaks`, service down). |
@@ -125,7 +125,7 @@ say what it blocked and why you think it is a false positive; the person can app
      command. Never run that command, or read or write the approve-once store, yourself:
      it is refused, and an approval you made would not be the person's. A sure-thing
      match (a private key, a vendor token format) never carries one.
-3. Re-run `check_before_publish` on the same command or text. (It only reports; it does
+3. Re-run `check_before_publish` on the same command (kind=command), not only the body text: the hook scans the title and every other argument too. (It only reports; it does
    not use up the person's approval.)
 4. Other messages: "did not finish in time" means the input was very large or held thousands of
    matches (long lines and long unbroken runs are no longer slow; split the text or commit a

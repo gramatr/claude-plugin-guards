@@ -562,7 +562,7 @@ The server is named `guards`. It exposes:
 - **`check_before_publish(text_or_command, cwd="", kind="auto")`**, which runs
   `hooks/publish-guard.sh` itself, offline, on a would-be command, body or
   message (permission mode `auto`, so the answer is the strict one) and returns
-  `{"decision": "allow"|"deny", "inspected": bool, "explanation": str}`. On a
+  `{"decision": "allow"|"deny", "inspected": bool, "explanation": str}`, plus a `note` when only text was checked (a body-only check does not cover the title or other arguments of the real command; pass the full command with `kind="command"`). On a
   deny the explanation is the hook's located, value-free message. A command
   the guard does not inspect (not a publish) is `allow` with `inspected: false`.
   If the check cannot run (hook missing, crashed, timed out) the result is
@@ -590,9 +590,10 @@ The guards are meant to be worked with, not around. What an agent needs to know:
    comment or file: not a prefix, a partial, or a rotated one. Describe the
    shape (length, character classes, which tool produced it).
 2. **Put long messages and bodies in a file** (`git commit -F`, `gh ... --body-file`),
-   and check the text first with the `check_before_publish` tool of the plugin's
+   and check the full command first (`kind="command"`) with the `check_before_publish` tool of the plugin's
    MCP server. It runs the real publish guard offline and returns allow or deny
-   with the located, value-free explanation.
+   with the located, value-free explanation. A body-only check leaves the title,
+   labels and other arguments unchecked (the result's `note` says so); the real hook scans them all.
 3. **`guards:synthetic` on the same line** marks a deliberately fake fixture line.
    It covers only the added lines of the staged diff of a `git commit`, and not
    a real vendor credential or key (a private-key header, an AWS access key id,

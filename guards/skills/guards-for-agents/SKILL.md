@@ -34,7 +34,7 @@ Full reference: `docs/AGENTS-GUIDE.md`.
    - A commit's staged diff: a deliberately fake fixture line takes the marker
      `guards:synthetic` on the same line (`mark_synthetic` writes it with the
      right comment syntax).
-3. Re-check with `check_before_publish`, then run the command.
+3. Re-check with `check_before_publish` on the full command (`kind="command"`: title, labels and body file included, not only the body text), then run the command.
 
 ## Writing commit, PR and issue text
 
