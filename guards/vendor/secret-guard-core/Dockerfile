@@ -15,7 +15,7 @@
 # guards/tests/dockerfile-go-drift.sh fails CI if the two lists differ.
 # When gitleaks publishes a release that already carries these fixes, drop
 # the `go get` line (and the bumps) and go back to the tag alone.
-FROM golang:1.26-bookworm@sha256:fe3da92a5cb2881e4aa75e625cb0b7c50571632fb4cf340cbe53e6ccdcffdd51 AS gitleaks
+FROM golang:1.26-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS gitleaks
 ARG GITLEAKS_VERSION=v8.30.1
 # The commit the release tag points at (checked 2026-10-21). A tag can be moved; a commit cannot.
 ARG GITLEAKS_COMMIT=83d9cd684c87d95d656c1458ef04895a7f1cbd8e
