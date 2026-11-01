@@ -36,7 +36,9 @@ fi
 if [ -z "${DEADLINE_TEST_BOUNDED:-}" ]; then
   DEADLINE_TEST_BOUNDED=1 timeout -k 5 "${DEADLINE_TEST_LIMIT:-300}" bash "${BASH_SOURCE[0]}" "$@"
   rc=$?
-  [ "$rc" -eq 124 ] && echo "FAIL: hook-deadlines exceeded its overall limit of ${DEADLINE_TEST_LIMIT:-300} s"
+  # 124: stopped by the TERM at the limit. 137: bash was still waiting on a foreground hook child, so the TERM did not
+  # end the suite inside the 5 s grace and timeout sent KILL. Both mean the suite outlived its limit.
+  { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; } && echo "FAIL: hook-deadlines exceeded its overall limit of ${DEADLINE_TEST_LIMIT:-300} s"
   exit "$rc"
 fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

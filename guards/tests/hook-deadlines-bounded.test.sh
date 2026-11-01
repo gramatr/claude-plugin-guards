@@ -35,9 +35,9 @@ secs=$(( $(date +%s) - s0 ))
 printf '%s' "$out" | grep -q 'negative controls skipped' && ok || bad "fixed suite did not report the control as unavailable"
 printf '%s' "$out" | grep -q '^hook-deadlines: .* 0 failed' && ok || bad "fixed suite did not finish with 0 failed: $(printf '%s' "$out" | tail -3)"
 
-# The overall limit: a suite that outlives it is a FAIL with a message.
+# The overall limit: a suite that outlives it is a FAIL with a message (rc 124, or 137 when timeout had to KILL it).
 out2="$(env DEADLINE_TEST_LIMIT=5 timeout -k 2 60 bash "$REPO/guards/tests/hook-deadlines.test.sh" 2>&1)"; rc2=$?
-[ "$rc2" -eq 124 ] && printf '%s' "$out2" | grep -q 'exceeded its overall limit' && ok || bad "overall limit did not stop the suite with a message (rc=$rc2)"
+{ [ "$rc2" -eq 124 ] || [ "$rc2" -eq 137 ]; } && printf '%s' "$out2" | grep -q 'exceeded its overall limit' && ok || bad "overall limit did not stop the suite with a message (rc=$rc2)"
 
 # Negative control: the suite before the bound, same stalled fetch, outer limit of 20 s: it must hang.
 "$REAL_GIT" -C "$REPO" cat-file -e "$PRE:guards/tests/hook-deadlines.test.sh" 2>/dev/null \
