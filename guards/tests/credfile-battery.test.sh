@@ -80,9 +80,14 @@ row 22 deny  deny  "a key after 70 words is seen (was an expected miss, #91)"   
 row 23 deny  deny  "a key after 500 words is seen"                                  "cat $(seq -s ' ' 1 500) $KEY"
 # More than 300 words that could be paths, with a reader word, cannot be fully checked: ask where a person can
 # answer, deny where none can. A command with no reader word is not looked at at all, as before.
+# 320 path-like words cost about 1 s on Linux and several seconds on a loaded macOS runner; run the inner hook so the
+# 6 s deadline wrapper (covered by deadline-fallback and hook-deadlines) cannot turn the expected ask into a deadline
+# deny. It did on the hooks-macos job (2026-11-02), then passed on re-run.
+export GUARDS_DEADLINE_INNER=1
 paths="$(for i in $(seq 1 320); do printf 'd/f%s ' "$i"; done)"
 row 24 ask   deny  "TOO LONG: over 300 path-like words with a reader word"          "cat $paths"
 row 25 allow allow "no reader word: not in scope however long"                      "echo $paths"
+unset GUARDS_DEADLINE_INNER
 
 echo "credfile-battery: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
