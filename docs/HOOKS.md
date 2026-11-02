@@ -86,6 +86,15 @@ same state (`degradation`). It is kept per session in the state directory (see
 | An error answer (an HTTP error status, or a body that is not a scan result) | The service answered with an error | The first time in a session only |
 | A model axis answered `error` with the reason code `PII_UNAVAILABLE` or `INJECTION_UNAVAILABLE`, or with `error` on three calls in a row | That check is not working; secrets and the other check still run | Once per episode; once more when it clears |
 
+**The breaker.** A refused connection or an unresolvable name costs a hook a millisecond, but an address that
+silently drops packets costs the whole connect timeout on every call: 1 s on the secret route of the Bash and
+MCP hooks, 2 s in the SendMessage hook, 3 s in the prompt hook. After one attempt has failed that way, later
+calls inside `GUARDS_BREAKER_SECS` (default 30) open no connection and go straight to the local scan; one call
+after the window probes, and an answer from the service closes the breaker at once. It trips only on that
+failure; a slow answer, an error status and a malformed body do not (the service is there). The Bash hook's
+background flag scan never probes. A secret is scanned locally in every case, so nothing about the secret
+decision depends on the breaker. `GUARDS_BREAKER_SECS=0` restores a connection attempt on every call.
+
 The SendMessage hook used to say "unreachable" for every failure and to repeat a full disclosure on every
 message; it now words the first note by what happened and stays silent on later messages unless it redacted a
 secret or had to cut the summary. The secret decision is the same in every row: it never depends on the state

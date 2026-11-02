@@ -42,15 +42,21 @@ secret_scan() {
 
   # curl's -w answer (status and time to connect) lets degrade-lib.sh tell "could not connect" from "too
   # slow" from "answered with an error"; the request itself is unchanged.
-  meta="$(jq -n --rawfile text "$in" '{text: $text}' 2>/dev/null \
-      | curl -sS --connect-timeout 1 -m "${SS_SERVICE_TIMEOUT:-2}" -X POST "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}/v1/scan/secret" \
-          -H 'Content-Type: application/json' -d @- -o "$svc" -w '%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
-  if [ "$crc" -eq 0 ] \
-     && jq -e '(.findings | type == "array") and (.findings[0].type == "secret") and (.findings[0].verdict != "error")' "$svc" >/dev/null 2>&1; then
-    body_ok=1
-  fi
-  if [ -n "${DG_STATE+x}" ]; then
-    dg_observe "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}" "$crc" "$meta" "$body_ok"; SS_OUTCOME="$DG_OUTCOME"
+  # While the service is known to be blackholed (degrade-lib.sh, GUARDS_BREAKER_SECS) no connection is
+  # opened at all: the local scan below runs at once instead of after the connect timeout.
+  if [ -n "${DG_STATE+x}" ] && dg_breaker_open "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}"; then
+    SS_OUTCOME=down; crc=7
+  else
+    meta="$(jq -n --rawfile text "$in" '{text: $text}' 2>/dev/null \
+        | curl -sS --connect-timeout 1 -m "${SS_SERVICE_TIMEOUT:-2}" -X POST "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}/v1/scan/secret" \
+            -H 'Content-Type: application/json' -d @- -o "$svc" -w '%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
+    if [ "$crc" -eq 0 ] \
+       && jq -e '(.findings | type == "array") and (.findings[0].type == "secret") and (.findings[0].verdict != "error")' "$svc" >/dev/null 2>&1; then
+      body_ok=1
+    fi
+    if [ -n "${DG_STATE+x}" ]; then
+      dg_observe "${GUARDS_ENDPOINT:-http://127.0.0.1:8700}" "$crc" "$meta" "$body_ok"; SS_OUTCOME="$DG_OUTCOME"
+    fi
   fi
 
   if [ "$body_ok" -eq 1 ]; then

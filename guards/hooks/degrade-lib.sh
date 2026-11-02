@@ -22,7 +22,8 @@
 # Both are written through a temp file and a rename, so a reader never sees half a line, and files older
 # than two days are removed when a new one is started.
 #
-# Off switch: GUARDS_DEGRADED_NOTE=0 turns the state off; nothing here then reads or writes a file.
+# Off switches: GUARDS_DEGRADED_NOTE=0 turns the once-per-session note off, GUARDS_BREAKER_SECS=0 the breaker;
+# with both off nothing here reads or writes a file.
 #
 # Bash 3.2 (macOS) compatible: no associative arrays, no printf %(%s)T. The clock is `date +%s`, read only
 # off the service-up path.
@@ -30,14 +31,23 @@
 DG_STATE="${GUARDS_STATE_DIR:-${XDG_STATE_HOME:-${HOME:-/nonexistent}/.local/state}/gramatr-guards}"
 DG_TOTAL=""       # seconds the last attempt took (set by dg_classify)
 DG_OUTCOME=""     # ok | down | slow | http | malformed  (set by dg_classify)
-DG_ADDR=""        # number standing for the endpoint (set by dg_addr)
+DG_ADDR=""        # number standing for the endpoint (set by dg_addr, which remembers the last one)
+DG_ADDR_OF=""
 DG_DOWN_DONE=""   # the address whose failure this process has already recorded (dg_service_down)
 DG_KEY=""         # file name standing for the session (set by dg_sidkey)
 DG_MODE=full SLOW_NOTED=0 DG_EPOCH=0 DG_ERRS_PII=0 DG_ERRS_INJECTION=0
 DG_NOTICE=""      # none | enter | recover | slow  (set by dg_mode_update)
 
-# dg_active -- 0 unless the person turned the state off (a state directory is worth touching at all).
-dg_active() { [ "${GUARDS_DEGRADED_NOTE:-1}" != 0 ]; }
+# dg_note_on / dg_breaker_on -- the two uses of the state. The breaker window is GUARDS_BREAKER_SECS seconds
+# (default 30; 0 turns it off; anything that is not a whole number also turns it off, the safe direction).
+dg_note_on() { [ "${GUARDS_DEGRADED_NOTE:-1}" != 0 ]; }
+dg_breaker_on() {
+  DG_BSECS="${GUARDS_BREAKER_SECS:-30}"
+  case "$DG_BSECS" in ''|*[!0-9]*) DG_BSECS=0 ;; esac
+  [ "$DG_BSECS" -gt 0 ]
+}
+# dg_active -- 0 unless the person turned both uses off (a state directory is worth touching at all).
+dg_active() { dg_note_on || dg_breaker_on; }
 
 # dg_hash STRING -> DG_H, an unsigned 32-bit number (djb2). Pure bash: no fork on the hot path.
 dg_hash() {
@@ -52,7 +62,10 @@ dg_hash() {
 }
 
 # dg_addr ENDPOINT -> DG_ADDR
-dg_addr() { dg_hash "$1"; DG_ADDR="$DG_H"; }
+dg_addr() {
+  [ "$1" = "${DG_ADDR_OF:-}" ] && return 0
+  dg_hash "$1"; DG_ADDR="$DG_H"; DG_ADDR_OF="$1"
+}
 
 # dg_sidkey SESSION_ID -> DG_KEY. A session id that is not a plain token is turned into h<number> so it
 # still names one file and a note is still shown once. A payload with no session id (Claude Code always
@@ -108,7 +121,9 @@ dg_write() {
 # dg_dir SUBDIR -- make sure $DG_STATE/SUBDIR exists; non-zero when it cannot be made.
 dg_dir() { mkdir -p "$DG_STATE/$1" 2>/dev/null; }
 
-# dg_service_down ENDPOINT REASON -- record a connect-class failure.
+# dg_service_down ENDPOINT REASON [CLASS] -- record a connect-class failure. CLASS is "slow" when the attempt
+# itself took long (a blackholed address, a slow resolver: the only failures a breaker saves anything on) and
+# "fast" otherwise (refused, no such host: over in a millisecond, nothing to save).
 dg_service_down() {
   local f count=0 now t c
   dg_active || return 0
@@ -125,7 +140,7 @@ dg_service_down() {
   fi
   now="${EPOCHSECONDS:-}"
   [ -n "$now" ] || now="$(date +%s)"
-  dg_write "$f" "$now $((count + 1)) ${2:-down}" && DG_DOWN_DONE="$DG_ADDR"
+  dg_write "$f" "$now $((count + 1)) ${2:-down} ${3:-fast}" && DG_DOWN_DONE="$DG_ADDR"
   return 0
 }
 
@@ -140,9 +155,13 @@ dg_service_up() {
 # dg_observe ENDPOINT RC META BODY_OK -- classify one call and keep the service record in step:
 # a connect-class failure is recorded, any answer (even a slow or an error one) clears it.
 dg_observe() {
+  local cls
   dg_classify "$2" "$3" "${4:-0}"
   case "$DG_OUTCOME" in
-    down) dg_service_down "$1" "rc$2" ;;
+    down)
+      cls=fast
+      case "$DG_TOTAL" in 0.[5-9]*|[1-9]*) cls=slow ;; esac
+      dg_service_down "$1" "rc$2" "$cls" ;;
     *) dg_service_up "$1" ;;
   esac
 }
@@ -198,7 +217,7 @@ _dg_commit() {
 dg_mode_update() {
   local k="${1:-nosid}"
   DG_NOTICE=none
-  dg_active || return 0
+  dg_note_on || return 0
   dg_mode_read "$k"
   _dg_commit "$k" "$2" "$3"
 }
@@ -275,7 +294,7 @@ dg_rawsid() {
 dg_session_update() {
   local key="$1" ep="$2" outcome="$3" pii="${4:--}" inj="${5:--}" new axes
   DG_NOTICE=none; DG_NOW_MODE=full
-  dg_active || return 0
+  dg_note_on || return 0
   key="${key:-nosid}"
   dg_mode_read "$key"
   case "$outcome" in
@@ -361,7 +380,7 @@ dg_call_add() {
 dg_call_finish() {
   DG_NOTE=""
   [ -n "$DG_CALL_OUT" ] || return 0
-  dg_active || return 0
+  dg_note_on || return 0
   dg_rawsid
   dg_sidkey "$DG_SID"
   # Everything fine and this session has no record: nothing to say, nothing to remember (no fork).
@@ -371,4 +390,26 @@ dg_call_finish() {
   dg_session_update "$DG_KEY" "$2" "$DG_CALL_OUT" "$DG_CALL_PII" "$DG_CALL_INJ"
   [ "$DG_NOTICE" = none ] || dg_note_text "$1"
   return 0
+}
+
+# dg_breaker_open ENDPOINT [noprobe] -- is the service known to be gone, so that this call should not open a
+# connection at all? True only when the last attempt failed SLOWLY at the connection stage (a blackholed or
+# half-open address) less than GUARDS_BREAKER_SECS ago. A refused connection, a name that does not resolve,
+# a slow answer, an error status and a malformed body never trip it: each of those is cheap or says the
+# service is there. After the window one call is let through as the probe (a "noprobe" caller, such as the
+# background flag scan, never probes and stays skipped until a probe has cleared the record). Callers treat
+# an open breaker as the outcome "down" and leave the record alone, so the window does not slide.
+# The hot path (service up, no record) costs one builtin file test.
+dg_breaker_open() {
+  local f t c r k now
+  dg_breaker_on || return 1
+  dg_addr "$1"
+  f="$DG_STATE/service/$DG_ADDR"
+  [ -f "$f" ] || return 1
+  read -r t c r k < "$f" 2>/dev/null || return 1
+  [ "$k" = slow ] || return 1
+  case "$t" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${2:-}" = noprobe ] && return 0
+  now="$(date +%s)"
+  [ $((now - t)) -lt "$DG_BSECS" ]
 }

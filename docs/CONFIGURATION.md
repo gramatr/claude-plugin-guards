@@ -39,14 +39,17 @@ the design is in coordination issues #93, #126, #127 and #128).
 
 | Setting | Default | What it does |
 |---|---|---|
-| `GUARDS_DEGRADED_NOTE` | `1` | The once-per-session note about a degraded service (see [HOOKS.md](HOOKS.md#telling-the-person-the-degraded-service-note)). `0` turns it and its state off: nothing is read or written, and every hook's output is byte for byte what it was before the note existed. |
+| `GUARDS_DEGRADED_NOTE` | `1` | The once-per-session note about a degraded service (see [HOOKS.md](HOOKS.md#telling-the-person-the-degraded-service-note)). `0` turns the note off: no session record is read or written, and every hook's output is byte for byte what it was before the note existed. (With `GUARDS_BREAKER_SECS=0` as well, nothing is read or written at all.) |
+| `GUARDS_BREAKER_SECS` | `30` | The breaker window, in seconds. After a connection attempt fails *slowly* at the connection stage (a blackholed or half-open address: the whole connect timeout was spent), later calls inside the window open no connection and go straight to the local secret scan; one call after the window probes. A refused connection, a name that does not resolve, a slow answer, an error status or a malformed body never trip it. `0`, or anything that is not a whole number, turns it off (every call tries the service, as before). |
 | `GUARDS_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/gramatr-guards` | Where it is kept (the same directory the per-session PII note uses). |
 
 Two kinds of file, never holding scanned text or a host name:
 
-- `service/<n>`: one line, `EPOCH COUNT REASON`, for the service at the address that hashes to `<n>`. Written when a
-  connection could not be made (refused, name not found, or a timeout before the connection), removed as soon as
-  that service answers at all. Shared by every session on the machine.
+- `service/<n>`: one line, `EPOCH COUNT REASON CLASS`, for the service at the address that hashes to `<n>`.
+  Written when a connection could not be made (refused, name not found, or a timeout before the connection),
+  removed as soon as that service answers at all. Shared by every session on the machine. `CLASS` is `slow` when
+  the attempt itself took half a second or more and `fast` otherwise; only a `slow` record lets the breaker skip
+  the connection.
 - `mode/<session>`: one line recording what this session was last told. One per session, so a second session is
   told for itself.
 

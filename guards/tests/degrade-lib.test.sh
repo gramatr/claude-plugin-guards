@@ -82,9 +82,9 @@ eq "real curl: a 200 that is not a scan result is malformed" "$(real "$MAL" 2)" 
 ST="$T/s3"
 in_lib 'dg_service_down http://svc.invalid:8700 rc7'
 F="$(ls "$ST/service" | head -1)"
-case "$(cat "$ST/service/$F")" in [0-9]*" 1 rc7") ok ;; *) bad "first failure writes 'EPOCH 1 rc7' (got: $(cat "$ST/service/$F"))" ;; esac
+case "$(cat "$ST/service/$F")" in [0-9]*" 1 rc7 fast") ok ;; *) bad "first failure writes 'EPOCH 1 rc7 fast' (got: $(cat "$ST/service/$F"))" ;; esac
 in_lib 'dg_service_down http://svc.invalid:8700 rc7'
-case "$(cat "$ST/service/$F")" in [0-9]*" 2 rc7") ok ;; *) bad "second failure counts 2 (got: $(cat "$ST/service/$F"))" ;; esac
+case "$(cat "$ST/service/$F")" in [0-9]*" 2 rc7 fast") ok ;; *) bad "second failure counts 2 (got: $(cat "$ST/service/$F"))" ;; esac
 eq "one file per address" "$(ls "$ST/service" | wc -l | tr -d ' ')" 1
 in_lib 'dg_service_down http://other.invalid:8700 rc6'
 eq "another address gets its own file" "$(ls "$ST/service" | wc -l | tr -d ' ')" 2
@@ -106,7 +106,7 @@ done
 wait
 F="$(ls "$ST/service" | head -1)"
 eq "concurrent writers: one record file, no stray temp files" "$(ls "$ST/service" | wc -l | tr -d ' ')" 1
-case "$(cat "$ST/service/$F")" in [0-9]*" "[0-9]*" rc7") ok ;; *) bad "concurrent writers leave one whole line (got: $(cat "$ST/service/$F"))" ;; esac
+case "$(cat "$ST/service/$F")" in [0-9]*" "[0-9]*" rc7 fast") ok ;; *) bad "concurrent writers leave one whole line (got: $(cat "$ST/service/$F"))" ;; esac
 eq "concurrent writers: the record is a single line" "$(wc -l < "$ST/service/$F" | tr -d ' ')" 1
 
 # --- 5. unreadable or unwritable state: behave as before, never hide a notice ----------------------
@@ -160,9 +160,15 @@ in_lib 'dg_observe http://svc.invalid:8700 0 "200 0.001" 1; dg_mode_update sid f
 
 # --- 9. the off switch -------------------------------------------------------------------------------
 ST="$T/s9"
+r="$(GUARDS_DEGRADED_NOTE=0 GUARDS_BREAKER_SECS=0 in_lib 'dg_service_down http://svc.invalid:8700 rc7; dg_mode_update sid down http://svc.invalid:8700; printf %s "$DG_NOTICE"')"
+eq "both switches off: no notice" "$r" none
+[ ! -e "$ST" ] && ok || bad "both switches off: nothing is written"
 r="$(GUARDS_DEGRADED_NOTE=0 in_lib 'dg_service_down http://svc.invalid:8700 rc7; dg_mode_update sid down http://svc.invalid:8700; printf %s "$DG_NOTICE"')"
-eq "GUARDS_DEGRADED_NOTE=0: no notice" "$r" none
-[ ! -e "$ST" ] && ok || bad "GUARDS_DEGRADED_NOTE=0: nothing is written"
+eq "GUARDS_DEGRADED_NOTE=0 alone: no notice" "$r" none
+[ -d "$ST/service" ] && [ ! -e "$ST/mode" ] && ok || bad "GUARDS_DEGRADED_NOTE=0 alone: the failure record (the breaker's) is kept, no session mode is written"
+rm -rf "$ST"
+r="$(GUARDS_BREAKER_SECS=0 in_lib 'dg_service_down http://svc.invalid:8700 rc7; dg_mode_update sid down http://svc.invalid:8700; printf %s "$DG_NOTICE"')"
+eq "GUARDS_BREAKER_SECS=0 alone: the note still works" "$r" enter
 
 # --- 10. hook by hook: a refused port is recorded, a live stub clears it, output is identical --------
 DOWN="http://127.0.0.1:1"
@@ -188,8 +194,8 @@ for h in bash message prompt mcp; do
   n="$(ls "$ST/service" 2>/dev/null | wc -l | tr -d ' ')"
   eq "$h hook: ...and a live service clears its own record, only" "$n" 1
   ST="$T/s10-off-$h"
-  run_hook "$h" "$DOWN" GUARDS_DEGRADED_NOTE=0 > "$T/out-off-$h"
-  [ ! -e "$ST" ] && ok || bad "$h hook: GUARDS_DEGRADED_NOTE=0 writes no state"
+  run_hook "$h" "$DOWN" GUARDS_DEGRADED_NOTE=0 GUARDS_BREAKER_SECS=0 > "$T/out-off-$h"
+  [ ! -e "$ST" ] && ok || bad "$h hook: both switches off write no state"
 done
 
 # --- the session id out of a hook payload (dg_rawsid): no fork for the usual compact payload, jq otherwise ---
