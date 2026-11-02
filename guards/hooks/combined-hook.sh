@@ -168,15 +168,21 @@ scan_and_redact() {
   # crash this fix exists to close.
   req_file="$(mktemp)"
   printf '%s' "$scan_text" > "$req_file"
-  # The last line of curl's answer is its -w text (status and time to connect), for degrade-lib.sh.
-  response="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
-    | curl -sS --connect-timeout 2 -m 6 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
-        -H "Content-Type: application/json" -d @- -w '\n%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
-  meta="${response##*$'\n'}"; response="${response%$'\n'*}"
-  rm -f "$req_file"
   body_ok=0
-  [ -n "$response" ] && echo "$response" | jq -e '.findings | type == "array"' >/dev/null 2>&1 && body_ok=1
-  [ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$crc" "$meta" "$body_ok"
+  if [ -n "${DG_STATE+x}" ] && dg_breaker_open "$GUARDS_ENDPOINT"; then
+    # Known blackholed (degrade-lib.sh, GUARDS_BREAKER_SECS): no connection, straight to the local scan.
+    response=""; DG_OUTCOME=down
+    rm -f "$req_file"
+  else
+    # The last line of curl's answer is its -w text (status and time to connect), for degrade-lib.sh.
+    response="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
+      | curl -sS --connect-timeout 2 -m 6 -X POST "${GUARDS_ENDPOINT}/v1/scan" \
+          -H "Content-Type: application/json" -d @- -w '\n%{http_code} %{time_connect} %{time_total}' 2>/dev/null)"; crc=$?
+    meta="${response##*$'\n'}"; response="${response%$'\n'*}"
+    rm -f "$req_file"
+    [ -n "$response" ] && echo "$response" | jq -e '.findings | type == "array"' >/dev/null 2>&1 && body_ok=1
+    [ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$crc" "$meta" "$body_ok"
+  fi
 
   # Everything below operates on $current as before -- reassigning it
   # to the (possibly truncated) scan_text keeps every existing
@@ -363,7 +369,8 @@ scan_and_redact_fast() {
 
   # PII / injection flags: start now, collect after the secret scan.
   rm -f "$w/flags.json"
-  if [ "$FLAG_MAX_BYTES" -gt 0 ]; then
+  # A background flag scan never probes a service the breaker holds open (degrade-lib.sh).
+  if [ "$FLAG_MAX_BYTES" -gt 0 ] && ! { [ -n "${DG_STATE+x}" ] && dg_breaker_open "$GUARDS_ENDPOINT" noprobe; }; then
     head -c "$FLAG_MAX_BYTES" "$w/in.txt" > "$w/flag_in.txt"
     fbudget="$(awk -v n="$(wc -c < "$w/flag_in.txt")" -v b="$FLAG_BUDGET" 'BEGIN { if (b != "") print b; else printf "%.2f", 0.25 + 0.3 * n / 1024 }')"
     rm -f "$w/flags.meta" "$w/flags.rc"

@@ -166,9 +166,9 @@ hasnt "bash: the secret is not in the answer" "$o" "$SECRET"
 # --- off switch: nothing said, nothing written --------------------------------------------------------------
 for h in bash message prompt mcp; do
   ST="$T/st-off-$h"
-  o="$(payload "$h" sessO | env GUARDS_STATE_DIR="$ST" GUARDS_ENDPOINT="$DOWN" GUARDS_DEGRADED_NOTE=0 bash "$HOOKS/$(script_of "$h")" 2>/dev/null)"
+  o="$(payload "$h" sessO | env GUARDS_STATE_DIR="$ST" GUARDS_ENDPOINT="$DOWN" GUARDS_DEGRADED_NOTE=0 GUARDS_BREAKER_SECS=0 bash "$HOOKS/$(script_of "$h")" 2>/dev/null)"
   eq "$h: GUARDS_DEGRADED_NOTE=0 adds no note" "$(note_of "$o")" ""
-  [ ! -e "$ST" ] && ok || bad "$h: GUARDS_DEGRADED_NOTE=0 writes no state"
+  [ ! -e "$ST" ] && ok || bad "$h: both switches off write no state"
 done
 
 # --- a state directory that cannot be written: the note is still shown ------------------------------------

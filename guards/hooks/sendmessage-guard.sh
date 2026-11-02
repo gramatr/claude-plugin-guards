@@ -216,6 +216,14 @@ scan_remote() {
     [ "$DG_ON" -eq 1 ] && { DG_DETAIL="the ${SERVICE_BUDGET} s the service gets is shared by message, summary and content"; dg_call_add slow; }
     return 1
   fi
+  if [ -n "${DG_STATE+x}" ] && dg_breaker_open "$GUARDS_ENDPOINT"; then
+    # Known blackholed (degrade-lib.sh, GUARDS_BREAKER_SECS): no connection, straight to the local scan.
+    rm -f "$req_file"
+    DG_OUTCOME=down
+    # shellcheck disable=SC2034  # read by dg_note_text
+    [ "$DG_ON" -eq 1 ] && dg_call_add down
+    return 1
+  fi
   # The last line of curl's answer is its -w text (status and time to connect), which degrade-lib.sh
   # uses to tell "could not connect" from "too slow" from "answered with an error".
   resp="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
