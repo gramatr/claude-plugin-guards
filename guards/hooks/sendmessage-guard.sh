@@ -88,6 +88,10 @@ SM_T0="$(date +%s)"
 SERVICE_BUDGET=4
 LOCAL_BY=9
 PII_UNAVAILABLE=0
+# Degraded-service note (degrade-lib.sh): DG_NOTE is what to say once per session about the service,
+# DG_ON is 1 when that is switched on (GUARDS_DEGRADED_NOTE=0 keeps the earlier output exactly).
+DG_NOTE=""
+DG_ON=0
 
 TMP_FILES=()
 trap 'rm -f "${TMP_FILES[@]}"' EXIT
@@ -97,6 +101,7 @@ RAW="$(cat)"
 . "$SCRIPT_DIR/json-lib.sh"
 # shellcheck source=guards/hooks/degrade-lib.sh
 [ -f "$SCRIPT_DIR/degrade-lib.sh" ] && . "$SCRIPT_DIR/degrade-lib.sh"
+[ -n "${DG_STATE+x}" ] && [ "${GUARDS_DEGRADED_NOTE:-1}" != 0 ] && DG_ON=1
 TOOL_NAME="$(jfield tool_name)"
 if [ "$TOOL_NAME" != "SendMessage" ]; then
   exit 0
@@ -167,7 +172,7 @@ add_rawfile_arg() {
 # Returns 1 if guards-unified itself didn't answer at all.
 scan_remote() {
   local text="$1" resp
-  local full_len scan_text remainder="" req_file meta crc body_ok=0
+  local full_len scan_text remainder="" req_file meta crc body_ok=0 ax_pii ax_inj
   SCAN_OUT="$text"
   SCAN_SECRET_FOUND=0
   SCAN_PII_TYPES=""
@@ -205,7 +210,12 @@ scan_remote() {
   req_file="$(mktemp)"
   printf '%s' "$scan_text" > "$req_file"
   local left=$((SM_T0 + SERVICE_BUDGET - $(date +%s)))
-  if [ "$left" -lt 1 ]; then rm -f "$req_file"; return 1; fi
+  if [ "$left" -lt 1 ]; then
+    rm -f "$req_file"
+    # shellcheck disable=SC2034  # read by dg_note_text
+    [ "$DG_ON" -eq 1 ] && { DG_DETAIL="the ${SERVICE_BUDGET} s the service gets is shared by message, summary and content"; dg_call_add slow; }
+    return 1
+  fi
   # The last line of curl's answer is its -w text (status and time to connect), which degrade-lib.sh
   # uses to tell "could not connect" from "too slow" from "answered with an error".
   resp="$(jq -n --rawfile text "$req_file" '{text: $text}' 2>/dev/null \
@@ -221,6 +231,8 @@ scan_remote() {
   if [ -n "$resp" ] && echo "$resp" | jq -e '.findings | type == "array"' >/dev/null 2>&1; then body_ok=1; fi
   [ -n "${DG_STATE+x}" ] && dg_observe "$GUARDS_ENDPOINT" "$crc" "$meta" "$body_ok"
   if [ "$body_ok" -ne 1 ]; then
+    # shellcheck disable=SC2034  # read by dg_note_text
+    [ "$DG_ON" -eq 1 ] && { DG_DETAIL="the ${SERVICE_BUDGET} s the service gets is shared by message, summary and content"; dg_call_add "$DG_OUTCOME"; }
     return 1
   fi
   # A well-formed answer whose secret axis says "error" (or has no secret
@@ -228,7 +240,14 @@ scan_remote() {
   # so the caller falls back to the local secret scan instead of sending the
   # message as if it were clean.
   if ! echo "$resp" | jq -e '[.findings[] | select(.type=="secret") | .verdict] | (length > 0) and all(. == "found" or . == "clean")' >/dev/null 2>&1; then
+    [ "$DG_ON" -eq 1 ] && dg_call_add malformed
     return 1
+  fi
+  if [ "$DG_ON" -eq 1 ]; then
+    # Which model axes answered "error" (no fork unless the answer has one).
+    dg_axes "$resp"
+    ax_pii="$DG_AX_PII"; ax_inj="$DG_AX_INJ"
+    dg_call_add ok "$ax_pii" "$ax_inj"
   fi
   if [ "$(echo "$resp" | jq -r '.findings[]? | select(.type=="secret") | .verdict // ""' 2>/dev/null)" = "found" ]; then
     SCAN_SECRET_FOUND=1
@@ -296,6 +315,7 @@ if ! scan_remote "$MESSAGE"; then
   # before composing the disclosed text, same as the reachable-backend
   # path below already does via ANY_SECRET.
   ANY_LOCAL_SECRET=0
+  SUM_CHANGED_LOCALLY=0
   MSG_OUT="$MESSAGE"
   scan_local_secret_only "$MESSAGE"
   if [ "$SCAN_FOUND" -eq 1 ]; then
@@ -309,6 +329,7 @@ if ! scan_remote "$MESSAGE"; then
     scan_local_secret_only "$SUMMARY"
     [ "$SCAN_FOUND" -eq 1 ] && ANY_LOCAL_SECRET=1
     SUM_OUT="$(truncate_summary "$SCAN_OUT")"
+    [ "$SUM_OUT" != "$SUMMARY" ] && SUM_CHANGED_LOCALLY=1
     MERGE="$MERGE + {summary: \$sum}"
     add_rawfile_arg sum "$SUM_OUT"
   fi
@@ -323,10 +344,28 @@ if ! scan_remote "$MESSAGE"; then
   else
     SECRET_NOTE="no secret found by local scan"
   fi
+  REASON_A="sendmessage-guard: guards-unified backend unreachable — sent via local-only secret scan (${SECRET_NOTE}); PII scan unavailable until backend is back"
+  CTX_A="sendmessage-guard: guards-unified is unreachable right now. This message was checked for secrets via a local-only scan (${SECRET_NOTE}), but PII scanning could not run — review it yourself if it might contain PII, before assuming it's clean."
+  if [ "$DG_ON" -eq 1 ]; then
+    # Say what actually happened (not every failure is "unreachable"), say it once per session, and stay
+    # silent on later messages unless something was redacted or the summary had to be cut.
+    dg_call_finish message "$GUARDS_ENDPOINT"
+    case "$DG_CALL_OUT" in
+      down) WHY_A="could not be reached" ;;
+      slow) WHY_A="did not answer in time" ;;
+      *) WHY_A="answered with an error" ;;
+    esac
+    if [ -z "$DG_NOTE" ] && [ "$ANY_LOCAL_SECRET" -eq 0 ] && [ "$SUM_CHANGED_LOCALLY" -eq 0 ]; then
+      exit 0
+    fi
+    REASON_A="sendmessage-guard: guards-unified ${WHY_A} — sent via local-only secret scan (${SECRET_NOTE}); PII scan unavailable for this call"
+    CTX_A="sendmessage-guard: ${SECRET_NOTE} (the guards-unified service ${WHY_A} for this message).${DG_NOTE:+ $DG_NOTE}"
+  fi
   jq -n \
     --rawfile orig_raw "$ORIGINAL_INPUT_FILE" \
-    --arg reason "sendmessage-guard: guards-unified backend unreachable — sent via local-only secret scan (${SECRET_NOTE}); PII scan unavailable until backend is back" \
-    --arg ctx "sendmessage-guard: guards-unified is unreachable right now. This message was checked for secrets via a local-only scan (${SECRET_NOTE}), but PII scanning could not run — review it yourself if it might contain PII, before assuming it's clean." \
+    --arg reason "$REASON_A" \
+    --arg ctx "$CTX_A" \
+    --arg sm "$DG_NOTE" \
     "${JQ_ARGS[@]}" \
     "{
       hookSpecificOutput: {
@@ -336,7 +375,7 @@ if ! scan_remote "$MESSAGE"; then
         updatedInput: ((\$orig_raw | fromjson) + $MERGE),
         additionalContext: \$ctx
       }
-    }"
+    } + (if \$sm == \"\" then {} else {systemMessage: \$sm} end)"
   exit 0
 fi
 
@@ -418,7 +457,13 @@ if [ "$PII_GUARD_MODE" != "redact" ] && [ -n "$ALL_PII_TYPES" ]; then
   ALL_PII_TYPES="$(pii_note_types "$ALL_PII_TYPES" "$(jfield session_id)")"
 fi
 
-if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ] && [ "$PII_UNAVAILABLE" -eq 0 ]; then
+if [ "$DG_ON" -eq 1 ]; then
+  dg_call_finish message "$GUARDS_ENDPOINT"
+  # A field the service ran out of time for is one call's slowness, said once per session by the note
+  # above rather than on every message.
+  PII_UNAVAILABLE=0
+fi
+if [ "$ANY_SECRET" -eq 0 ] && [ -z "$ALL_PII_TYPES" ] && [ "$ANY_TRUNCATED" -eq 0 ] && [ "$PII_UNAVAILABLE" -eq 0 ] && [ -z "$DG_NOTE" ]; then
   exit 0
 fi
 
@@ -451,6 +496,10 @@ if [ "$PII_UNAVAILABLE" -eq 1 ]; then
   REASON_PARTS+=("summary/content got a local secret-only scan, PII scan unavailable (service out of time)")
   CTX_PARTS+=("The guards-unified service ran out of time for the summary or content field, so those were checked for secrets by the local scan only and not for PII.")
 fi
+if [ -n "$DG_NOTE" ]; then
+  REASON_PARTS+=("the service's state changed (see the note)")
+  CTX_PARTS+=("$DG_NOTE")
+fi
 REASON="sendmessage-guard: $(printf '%s; ' "${REASON_PARTS[@]}")"
 CTX="$(printf '%s ' "${CTX_PARTS[@]}")"
 
@@ -463,6 +512,7 @@ jq -n \
   --rawfile orig_raw "$ORIGINAL_INPUT_FILE" \
   --arg reason "$REASON" \
   --arg ctx "$CTX" \
+  --arg sm "$DG_NOTE" \
   "${JQ_ARGS[@]}" \
   "{
     hookSpecificOutput: {
@@ -472,5 +522,5 @@ jq -n \
       updatedInput: ((\$orig_raw | fromjson) + $MERGE),
       additionalContext: \$ctx
     }
-  }"
+  } + (if \$sm == \"\" then {} else {systemMessage: \$sm} end)"
 exit 0

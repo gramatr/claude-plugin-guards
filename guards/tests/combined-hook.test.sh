@@ -16,6 +16,9 @@ T="$(mktemp -d)"
 PIDS=()
 trap 'kill "${PIDS[@]}" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME"
+# These cases pin the behaviour with the once-per-session degraded-service note off, which is the earlier
+# behaviour byte for byte (that is the off switch). The note has its own cases in degrade-note.test.sh.
+export GUARDS_DEGRADED_NOTE=0
 
 start_stub() { # start_stub NAME FLAG_DELAY_SECONDS
   python3 -I - "$1" "$2" "$T" >/dev/null 2>&1 <<'PY' &

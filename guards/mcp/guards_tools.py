@@ -550,6 +550,63 @@ def _switch_state() -> dict:
     }
 
 
+def _djb2(text: str) -> int:
+    """The number hooks/degrade-lib.sh (dg_hash) files an address under."""
+    h = 5381
+    for b in text.encode("utf-8", "replace"):
+        h = (h * 33 + b) & 0xFFFFFFFF
+    return h
+
+
+def _degradation_state(endpoint: str) -> dict:
+    """What the hooks recorded about the service (hooks/degrade-lib.sh). Read-only, and value-free: a
+    mode, a count and an age, never a host name or any scanned text."""
+    state_dir = os.environ.get("GUARDS_STATE_DIR") or os.path.join(
+        os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+        "gramatr-guards",
+    )
+    out: dict = {"service_failure": None, "session_modes": {}, "last_change": None}
+    now = int(time.time())
+    try:
+        with open(
+            os.path.join(state_dir, "service", str(_djb2(endpoint))), encoding="utf-8"
+        ) as f:
+            parts = f.readline().split()
+        out["service_failure"] = {
+            "seconds_ago": max(0, now - int(parts[0])),
+            "count": int(parts[1]),
+            "reason": re.sub(r"[^A-Za-z0-9_]", "", parts[2])[:16]
+            if len(parts) > 2
+            else "",
+        }
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        names = sorted(os.listdir(os.path.join(state_dir, "mode")))[:200]
+    except OSError:
+        names = []
+    newest = None
+    for name in names:
+        try:
+            with open(os.path.join(state_dir, "mode", name), encoding="utf-8") as f:
+                parts = f.readline().split()
+            mode = parts[0]
+            when = int(parts[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        if (
+            not re.fullmatch(r"full|down|slow|error|axis:[a-z+]+", mode)
+            or now - when > 2 * 86400
+        ):
+            continue
+        out["session_modes"][mode] = out["session_modes"].get(mode, 0) + 1
+        if newest is None or when > newest[1]:
+            newest = (mode, when)
+    if newest:
+        out["last_change"] = {"mode": newest[0], "seconds_ago": max(0, now - newest[1])}
+    return out
+
+
 def _plugin_version() -> str:
     for p in (
         os.path.join(PLUGIN_ROOT, "VERSION"),
@@ -610,6 +667,7 @@ def guards_status() -> dict:
     except (httpx.HTTPError, httpx.InvalidURL, OSError) as e:
         service["error"] = type(e).__name__
     hooks = _registered_hooks()
+    degradation = _degradation_state(endpoint)
     degraded = []
     if not shutil.which("jq"):
         degraded.append(
@@ -626,6 +684,11 @@ def guards_status() -> dict:
         degraded.append(
             "the guards-unified service does not answer: secrets fall back to the local scanner; PII and injection findings are unavailable"
         )
+    for mode in sorted(degradation["session_modes"]):
+        if mode.startswith("axis:"):
+            degraded.append(
+                f"the service answers but a session was told its {mode[5:].replace('+', ' and ')} check is not working (see degradation)"
+            )
     if not hooks:
         degraded.append(
             "hooks/hooks.json could not be read: cannot list the registered hooks"
@@ -649,6 +712,7 @@ def guards_status() -> dict:
     return {
         "plugin_version": _plugin_version(),
         "service": service,
+        "degradation": degradation,
         "switch": switch,
         "hooks": hooks,
         "permission_mode_rules": _PERMISSION_RULES,

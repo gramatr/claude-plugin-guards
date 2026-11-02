@@ -19,6 +19,9 @@ T="$(mktemp -d)"
 PID=""
 trap '[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME"
+# These cases pin the behaviour with the once-per-session degraded-service note off, which is the earlier
+# behaviour byte for byte (that is the off switch). The note has its own cases in degrade-note.test.sh.
+export GUARDS_DEGRADED_NOTE=0
 
 # The hook finds scan.sh relative to itself, so run a copy in a throwaway tree
 # whose scan.sh is a stub that redacts the same fabricated marker.

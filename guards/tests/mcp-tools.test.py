@@ -606,6 +606,49 @@ class GuardsStatus(Base):
             for k, v in old.items():
                 os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
+    def test_what_the_hooks_recorded_is_reported_value_free(self):
+        # coordination#128: before, during and after an outage `guards_status` shows the recorded state
+        req = httpx.Request("GET", "http://stub.invalid/about")
+        up = lambda url, timeout=None: httpx.Response(
+            200, json={"version": "9.9.9"}, request=req
+        )
+        endpoint = "http://svc.invalid:8700"
+        with tempfile.TemporaryDirectory() as d:
+            env = {"GUARDS_STATE_DIR": d, "GUARDS_ENDPOINT": endpoint}
+            before = self.status(up, env=env)
+            self.assertEqual(
+                before["degradation"],
+                {"service_failure": None, "session_modes": {}, "last_change": None},
+            )
+            now = int(time.time())
+            os.makedirs(os.path.join(d, "service"))
+            os.makedirs(os.path.join(d, "mode"))
+            with open(os.path.join(d, "service", str(gt._djb2(endpoint))), "w") as fh:
+                fh.write(f"{now - 30} 4 rc7\n")
+            with open(os.path.join(d, "mode", "sess1"), "w") as fh:
+                fh.write(f"down {now - 30} 123 0 0 0\n")
+            with open(os.path.join(d, "mode", "sess2"), "w") as fh:
+                fh.write(f"axis:injection {now - 10} 123 0 0 3\n")
+            during = self.status(up, env=env)["degradation"]
+            self.assertEqual(during["service_failure"]["count"], 4)
+            self.assertEqual(during["service_failure"]["reason"], "rc7")
+            self.assertEqual(during["session_modes"], {"down": 1, "axis:injection": 1})
+            self.assertEqual(during["last_change"]["mode"], "axis:injection")
+            self.assertNotIn("svc.invalid", json.dumps(during))
+            self.assertTrue(
+                any(
+                    "injection check is not working" in x
+                    for x in self.status(up, env=env)["degraded"]
+                )
+            )
+            # a mangled state file is ignored, not an error
+            with open(os.path.join(d, "mode", "sess3"), "w") as fh:
+                fh.write("not a mode at all\n")
+            self.assertEqual(
+                self.status(up, env=env)["degradation"]["session_modes"],
+                {"down": 1, "axis:injection": 1},
+            )
+
     def test_the_off_switch_is_reported(self):
         # coordination#133: when the person has switched the guards off, say so, and call it a degradation
         req = httpx.Request("GET", "http://stub.invalid/about")

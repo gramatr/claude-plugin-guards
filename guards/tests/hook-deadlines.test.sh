@@ -147,11 +147,11 @@ PORT="$(cat "$T/port")"
 sm_limit="$(hook_timeout sendmessage-guard.sh)"
 sm0="$(date +%s)"
 printf '%s' '{"tool_name":"SendMessage","tool_input":{"to":"x","message":"a plain sentence"}}' \
-  | env GUARDS_ENDPOINT="http://127.0.0.1:$PORT" timeout "$sm_limit" bash "$REPO/guards/hooks/sendmessage-guard.sh" > "$T/sm.out" 2>/dev/null
+  | env GUARDS_STATE_DIR="$T/dg-state" GUARDS_ENDPOINT="http://127.0.0.1:$PORT" timeout "$sm_limit" bash "$REPO/guards/hooks/sendmessage-guard.sh" > "$T/sm.out" 2>/dev/null
 sm_rc=$?; sm_secs=$(( $(date +%s) - sm0 ))
 check "sendmessage vs unresponsive service: exits 0 in time (rc=$sm_rc, ${sm_secs}s of ${sm_limit}s)" test "$sm_rc" -eq 0 -a "$sm_secs" -lt "$sm_limit"
 check "sendmessage vs unresponsive service: degrades to the local scan, allow + note" \
-  jq -e '.hookSpecificOutput.permissionDecision == "allow" and (.hookSpecificOutput.additionalContext | test("unreachable"))' "$T/sm.out"
+  jq -e '.hookSpecificOutput.permissionDecision == "allow" and (.hookSpecificOutput.additionalContext | test("unreachable|could not be reached|did not answer|answered with an error"))' "$T/sm.out"
 
 # Lib: pass-through of 0 and 2, crash outcome per kind, expiry without `timeout`.
 LIB="$REPO/guards/hooks/deadline-lib.sh"

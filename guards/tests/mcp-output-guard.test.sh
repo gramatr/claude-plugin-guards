@@ -5,6 +5,10 @@
 set -uo pipefail
 # Hermetic: never talk to a real guards-unified service from a test.
 export GUARDS_ENDPOINT="http://127.0.0.1:1"
+# These cases pin the behaviour with the once-per-session degraded-service note off (the earlier behaviour,
+# byte for byte); the note has its own cases in degrade-note.test.sh. Hermetic: no state outside a temp dir.
+export GUARDS_DEGRADED_NOTE=0
+GUARDS_STATE_DIR="$(mktemp -d)"; export GUARDS_STATE_DIR
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$HERE/../hooks/mcp-output-guard.sh"
 PW="Tq7vN2xLm9Kd4RzP8wYb"
