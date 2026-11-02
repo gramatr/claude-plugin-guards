@@ -550,6 +550,33 @@ def _switch_state() -> dict:
     }
 
 
+_AXIS_NAMES = ("secret", "pii", "injection")
+_AXIS_STATES = ("ok", "unavailable")
+
+
+def _service_axes(about: object) -> dict | None:
+    """The `axes` field of the service's /about (guards-unified after 0.2.18), reduced to a state, whether it is
+    required and a stable reason code. None for a server that does not send it (older), or sends something
+    else: then nothing is known about the axes and the caller behaves as it always did."""
+    axes = about.get("axes") if isinstance(about, dict) else None
+    if not isinstance(axes, dict):
+        return None
+    out = {}
+    for name in _AXIS_NAMES:
+        entry = axes.get(name)
+        if not isinstance(entry, dict) or entry.get("state") not in _AXIS_STATES:
+            continue
+        code = entry.get("reason_code")
+        out[name] = {
+            "state": entry["state"],
+            "required": entry.get("required") is True,
+            "reason_code": code
+            if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,39}", code)
+            else None,
+        }
+    return out or None
+
+
 def _djb2(text: str) -> int:
     """The number hooks/degrade-lib.sh (dg_hash) files an address under."""
     h = 5381
@@ -662,6 +689,9 @@ def guards_status() -> dict:
                     else None
                 )
                 service["version"] = str(v)[:32] if v is not None else "unknown"
+                axes = _service_axes(j)
+                if axes:
+                    service["axes"] = axes
             except ValueError:
                 service["version"] = "unknown"
     except (httpx.HTTPError, httpx.InvalidURL, OSError) as e:
@@ -684,6 +714,14 @@ def guards_status() -> dict:
         degraded.append(
             "the guards-unified service does not answer: secrets fall back to the local scanner; PII and injection findings are unavailable"
         )
+    for name, axis in sorted((service.get("axes") or {}).items()):
+        if axis["state"] == "unavailable":
+            degraded.append(
+                f"the service started without its {name} axis ({axis['reason_code'] or 'unavailable'}): "
+                "every scan reports it as verdict error, so it is not being checked; "
+                "secrets and the other axis still run. The cause (a missing Hugging Face token, the Hub) "
+                "is on the service side, and the service has to be restarted once it is fixed"
+            )
     for mode in sorted(degradation["session_modes"]):
         if mode.startswith("axis:"):
             degraded.append(

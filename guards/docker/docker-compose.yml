@@ -29,10 +29,15 @@ services:
       # gated license accepted> — see guards-unified's own README,
       # "The HF_TOKEN problem." Not committed; guards-selfheal.sh
       # creates this file empty (0600) if missing and warns. Without a
-      # token the guards-unified service does NOT start (it loads the
-      # injection model at startup and exits on the 401), so PII and
-      # injection detection are unavailable until a token is added; secret
-      # detection continues through the hooks' local fallback.
+      # token a guards-unified service up to v0.2.18 does NOT start (it
+      # loads the injection model at startup and exits on the 401), so PII
+      # and injection detection are unavailable until a token is added;
+      # secret detection continues through the hooks' local fallback. From
+      # the release after v0.2.18 the service starts without the injection
+      # axis by default (GUARDS_REQUIRE_AXES, in guards-unified's
+      # docs/CONFIGURATION.md): secrets and PII work, injection reports
+      # INJECTION_UNAVAILABLE, and guards_status and a once-per-session
+      # note say so.
       #
       # The same file takes the service's PII settings (PII_ENTITIES, PII_MIN_SCORE,
       # PII_IGNORE_NAMES): since server v0.2.10 the default looks only for email,
